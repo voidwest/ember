@@ -36,7 +36,11 @@ fn line_height_multiplier(font: &'static str) -> f32 {
     if font == super::FONT_ARABIC_NAME {
         // The bundled fallback face needs the taller box; the macOS system
         // face does not.
-        if cfg!(target_os = "macos") { 2.0 } else { 2.6 }
+        if cfg!(target_os = "macos") {
+            2.0
+        } else {
+            2.6
+        }
     } else {
         1.8
     }
@@ -97,7 +101,12 @@ pub(super) fn panel(colors: &Colors, content: impl IntoElement) -> Div {
 /// Spacing and a section label do the organising; a surface is spent only where
 /// there is genuinely a selectable object, a result, or a control group.
 pub(super) fn group(content: impl IntoElement) -> Div {
-    div().w_full().flex().flex_col().gap(px(Space::MD)).child(content)
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(Space::MD))
+        .child(content)
 }
 
 pub(super) fn rule_h(colors: &Colors) -> Div {

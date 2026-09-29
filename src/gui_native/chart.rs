@@ -291,10 +291,13 @@ pub(super) fn layer_divergence_chart(
                     },
                 ))
                 .child(div().w_full())
-                .children(
-                    intervention_layer
-                        .map(|layer| mono(format!("Intervention \u{00b7} L{layer}"), 13.0, colors.accent)),
-                ),
+                .children(intervention_layer.map(|layer| {
+                    mono(
+                        format!("Intervention \u{00b7} L{layer}"),
+                        13.0,
+                        colors.accent,
+                    )
+                })),
         )
         .child(
             div()

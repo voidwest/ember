@@ -12,7 +12,10 @@ pub(super) enum AppearanceMode {
 
 impl AppearanceMode {
     pub(super) fn load() -> Self {
-        let Ok(value) = std::fs::read_to_string(settings_path()) else {
+        let Some(path) = settings_path() else {
+            return Self::System;
+        };
+        let Ok(value) = std::fs::read_to_string(path) else {
             return Self::System;
         };
         match value.trim() {
@@ -47,10 +50,9 @@ impl AppearanceMode {
     }
 
     pub(super) fn persist(self) {
-        if cfg!(test) {
+        let Some(path) = settings_path() else {
             return;
-        }
-        let path = settings_path();
+        };
         let Some(parent) = path.parent() else {
             return;
         };
@@ -68,37 +70,35 @@ pub(super) fn system_is_dark(appearance: WindowAppearance) -> bool {
     )
 }
 
-fn settings_path() -> PathBuf {
-    if let Some(root) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(root).join("ember/native-console-theme");
+/// The appearance setting, beside the run history. `None` under unit tests,
+/// which drive the real console and must neither read the developer's settings
+/// (results would depend on them) nor write them.
+fn settings_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
     }
-    if let Some(root) = std::env::var_os("HOME") {
-        return PathBuf::from(root).join(".config/ember/native-console-theme");
-    }
-    std::env::temp_dir().join("ember-native-console-theme")
+    Some(ember::app_store::config_dir().join("native-console-theme"))
 }
 
 /// A one-word persisted workspace flag, one file per key, beside the theme
 /// setting. The inspector and sidebar remember their state across launches --
 /// a workspace that resets itself is a demo, not a tool.
-fn flag_path(key: &str) -> PathBuf {
-    let mut path = settings_path();
+fn flag_path(key: &str) -> Option<PathBuf> {
+    let mut path = settings_path()?;
     path.set_file_name(format!("native-console-{key}"));
-    path
+    Some(path)
 }
 
 pub(super) fn load_flag(key: &str) -> Option<bool> {
-    std::fs::read_to_string(flag_path(key))
+    std::fs::read_to_string(flag_path(key)?)
         .ok()
         .map(|value| value.trim() == "true")
 }
 
 pub(super) fn persist_flag(key: &str, value: bool) {
-    // See Console::persist: unit tests must not write real settings.
-    if cfg!(test) {
+    let Some(path) = flag_path(key) else {
         return;
-    }
-    let path = flag_path(key);
+    };
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
     {

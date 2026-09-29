@@ -1494,20 +1494,24 @@ fn run_restore(session: &Arc<Mutex<GuiSession>>, req: RestoreRequest) -> ApiEnve
 /// Discover GGUF files near the working directory (depth-limited, skipping
 /// build/vendor trees) so the page can offer a model picker.
 pub(crate) fn discover_models() -> Vec<String> {
+    discover_models_in(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+/// Find `.gguf` files under `root`, at most four directories deep.
+///
+/// Hidden directories, build output and dependency trees are skipped, and so
+/// is `Library`: the macOS app bundle falls back to starting in `$HOME`, and
+/// walking `~/Library` is slow and never where a model lives.
+pub(crate) fn discover_models_in(root: &Path) -> Vec<String> {
     let mut found = BTreeSet::new();
-    let mut stack = vec![(
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        0,
-    )];
+    let mut stack = vec![(root.to_path_buf(), 0)];
     let skipped = [
         "target",
-        ".git",
-        ".venv",
         "node_modules",
+        "Library",
         "runs",
         "logs",
         "paper",
-        ".cache",
         "data",
     ];
     while let Some((dir, depth)) = stack.pop() {
@@ -1523,7 +1527,8 @@ pub(crate) fn discover_models() -> Vec<String> {
                 continue;
             };
             if path.is_dir() {
-                if skipped.contains(&name.as_str()) {
+                // Hidden directories (.git, .venv, .cache, ...) included.
+                if name.starts_with('.') || skipped.contains(&name.as_str()) {
                     continue;
                 }
                 stack.push((path, depth + 1));
@@ -1542,6 +1547,27 @@ pub(crate) fn discover_models() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_discovery_skips_hidden_library_and_build_directories() {
+        let root = std::env::temp_dir().join(format!("ember-discover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in [
+            "models/llama",
+            "Library/Caches",
+            ".hidden",
+            "target/debug",
+            "node_modules/x",
+            ".git/objects",
+        ] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join("m.gguf"), b"").unwrap();
+        }
+        let found = discover_models_in(&root);
+        assert_eq!(found.len(), 1, "found {found:?}");
+        assert!(found[0].ends_with("models/llama/m.gguf"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn request_limiter_reserves_a_slot_before_spawning() {
@@ -1681,7 +1707,9 @@ mod tests {
                 // The raw form must be parseable by the strict raw parser.
                 let reparsed =
                     RawExperimentSpec::from_toml_str(&spec_text).expect("raw round trip");
-                reparsed.resolve().expect("raw re-resolves");
+                // Reproduction binds resolved-experiment.json to the hashed
+                // spec text, so the text must resolve to exactly this spec.
+                assert_eq!(reparsed.resolve().expect("raw re-resolves"), resolved);
                 assert_eq!(
                     resolved.interventions.len(),
                     usize::from(kind == RunKind::Intervention || kind == RunKind::Restore)
