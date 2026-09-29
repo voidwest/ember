@@ -41,6 +41,8 @@ run_parity() {
     (( bytes <= 2500000000 )) || { echo "model exceeds 2.5 GB ladder cap: $model" >&2; exit 1; }
 
     echo "== parity: $model ($dtype, sha256=$sha256)"
+    # Headless: the parity test needs no GUI, and the gate's runner has no
+    # fontconfig/X11 headers, so a default (GUI) build fails before any test.
     EMBER_PARITY_REQUIRED=1 \
     EMBER_PARITY_MODEL="$model" \
     EMBER_PARITY_TOKENIZER="$TOKENIZER" \
@@ -54,7 +56,7 @@ run_parity() {
     EMBER_PARITY_TOKENS="$TOKENS" \
     RAYON_NUM_THREADS=4 \
     CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-2} \
-        cargo test --locked --release --test k_parity -- --nocapture --test-threads=1
+        cargo test --locked --release --no-default-features --test k_parity -- --nocapture --test-threads=1
 }
 
 run_parity \
