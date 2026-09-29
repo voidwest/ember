@@ -32,7 +32,25 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-gpui_kit::actions!(ember_gui, [Quit]);
+gpui_kit::actions!(
+    ember_gui,
+    [
+        Quit,
+        OpenSettings,
+        OpenPalette,
+        HideShowSidebar,
+        HideShowInspector,
+        EnterPresentation,
+        StartExperiment,
+        ReplayLastRun,
+        OpenSampleResult,
+        ShowShortcuts,
+        OpenRepository,
+    ]
+);
+
+/// Where the project lives; the Help menu opens it.
+const REPOSITORY_URL: &str = "https://github.com/voidwest/ember";
 
 mod chart;
 mod components;
@@ -6011,6 +6029,103 @@ fn isolate_bidi(text: &str) -> String {
 // entry point
 // ---------------------------------------------------------------------------
 
+
+/// The menu bar. The commands mirror the palette and the key handler, so a
+/// menu item and its shortcut always do the same thing; Edit uses the kit's
+/// own text actions so Cut, Copy, Paste and Undo reach the focused field.
+fn app_menus() -> Vec<Menu> {
+    use gpui_kit::component::input as text;
+    vec![
+        Menu::new("Ember").items([
+            MenuItem::action("Settings\u{2026}", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::action("Quit Ember", Quit),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::os_action("Undo", text::Undo, OsAction::Undo),
+            MenuItem::os_action("Redo", text::Redo, OsAction::Redo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", text::Cut, OsAction::Cut),
+            MenuItem::os_action("Copy", text::Copy, OsAction::Copy),
+            MenuItem::os_action("Paste", text::Paste, OsAction::Paste),
+            MenuItem::os_action("Select All", text::SelectAll, OsAction::SelectAll),
+        ]),
+        Menu::new("Experiment").items([
+            MenuItem::action("New Experiment", StartExperiment),
+            MenuItem::action("Rerun Last Run", ReplayLastRun),
+            MenuItem::separator(),
+            MenuItem::action("Open Sample Result", OpenSampleResult),
+        ]),
+        Menu::new("View").items([
+            MenuItem::action("Command Palette", OpenPalette),
+            MenuItem::separator(),
+            MenuItem::action("Show or Hide Sidebar", HideShowSidebar),
+            MenuItem::action("Show or Hide Inspector", HideShowInspector),
+            MenuItem::action("Presentation Mode", EnterPresentation),
+        ]),
+        Menu::new("Help").items([
+            MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
+            MenuItem::action("Ember on GitHub", OpenRepository),
+        ]),
+    ]
+}
+
+/// Route menu commands to the console. Registered per window, holding only a
+/// weak handle, so a closed window never keeps the console alive.
+fn register_menu_actions(
+    console: WeakEntity<Console>,
+    window: AnyWindowHandle,
+    cx: &mut App,
+) {
+    fn to_console(
+        console: &WeakEntity<Console>,
+        cx: &mut App,
+        f: impl FnOnce(&mut Console, &mut Context<Console>),
+    ) {
+        let _ = console.update(cx, f);
+    }
+    macro_rules! route {
+        ($action:ty, |$c:ident, $cx:ident| $body:expr) => {{
+            let console = console.clone();
+            cx.on_action(move |_: &$action, cx: &mut App| {
+                to_console(&console, cx, |$c, $cx| $body);
+            });
+        }};
+    }
+    route!(OpenSettings, |c, cx| c.goto(View::Settings, cx));
+    route!(ShowShortcuts, |c, cx| c.goto(View::Settings, cx));
+    route!(HideShowSidebar, |c, cx| c.toggle_sidebar(cx));
+    route!(HideShowInspector, |c, cx| c.toggle_inspector(cx));
+    route!(EnterPresentation, |c, cx| c.toggle_presentation(cx));
+    route!(OpenSampleResult, |c, cx| c.show_sample(cx));
+    route!(StartExperiment, |c, cx| {
+        c.goto(View::Experiment, cx);
+        c.step = WorkspaceStep::Prompt;
+        cx.notify();
+    });
+    route!(ReplayLastRun, |c, cx| {
+        if c.result_context.is_some() {
+            c.goto(View::Experiment, cx);
+            c.step = WorkspaceStep::Review;
+            c.rerun(cx);
+            cx.notify();
+        }
+    });
+    cx.on_action(|_: &OpenRepository, cx: &mut App| cx.open_url(REPOSITORY_URL));
+    // The palette needs the window to focus its field. A menu action runs
+    // while that window is already being updated, and a nested update is
+    // refused, so the work is deferred to just after the dispatch.
+    let palette_console = console.clone();
+    cx.on_action(move |_: &OpenPalette, cx: &mut App| {
+        let console = palette_console.clone();
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |_, window, cx| {
+                let _ = console.update(cx, |console, cx| console.toggle_palette(window, cx));
+            });
+        });
+    });
+}
+
 pub(crate) fn run_gui_command(
     _args: &NativeGuiArgs,
     k_strategy: KStrategy,
@@ -6059,7 +6174,7 @@ pub(crate) fn run_gui_command(
                 Quit,
                 None,
             )]);
-            cx.set_menus([Menu::new("Ember").items([MenuItem::action("Quit Ember", Quit)])]);
+            cx.set_menus(app_menus());
             // Register the embedded fonts before the first window opens so the
             // text system can resolve Noto Sans / Mono / Naskh Arabic offline.
             cx.text_system()
@@ -6097,6 +6212,7 @@ pub(crate) fn run_gui_command(
                         console.spawn_poll(cx);
                         console
                     });
+                    register_menu_actions(console.downgrade(), window.window_handle(), cx);
                     cx.new(|cx| gpui_kit::component::Root::new(console, window, cx))
                 },
             )
@@ -6935,6 +7051,51 @@ mod kit_tests {
             assert!(markdown.contains("Run #77, reopened from history"));
         })
         .unwrap();
+    }
+
+    #[test]
+    fn the_menu_bar_has_the_expected_menus_and_none_are_empty() {
+        let menus = super::app_menus();
+        let names: Vec<_> = menus.iter().map(|menu| menu.name.to_string()).collect();
+        assert_eq!(names, ["Ember", "Edit", "Experiment", "View", "Help"]);
+        assert!(menus.iter().all(|menu| !menu.items.is_empty()));
+    }
+
+    #[gpui_kit::test]
+    async fn menu_commands_reach_the_console(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.text_system()
+                .add_fonts(vec![
+                    Cow::Borrowed(FONT_SANS),
+                    Cow::Borrowed(FONT_MONO),
+                    Cow::Borrowed(FONT_ARABIC),
+                ])
+                .unwrap();
+        });
+        let (tx, _worker_rx) = mpsc::channel();
+        let (_reply_tx, reply_rx) = mpsc::channel();
+        let mut view = None;
+        let handle = cx.add_window(|window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+            view = Some(console.clone());
+            Root::new(console, window, cx)
+        });
+        let console = view.unwrap();
+        cx.update(|cx| super::register_menu_actions(console.downgrade(), handle.into(), cx));
+        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        let before = console.read_with(cx, |c, _| c.sidebar_open);
+        cx.dispatch_action(handle.into(), super::HideShowSidebar);
+        assert_ne!(console.read_with(cx, |c, _| c.sidebar_open), before);
+        cx.dispatch_action(handle.into(), super::OpenSettings);
+        assert_eq!(console.read_with(cx, |c, _| c.view), View::Settings);
+        cx.dispatch_action(handle.into(), super::OpenSampleResult);
+        assert!(console.read_with(cx, |c, _| c.sample));
+        cx.dispatch_action(handle.into(), super::OpenPalette);
+        cx.run_until_parked();
+        assert!(console.read_with(cx, |c, _| c.palette_open));
     }
 
     #[gpui_kit::test]
