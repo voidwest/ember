@@ -1380,7 +1380,12 @@ impl Console {
             .flex_wrap()
             .items_center()
             .gap(px(Space::SM))
-            .pb_4()
+            // The strip is the experiment, stated once: it sits on a surface
+            // so it reads as the page's subject rather than stray metadata.
+            .px(px(Space::MD))
+            .py(px(Space::SM))
+            .bg(colors.surface)
+            .rounded(px(Radius::LG))
             .child(self.pipeline_node(
                 colors,
                 "baseline",
@@ -1412,7 +1417,7 @@ impl Console {
                 Type::LABEL,
                 colors.text_faint,
             ))
-            .child(div().w_full())
+            .child(div().flex_1())
             .child(mono(
                 format!(
                     "\u{2264}{} tokens \u{00b7} seed 0 \u{00b7} {}",
@@ -2909,6 +2914,7 @@ impl Console {
         if row_count == 0 {
             body = body.child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .py(px(Space::XXL))
@@ -3021,6 +3027,7 @@ impl Console {
             ))
             .child(group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(section_label(colors, "Appearance"))
@@ -3074,6 +3081,7 @@ impl Console {
             ))
             .child(group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(section_label(colors, "Workspace"))
@@ -3098,6 +3106,7 @@ impl Console {
             ))
             .child(group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(section_label(colors, "Storage"))
@@ -3169,9 +3178,12 @@ impl Console {
                         .w_full()
                         .justify_start()
                         .h_auto()
-                        .py_2()
-                        .px_2()
-                        .rounded(px(Radius::SM))
+                        .py(px(Space::MD))
+                        .px(px(Space::MD))
+                        .bg(colors.surface)
+                        .border_1()
+                        .border_color(colors.border)
+                        .rounded(px(Radius::LG))
                         .accessibility_label("Resume the saved experiment")
                         .child(
                             div()
@@ -3384,7 +3396,7 @@ impl Console {
             .children(presets.into_iter().map(|(preset, title, hint)| {
                 div()
                     .flex_1()
-                    .min_w(px(300.0))
+                    .min_w(px(420.0))
                     .child(self.preset_card(colors, preset, title, hint, cx))
             }))
     }
@@ -3402,15 +3414,20 @@ impl Console {
             .h_auto()
             .ghost()
             .compact()
-            .py_1()
-            .px_2()
+            .py(px(Space::SM))
+            .px(px(Space::MD))
+            .bg(colors.surface)
+            .border_1()
+            .border_color(colors.border)
+            .rounded(px(Radius::MD))
             .accessibility_label(title)
             .child(
                 div()
                     .w_full()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
-                    .child(label(title, Type::LABEL, colors.text))
+                    .child(label(title, Type::BODY, colors.text))
                     // The hint wraps instead of ellipsizing: two short lines
                     // read faster than one clipped one.
                     .child(label(hint.to_string(), Type::META, colors.text_faint)),
@@ -3484,14 +3501,25 @@ impl Console {
             .flex_1()
             .min_w(px(0.0))
             .h_auto()
-            .py_2()
-            .px_2()
+            .py(px(Space::MD))
+            .px(px(Space::MD))
             .ghost()
             .selected(self.op == operation)
+            // The chosen operation *is* the intervention, so it takes the
+            // accent ring -- the one place selection and accent agree.
+            .bg(colors.surface)
+            .border_1()
+            .border_color(if self.op == operation {
+                colors.accent
+            } else {
+                colors.border
+            })
+            .rounded(px(Radius::MD))
             .accessibility_label(operation_label(operation))
             .child(
                 div()
                     .w_full()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label(operation_label(operation), Type::BODY, colors.text))
@@ -3519,7 +3547,7 @@ impl Console {
                 .rounded(px(Radius::MD))
                 .child(label(error.clone(), Type::LABEL, colors.err))
         });
-        div().flex_col().gap(px(Space::SM)).children(error)
+        div().flex().flex_col().gap(px(Space::SM)).children(error)
     }
 
     fn prompt_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -3561,6 +3589,7 @@ impl Console {
             .gap(px(Space::XL))
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Prepare the experiment", Type::TITLE, colors.text).whitespace_nowrap())
@@ -3581,6 +3610,7 @@ impl Console {
             )
             .child(group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::SM))
                     .child(section_label(colors, "Model"))
@@ -3627,6 +3657,7 @@ impl Console {
             ))
             .child(group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::SM))
                     .child(section_label(colors, "Prompt"))
@@ -3660,6 +3691,7 @@ impl Console {
             ))
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::SM))
                     .child(label("Generation length", Type::LABEL, colors.text_faint))
@@ -3685,6 +3717,7 @@ impl Console {
             .unwrap_or_default();
 
         div()
+            .flex()
             .flex_col()
             .gap(px(Space::SM))
             .child(
@@ -3727,6 +3760,7 @@ impl Console {
 
         let source_controls = needs_source.then(|| {
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::MD))
                 .child(field(
@@ -3795,6 +3829,7 @@ impl Console {
             .gap(px(Space::XL))
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Choose the internal change", Type::TITLE, colors.text).whitespace_nowrap())
@@ -3806,9 +3841,10 @@ impl Console {
             )
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::SM))
-                    .child(label("What should change?", Type::LABEL, colors.text_faint))
+                    .child(card_title(colors, "What should change?"))
                     .child(
                         div()
                             .flex()
@@ -3834,11 +3870,12 @@ impl Console {
             // Where and Target are settings, not objects: spacing and section
             // labels organise them, and the kit Select keeps its own single
             // hairline without a card boundary doubling it.
-            .child(group(
+            .child(panel(colors, group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
-                    .child(section_label(colors, "Where"))
+                    .child(card_title(colors, "Where"))
                     .child(field(
                         colors,
                         "Location in each layer",
@@ -3859,17 +3896,33 @@ impl Console {
                         Type::MICRO,
                         colors.text_faint,
                     ))
-                    .when(per_layer(&self.site), |content| {
-                        content.child(field(colors, "Layer", self.layer_stepper(colors, cx)))
-                    })
-                    .children(value_control)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .items_start()
+                            .gap(px(Space::LG))
+                            .when(per_layer(&self.site), |row| {
+                                row.child(
+                                    div()
+                                        .w(px(260.0))
+                                        .flex_none()
+                                        .child(field(colors, "Layer", self.layer_stepper(colors, cx))),
+                                )
+                            })
+                            .children(value_control.map(|control| {
+                                div().w(px(200.0)).flex_none().child(control)
+                            })),
+                    )
                     .children(source_controls),
-            ))
-            .child(group(
+            )))
+            .child(panel(colors, group(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
-                    .child(section_label(colors, "Target"))
+                    .child(card_title(colors, "Target"))
                     .child(field(
                         colors,
                         "Tokens to affect",
@@ -3883,7 +3936,7 @@ impl Console {
                         ),
                     ))
                     .children(matched_span),
-            ))
+            )))
     }
 
     /// The one-line outcome of a completed run, split the way the experiment
@@ -4024,6 +4077,7 @@ impl Console {
             div()
                 .flex_1()
                 .min_w(px(150.0))
+                .flex()
                 .flex_col()
                 .gap(px(Space::XS))
                 .child(label(title, Type::META, colors.text_faint))
@@ -4123,6 +4177,7 @@ impl Console {
         panel(
             colors,
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::SM))
                 .child(
@@ -4131,6 +4186,7 @@ impl Console {
                         .items_center()
                         .child(
                             div()
+                                .flex()
                                 .flex_col()
                                 .gap(px(Space::XS))
                                 .child(label(
@@ -4212,6 +4268,7 @@ impl Console {
                     .w(px(92.0))
                     .flex_none()
                     .p(px(Space::SM))
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .bg(if token.differs {
@@ -4266,6 +4323,7 @@ impl Console {
         panel(
             colors,
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::SM))
                 .child(label(
@@ -4331,7 +4389,7 @@ impl Console {
             Some(_) => ("Not verified", colors.err),
             None => ("Not checked", colors.text_faint),
         };
-        let mut body = div().flex_col().gap(px(Space::XS));
+        let mut body = div().flex().flex_col().gap(px(Space::XS));
         if events.is_empty() {
             body = body.child(label(
                 "No trace events were recorded for this run.",
@@ -4346,6 +4404,7 @@ impl Console {
         panel(
             colors,
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::SM))
                 .child(
@@ -4377,6 +4436,7 @@ impl Console {
         let has_results = self.baseline.is_some() && self.intervention.is_some();
         let result_body = if !has_results {
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::MD))
                 .child(self.result_summary(colors))
@@ -4385,6 +4445,7 @@ impl Console {
         } else {
             match self.result_view {
                 ResultView::Overview => div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(self.result_summary(colors))
@@ -4393,17 +4454,20 @@ impl Console {
                     .child(self.layer_chart_panel(colors, 210.0, cx))
                     .into_any_element(),
                 ResultView::Layers => div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(self.layer_chart_panel(colors, 380.0, cx))
                     .into_any_element(),
                 ResultView::Tokens => div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(self.paired_outputs(colors, cx))
                     .child(self.token_comparison_panel(colors))
                     .into_any_element(),
                 ResultView::Trace => div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(self.raw_trace_panel(colors, cx))
@@ -4413,6 +4477,7 @@ impl Console {
         };
 
         div()
+            .flex()
             .flex_col()
             .gap(px(Space::LG))
             .child(
@@ -4427,6 +4492,7 @@ impl Console {
                             // width and the action buttons drop below it
                             // when the row is too narrow for both.
                             .min_w(px(340.0))
+                            .flex()
                             .flex_col()
                             .gap(px(Space::XS))
                             .child(label("Review and compare", Type::TITLE, colors.text).whitespace_nowrap())
@@ -4461,7 +4527,7 @@ impl Console {
                     .when(self.last_config.is_some(), |header| {
                         header.child(
                             div()
-                                .w(px(140.0))
+                                .w(px(132.0))
                                 .flex_shrink_0()
                                 .child(btn_secondary(
                                     colors,
@@ -4530,6 +4596,7 @@ impl Console {
         };
         let advanced = self.advanced_open.then(|| {
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::MD))
                 .pt_2()
@@ -4574,6 +4641,7 @@ impl Console {
                         .p(px(Space::SM))
                         .bg(colors.surface_raised)
                         .rounded(px(Radius::MD))
+                        .flex()
                         .flex_col()
                         .gap(px(Space::XS))
                         .child(mono(
@@ -4599,10 +4667,12 @@ impl Console {
         });
 
         div()
+            .flex()
             .flex_col()
             .gap(px(Space::MD))
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Model", Type::META, colors.text_faint))
@@ -4621,6 +4691,7 @@ impl Console {
             )
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Input", Type::META, colors.text_faint))
@@ -4633,6 +4704,7 @@ impl Console {
             )
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Target", Type::META, colors.text_faint))
@@ -4640,6 +4712,7 @@ impl Console {
             )
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Intervention", Type::META, colors.text_faint))
@@ -4647,6 +4720,7 @@ impl Console {
             )
             .child(
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Generation", Type::META, colors.text_faint))
@@ -4661,11 +4735,13 @@ impl Console {
             )
             .children(self.intervention.as_ref().map(|output| {
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(rule_h(colors))
                     .child(
                         div()
+                            .flex()
                             .flex_col()
                             .gap(px(Space::XS))
                             .child(label("Run", Type::META, colors.text_faint))
@@ -4686,11 +4762,13 @@ impl Console {
             }))
             .children(active_metric.map(|metric| {
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(rule_h(colors))
                     .child(
                         div()
+                            .flex()
                             .flex_col()
                             .gap(px(Space::XS))
                             .child(label(active_metric_label, Type::META, colors.text_faint))
@@ -4777,11 +4855,20 @@ impl Console {
                     // `min_w(0)` actually mean something.
                     .overflow_y_scroll()
                     .overflow_x_hidden()
-                    .p_5()
+                    .px_5()
+                    .pt_1()
+                    .pb_5()
                     .child(
                         div()
                             .w_full()
                             .min_w(px(0.0))
+                            // Forms are read and filled top to bottom: a
+                            // bounded column keeps a one-digit field from
+                            // spanning 1700px. Results keep the full width.
+                            .when(self.step != WorkspaceStep::Review, |column| {
+                                column.max_w(px(FORM_MAX_WIDTH))
+                            })
+                            .flex()
                             .flex_col()
                             .gap(px(Space::XL))
                             .child(self.feedback_banners(colors))
@@ -4839,6 +4926,7 @@ impl Console {
             Some(out) if !out.text.is_empty() => {
                 let display_text = isolate_bidi(&out.text);
                 div()
+                    .flex()
                     .flex_col()
                     .gap(px(Space::SM))
                     // The text is the point of this page, so it gets the room:
@@ -5012,7 +5100,7 @@ impl Console {
                 colors.text_faint,
             ))
         } else {
-            div().flex_col().gap(px(Space::XS)).children(
+            div().flex().flex_col().gap(px(Space::XS)).children(
                 lines
                     .iter()
                     .map(|line| {
@@ -5033,6 +5121,7 @@ impl Console {
         panel(
             colors,
             div()
+                .flex()
                 .flex_col()
                 .gap(px(Space::XS))
                 .child(
@@ -5153,6 +5242,8 @@ impl Console {
 }
 
 /// Window widths below which the inspector, then the sidebar, fold away.
+/// Column width of the Prompt and Intervention forms.
+const FORM_MAX_WIDTH: f32 = 940.0;
 const INSPECTOR_MIN_WINDOW: f32 = 1200.0;
 const SIDEBAR_MIN_WINDOW: f32 = 960.0;
 

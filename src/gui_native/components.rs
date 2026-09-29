@@ -44,7 +44,7 @@ fn line_height_multiplier(font: &'static str) -> f32 {
 
 pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static str) -> Div {
     let line_height = scaled(size) * line_height_multiplier(font);
-    div().flex_col().children(
+    div().flex().flex_col().children(
         content
             .split('\n')
             .map(|line| {
@@ -62,6 +62,12 @@ pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static st
 
 pub(super) fn section_label(colors: &Colors, label_text: &'static str) -> Div {
     label(label_text, Type::LABEL, colors.text_faint)
+}
+
+/// A card heading: one step up from a field label, so a panel's title reads
+/// as the name of the group rather than as another faint caption.
+pub(super) fn card_title(colors: &Colors, title: &'static str) -> Div {
+    label(title, Type::SUBSECTION, colors.text)
 }
 
 pub(super) fn field(colors: &Colors, title: &'static str, control: impl IntoElement) -> Div {

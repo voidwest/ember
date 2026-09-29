@@ -85,8 +85,9 @@ pub(super) fn layer_divergence_chart(
     );
 
     if metrics.is_empty() {
+        // A quiet strip, not a chart-sized void: there is nothing to plot.
         return div()
-            .h(px(height))
+            .h(px(88.0))
             .w_full()
             .flex()
             .items_center()
@@ -263,6 +264,7 @@ pub(super) fn layer_divergence_chart(
 
     div()
         .w_full()
+        .flex()
         .flex_col()
         .gap_1()
         .child(
