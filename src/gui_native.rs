@@ -982,6 +982,8 @@ struct Console {
     step: WorkspaceStep,
     view: View,
     inspector_open: bool,
+    /// Whether the window is wide enough to show the inspector this frame.
+    inspector_fits: bool,
     sidebar_open: bool,
     /// Presentation mode, and the panes it hid so leaving restores them.
     presentation: Option<(bool, bool)>,
@@ -1215,6 +1217,7 @@ impl Console {
             // permanently half-empty on the setup steps. Both panes remember
             // their last state across launches -- under gui-tests the files
             // are ignored so the fixtures stay deterministic.
+            inspector_fits: true,
             inspector_open: if cfg!(feature = "gui-tests") {
                 false
             } else {
@@ -1744,13 +1747,19 @@ impl Console {
 
     fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
         self.inspector_open = !self.inspector_open;
-        theme::persist_flag("inspector", self.inspector_open);
+        // Presentation mode owns the panes temporarily; what the user chose
+        // before it is what gets restored and remembered.
+        if self.presentation.is_none() {
+            theme::persist_flag("inspector", self.inspector_open);
+        }
         cx.notify();
     }
 
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = !self.sidebar_open;
-        theme::persist_flag("sidebar", self.sidebar_open);
+        if self.presentation.is_none() {
+            theme::persist_flag("sidebar", self.sidebar_open);
+        }
         cx.notify();
     }
 
@@ -1839,9 +1848,11 @@ impl Console {
             }
             Command::DuplicateExperiment => self.duplicate_experiment(cx),
             Command::RerunExperiment => {
-                self.goto(View::Experiment, cx);
-                self.step = WorkspaceStep::Review;
-                self.rerun(cx);
+                if self.result_context.is_some() {
+                    self.goto(View::Experiment, cx);
+                    self.step = WorkspaceStep::Review;
+                    self.rerun(cx);
+                }
             }
             Command::GoHome => self.goto(View::Home, cx),
             Command::GoExperiments => self.goto(View::Experiment, cx),
@@ -2171,7 +2182,11 @@ impl Console {
             return;
         }
         if cmd && !shift && key == "r" {
-            self.rerun(cx);
+            if self.result_context.is_some() {
+                self.goto(View::Experiment, cx);
+                self.step = WorkspaceStep::Review;
+                self.rerun(cx);
+            }
             cx.notify();
             return;
         }
@@ -2344,7 +2359,9 @@ impl Console {
                     ))
                     .on_click(toggle),
             )
-            .when(self.view == View::Experiment, |bar| {
+            // No button when there is no room: a toggle that changes nothing
+            // on screen reads as broken.
+            .when(self.view == View::Experiment && self.inspector_fits, |bar| {
                 bar.child(
                     Button::new("inspector-toggle")
                         .ghost()
@@ -2599,9 +2616,12 @@ impl Console {
         if self.busy() {
             return;
         }
-        if let Some(context) = self.result_context.clone() {
-            self.apply_form_values(context, cx);
-        }
+        // "Rerun" replays a completed run. With none, it must do nothing
+        // rather than quietly start whatever happens to be in the form.
+        let Some(context) = self.result_context.clone() else {
+            return;
+        };
+        self.apply_form_values(context, cx);
         self.run();
     }
 
@@ -3416,13 +3436,16 @@ impl Console {
                             .accessibility_label("Start a new experiment")
                             .on_click(start),
                     )
-                    .child(
+                    // Only when nothing is waiting to be resumed: an example
+                    // rewrites the form, and the next save would replace the
+                    // saved draft the Resume card offers.
+                    .children(self.store.draft.is_none().then(|| {
                         Button::new("home-example")
                             .label("Try an example")
                             .tooltip("Load a ready-made experiment and step through it")
                             .accessibility_label("Try a ready-made example experiment")
-                            .on_click(example),
-                    )
+                            .on_click(example)
+                    }))
                     .child(
                         Button::new("home-models")
                             .label("Manage models")
@@ -5352,7 +5375,8 @@ impl Render for Console {
         // need. The stored flags are untouched: widening the window brings
         // both panes back exactly as the user left them.
         let width = f32::from(window.viewport_size().width);
-        let show_inspector = self.inspector_open && width >= INSPECTOR_MIN_WINDOW;
+        self.inspector_fits = width >= INSPECTOR_MIN_WINDOW;
+        let show_inspector = self.inspector_open && self.inspector_fits;
         let show_sidebar = self.sidebar_open && width >= SIDEBAR_MIN_WINDOW;
         let colors = self.colors();
         let topbar = self.topbar(&colors, cx);
