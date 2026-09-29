@@ -1,7 +1,7 @@
 //! Small, reusable presentation primitives for the native console.
 
 use super::input::TextInput;
-use super::theme::{Colors, Radius, Space, Type};
+use super::theme::{scaled, Colors, Radius, Space, Type};
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
     Disableable, Sizable,
@@ -13,7 +13,7 @@ use std::time::Duration;
 pub(super) fn label(content: impl Into<SharedString>, size: f32, color: Rgba) -> Div {
     div()
         .child(content.into())
-        .text_size(px(size))
+        .text_size(px(scaled(size)))
         .text_color(color)
 }
 
@@ -21,7 +21,7 @@ pub(super) fn mono(content: impl Into<SharedString>, size: f32, color: Rgba) -> 
     div()
         .child(content.into())
         .font_family(super::FONT_MONO_NAME)
-        .text_size(px(size))
+        .text_size(px(scaled(size)))
         .text_color(color)
 }
 
@@ -34,14 +34,16 @@ pub(super) fn mono(content: impl Into<SharedString>, size: f32, color: Rgba) -> 
 /// project exists to study. Verified against the rendered visual artifacts.
 fn line_height_multiplier(font: &'static str) -> f32 {
     if font == super::FONT_ARABIC_NAME {
-        2.6
+        // The bundled fallback face needs the taller box; the macOS system
+        // face does not.
+        if cfg!(target_os = "macos") { 2.0 } else { 2.6 }
     } else {
         1.8
     }
 }
 
 pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static str) -> Div {
-    let line_height = size * line_height_multiplier(font);
+    let line_height = scaled(size) * line_height_multiplier(font);
     div().flex_col().children(
         content
             .split('\n')
@@ -49,7 +51,7 @@ pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static st
                 div()
                     .child(line.to_string())
                     .font_family(font)
-                    .text_size(px(size))
+                    .text_size(px(scaled(size)))
                     .line_height(px(line_height))
                     .text_color(color)
                     .into_any_element()
@@ -64,6 +66,7 @@ pub(super) fn section_label(colors: &Colors, label_text: &'static str) -> Div {
 
 pub(super) fn field(colors: &Colors, title: &'static str, control: impl IntoElement) -> Div {
     div()
+        .flex()
         .flex_col()
         .gap(px(Space::SM))
         .w_full()
@@ -88,7 +91,7 @@ pub(super) fn panel(colors: &Colors, content: impl IntoElement) -> Div {
 /// Spacing and a section label do the organising; a surface is spent only where
 /// there is genuinely a selectable object, a result, or a control group.
 pub(super) fn group(content: impl IntoElement) -> Div {
-    div().w_full().flex_col().gap(px(Space::MD)).child(content)
+    div().w_full().flex().flex_col().gap(px(Space::MD)).child(content)
 }
 
 pub(super) fn rule_h(colors: &Colors) -> Div {
@@ -180,8 +183,8 @@ pub(super) fn text_input(
     let _ = (colors, cx);
     div()
         .w_full()
-        .h(px(height.unwrap_or(32.0)))
+        .h(px(scaled(height.unwrap_or(32.0))))
         .font_family(font)
-        .text_size(px(size))
+        .text_size(px(scaled(size)))
         .child(input)
 }

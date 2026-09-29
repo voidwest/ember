@@ -126,7 +126,6 @@ pub(super) struct Colors {
     pub warn: Rgba,
     pub busy: Rgba,
     pub err_box_bg: Rgba,
-    pub warn_box_bg: Rgba,
 }
 
 pub(super) fn light() -> Colors {
@@ -156,7 +155,6 @@ pub(super) fn light() -> Colors {
         warn: rgb(0x8a6410),
         busy: rgb(0x9c3f70),
         err_box_bg: rgb(0xfbeceb),
-        warn_box_bg: rgb(0xf8f2e2),
     }
 }
 
@@ -187,7 +185,6 @@ pub(super) fn dark() -> Colors {
         warn: rgb(0xd8a94a),
         busy: rgb(0xdb6a9c),
         err_box_bg: rgb(0x2b1d1a),
-        warn_box_bg: rgb(0x2a251a),
     }
 }
 
@@ -201,19 +198,41 @@ pub(super) struct Type;
 
 impl Type {
     /// Page title. Large enough to anchor a screen, not a hero.
-    pub(super) const TITLE: f32 = 28.0;
+    pub(super) const TITLE: f32 = 30.0;
     /// Section title within a page.
-    pub(super) const SECTION: f32 = 17.0;
+    pub(super) const SECTION: f32 = 19.0;
+    /// A result value read from across a room: landmark values, verdicts.
+    pub(super) const VALUE: f32 = 18.0;
+    /// Generated model output -- the text the demo is about.
+    pub(super) const OUTPUT: f32 = 16.0;
     /// Sub-heading / card title.
-    pub(super) const SUBSECTION: f32 = 15.0;
+    pub(super) const SUBSECTION: f32 = 16.0;
     /// Body copy and input text.
-    pub(super) const BODY: f32 = 14.0;
+    pub(super) const BODY: f32 = 15.0;
     /// Field labels and secondary copy. Sentence case, never uppercase.
-    pub(super) const LABEL: f32 = 13.0;
+    pub(super) const LABEL: f32 = 14.0;
     /// Metadata: model names, hook ids, seeds, token counts.
-    pub(super) const META: f32 = 12.0;
+    pub(super) const META: f32 = 13.0;
     /// Micro labels and dense secondary rows.
-    pub(super) const MICRO: f32 = 11.0;
+    pub(super) const MICRO: f32 = 12.5;
+}
+
+/// Presentation mode's text scale. Text goes through [`scaled`] at the few
+/// primitives every string is drawn by, so one factor moves the whole console
+/// and no call site has to know about it.
+static UI_SCALE_MILLI: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+pub(super) const PRESENTATION_SCALE: f32 = 1.18;
+
+pub(super) fn set_ui_scale(scale: f32) {
+    UI_SCALE_MILLI.store(
+        (scale * 1000.0).round() as u32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub(super) fn scaled(size: f32) -> f32 {
+    size * UI_SCALE_MILLI.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
 }
 
 /// Spacing scale. 4/8/12/16/24/32, so rhythm is a token rather than a guess.

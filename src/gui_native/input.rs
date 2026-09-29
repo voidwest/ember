@@ -126,8 +126,8 @@ impl Render for TextInput {
                     .h_full()
                     .w_full()
                     .font_family(super::FONT_ARABIC_NAME)
-                    .text_size(px(15.0))
-                    .line_height(px(28.0))
+                    .text_size(px(super::theme::scaled(18.0)))
+                    .line_height(px(super::theme::scaled(30.0)))
                     .into_any_element()
             }
         }

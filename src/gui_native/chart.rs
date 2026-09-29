@@ -67,20 +67,20 @@ pub(super) fn layer_divergence_chart(
         .or(selected_layer)
         .and_then(|layer| metrics.iter().find(|metric| metric.layer == layer));
     let readout = active.map_or_else(
-        || "HOVER A LAYER FOR EXACT VALUES  ·  CLICK TO PIN".to_string(),
+        || "Hover a layer for exact values \u{00b7} click to pin".to_string(),
         |metric| match (metric.relative_l2_difference, metric.cosine_distance) {
             (Some(relative_l2), Some(cosine_distance)) => format!(
-                "LAYER {}  ·  REL L2 {}  ·  COS DIST {}",
+                "Layer {} \u{00b7} rel L2 {} \u{00b7} cos dist {}",
                 metric.layer,
                 readout_metric_label(relative_l2),
                 readout_metric_label(cosine_distance)
             ),
             (Some(relative_l2), None) => format!(
-                "LAYER {}  ·  REL L2 {}  ·  COS DIST —",
+                "Layer {} \u{00b7} rel L2 {} \u{00b7} cos dist \u{2014}",
                 metric.layer,
                 readout_metric_label(relative_l2)
             ),
-            _ => format!("LAYER {}  ·  NO FINITE VALUE", metric.layer),
+            _ => format!("Layer {} \u{00b7} no finite value", metric.layer),
         },
     );
 
@@ -97,14 +97,16 @@ pub(super) fn layer_divergence_chart(
             .rounded_md()
             .child(label(
                 "No comparable layer captures were retained for this run.",
-                10.0,
+                13.5,
                 colors.text_faint,
             ));
     }
 
     let grid_color = Hsla::from(colors.border).opacity(0.72);
     let line_color = colors.accent;
-    let marker_color = Hsla::from(colors.warn).opacity(0.82);
+    // The intervention layer is an Ember-orange fact, not a caution: the
+    // marker names the layer the user chose, it does not warn about it.
+    let marker_color = Hsla::from(colors.accent).opacity(0.82);
     let point_color = colors.accent;
     let selected_color = colors.text;
     let metrics_for_geometry = metrics.clone();
@@ -145,7 +147,7 @@ pub(super) fn layer_divergence_chart(
                 .collect();
             let series = (points.len() >= 2)
                 .then(|| {
-                    let mut builder = PathBuilder::stroke(px(1.75));
+                    let mut builder = PathBuilder::stroke(px(2.25));
                     for (index, (_, point)) in points.iter().enumerate() {
                         if index == 0 {
                             builder.move_to(*point);
@@ -160,7 +162,7 @@ pub(super) fn layer_divergence_chart(
                 .filter(|layer| *layer >= min_layer && *layer <= max_layer)
                 .and_then(|layer| {
                     let x = x_for(layer);
-                    let mut builder = PathBuilder::stroke(px(1.0)).dash_array(&[px(4.0), px(3.0)]);
+                    let mut builder = PathBuilder::stroke(px(1.5)).dash_array(&[px(4.0), px(3.0)]);
                     builder.move_to(point(x, top));
                     builder.line_to(point(x, bottom));
                     builder.build().ok()
@@ -226,7 +228,7 @@ pub(super) fn layer_divergence_chart(
             }
             for (layer, center) in paint.points {
                 let is_selected = selected_layer == Some(layer) || hovered_layer == Some(layer);
-                let radius = if is_selected { 4.0 } else { 2.75 };
+                let radius = if is_selected { 5.5 } else { 3.25 };
                 window.paint_quad(quad(
                     Bounds::new(
                         point(center.x - px(radius), center.y - px(radius)),
@@ -253,7 +255,7 @@ pub(super) fn layer_divergence_chart(
         .collect::<Vec<_>>();
     let mut y_tick_elements = Vec::with_capacity(9);
     for (index, value) in y_ticks.into_iter().enumerate() {
-        y_tick_elements.push(mono(value, 8.0, colors.text_faint));
+        y_tick_elements.push(mono(value, 12.5, colors.text_faint));
         if index < 4 {
             y_tick_elements.push(div().flex_1());
         }
@@ -279,7 +281,7 @@ pub(super) fn layer_divergence_chart(
                 .rounded_md()
                 .child(mono(
                     readout,
-                    9.5,
+                    13.5,
                     if active.is_some() {
                         colors.text
                     } else {
@@ -289,7 +291,7 @@ pub(super) fn layer_divergence_chart(
                 .child(div().w_full())
                 .children(
                     intervention_layer
-                        .map(|layer| mono(format!("INTERVENTION  L{layer}"), 8.5, colors.warn)),
+                        .map(|layer| mono(format!("Intervention \u{00b7} L{layer}"), 13.0, colors.accent)),
                 ),
         )
         .child(
@@ -300,7 +302,7 @@ pub(super) fn layer_divergence_chart(
                 .child(
                     div()
                         .h(px(height))
-                        .w(px(44.0))
+                        .w(px(56.0))
                         .flex_none()
                         .flex()
                         .flex_col()
@@ -323,21 +325,21 @@ pub(super) fn layer_divergence_chart(
             div()
                 .flex()
                 .items_center()
-                .child(mono(format!("L{min_layer}"), 8.5, colors.text_faint))
+                .child(mono(format!("L{min_layer}"), 12.5, colors.text_faint))
                 .child(div().w_full())
-                .child(label("TRANSFORMER LAYER", 8.5, colors.text_faint))
+                .child(label("Transformer layer", 12.5, colors.text_faint))
                 .child(div().w_full())
-                .child(mono(format!("L{max_layer}"), 8.5, colors.text_faint)),
+                .child(mono(format!("L{max_layer}"), 12.5, colors.text_faint)),
         )
         .child(
             div()
                 .flex()
                 .items_center()
-                .child(label("Y: RELATIVE L2 DIFFERENCE", 8.0, colors.text_faint))
+                .child(label("Y: relative L2 difference", 12.5, colors.text_faint))
                 .child(div().w_full())
                 .child(mono(
                     format!("range 0 – {}", metric_label(y_max)),
-                    8.0,
+                    12.5,
                     colors.text_faint,
                 )),
         )
