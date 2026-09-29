@@ -25,53 +25,13 @@ stimuli/__pycache__/
 scripts/__pycache__/
 docs/plots/root_probe_scale_comparison.png
 
-# only README.md is tracked — design notes and logs stay local
-*.md
-!README.md
-!/CHANGELOG.md
-!/CONTRIBUTING.md
-!docs/agent-runtime.md
-!docs/dataset_pipeline.md
-!docs/arm-kernels.md
-!docs/packed-q8-phase0.md
-!docs/packed-q8-research-memo.md
-!docs/packed-q8-lifecycle.md
-!docs/experiments.md
-!docs/activation-artifacts.md
-!docs/activation-patching.md
-!docs/v02-validation.md
-!docs/v03-execution-contracts.md
-!docs/v04-execution-contract.md
-!docs/v05-research-contract.md
-!docs/v05-*.md
-!docs/v06-gui.md
-!docs/performance-baseline-dossier.md
-!docs/phase2-optimization-report.md
-!docs/phase3-optimization-report.md
-!docs/api-stability.md
-!docs/fuzzing.md
-!docs/k-quant-gemv-design.md
-!docs/reproducibility.md
-!docs/external-benchmark.md
-!docs/interventions.md
-!docs/token-selection.md
-!docs/bundle-schema-v1.md
-!docs/experiment-schema-v1.md
-!docs/usage.md
-!docs/support.md
-!docs/cancellation.md
-!docs/trace-schema.md
-!docs/validation.md
-!docs/models.md
-!docs/architecture.md
-!docs/research.md
-!docs/kv-snapshots.md
-!docs/kv-transfer-research.md
-!docs/embersec/*.md
-!/KV_ARCHITECTURE_AUDIT.md
-!/KV_FIRST_CLASS_PLAN.md
-!/CODE_CHANGES_KV_SNAPSHOT.md
-!/SECURITY_AUDIT.md
+# Local-only notes. Markdown is otherwise tracked: an allowlist of *.md
+# with per-file exceptions silently dropped new docs that tracked pages
+# linked to (docs/migration-to-1.0.md and others). Name scratch notes
+# *.local.md, or put them under /notes/, to keep them out of git.
+*.local.md
+/notes/
+.commandcode/
 # pilot 001 artifacts live on the pilot-001 branch and stay out of main
 research/pilots/arabic_quantization_001/
 /REPRODUCIBILITY.md
@@ -188,6 +148,10 @@ artifacts/golden-v03/**/*.bin
 #   ./target/debug/ember gui --render-test-dir docs/screenshots/console
 docs/screenshots/console/
 docs/screenshots/console-shell/
+# Render-harness passes written under artifacts/gui/ are local review
+# material too. Already-tracked captures stay tracked; force-add a new one
+# (git add -f) when it is meant to ship.
+/artifacts/gui/*/
 
 # Local working notes for the current UI pass; not documentation.
 /nextsteps.md
