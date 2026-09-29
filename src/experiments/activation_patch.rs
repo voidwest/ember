@@ -164,12 +164,7 @@ impl ActivationPatch {
             let tensor_path = tensor_path.to_str().ok_or_else(|| {
                 ExperimentError::new("patch source tensor path is not valid UTF-8")
             })?;
-            let (shape, values) = crate::npy::read_npy_2d(tensor_path).map_err(|e| {
-                ExperimentError::new(format!(
-                    "failed to read patch source tensor '{}': {e}",
-                    tensor_path
-                ))
-            })?;
+            let (shape, values) = load_validated_tensor(tensor_path, &record.sha256)?;
             if shape.len() != 2 {
                 return Err(ExperimentError::new(format!(
                     "patch source record {} has shape {shape:?}; expected a 2D tensor",
@@ -464,6 +459,32 @@ impl Experiment for ActivationPatch {
     }
 }
 
+/// Read a patch source tensor, checking the bytes actually used against the
+/// SHA-256 that `load_manifest` validated. Validation was a separate read, so
+/// a file replaced in between is refused rather than patched in.
+fn load_validated_tensor(
+    tensor_path: &str,
+    expected_sha256: &str,
+) -> Result<(Vec<usize>, Vec<f32>), ExperimentError> {
+    let tensor_bytes = crate::npy::read_npy_file_bytes(tensor_path).map_err(|e| {
+        ExperimentError::new(format!(
+            "failed to read patch source tensor '{tensor_path}': {e}"
+        ))
+    })?;
+    let actual_sha = crate::extraction::sha256_bytes(&tensor_bytes);
+    if !actual_sha.eq_ignore_ascii_case(expected_sha256) {
+        return Err(ExperimentError::new(format!(
+            "patch source tensor '{tensor_path}' changed after validation: \
+             manifest SHA-256 {expected_sha256}, read {actual_sha}"
+        )));
+    }
+    crate::npy::read_npy_2d_bytes_named(&tensor_bytes, tensor_path).map_err(|e| {
+        ExperimentError::new(format!(
+            "failed to read patch source tensor '{tensor_path}': {e}"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,6 +576,26 @@ mod tests {
             )
             .unwrap();
         (manifest_path, vec![1, 2])
+    }
+
+    #[test]
+    fn patch_tensor_that_changed_after_validation_is_refused() {
+        let (manifest, _) = make_source_artifact("changed-after-validation");
+        let manifest_str = manifest.to_str().unwrap();
+        let loaded = load_manifest(manifest_str).unwrap();
+        let record = &loaded.records[0];
+        let path = resolve_record_path(manifest_str, &record.path).unwrap();
+        let path = path.to_str().unwrap();
+        assert!(super::load_validated_tensor(path, &record.sha256).is_ok());
+        // Same shape, different values: only the hash can tell.
+        let (shape, mut values) = crate::npy::read_npy_2d(path).unwrap();
+        values[0] += 1.0;
+        crate::npy::write_npy_2d(path, &values, &[shape[0], shape[1]]).unwrap();
+        let err = super::load_validated_tensor(path, &record.sha256).unwrap_err();
+        assert!(
+            err.to_string().contains("changed after validation"),
+            "{err}"
+        );
     }
 
     #[test]

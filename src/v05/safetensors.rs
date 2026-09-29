@@ -146,38 +146,48 @@ pub struct TensorView {
 ///
 /// Validates the header length, JSON structure, offsets, alignment, and
 /// bounds; returns the tensors in file order plus the data slice.
+///
+/// The data region starts at `8 + header_len`, as the published format
+/// specifies. Ember builds before 0.6.4 instead wrote an unpadded header and
+/// placed the data at the next 8-byte boundary, filling the gap with padding.
+/// When `8 + header_len` is not 8-aligned the two readings differ, and the
+/// one consistent with the file is used: the published reading when the
+/// tensors exactly fill the rest of the buffer, otherwise the legacy reading,
+/// which additionally requires the gap to hold only space or zero padding
+/// bytes and the tail to be under 8 bytes of zero padding.
 pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
     if bytes.len() < 8 {
         return Err("safetensors buffer shorter than the 8-byte header length".into());
     }
-    let header_len = u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes")) as usize;
-    let data_start = 8usize
+    let header_len = usize::try_from(u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes")))
+        .map_err(|_| "safetensors header length overflow".to_string())?;
+    let header_end = 8usize
         .checked_add(header_len)
         .ok_or_else(|| "safetensors header length overflow".to_string())?;
-    if data_start > bytes.len() {
+    if header_end > bytes.len() {
         return Err(format!(
             "safetensors header claims {header_len} bytes but the buffer has only {}",
             bytes.len()
         ));
     }
-    // Tolerant of both the published form (header_len already includes
-    // padding, so `padded == 8 + header_len`) and the legacy pre-0.6.4
-    // form (padding emitted after the header instead of inside it).
-    let padded = 8usize
-        .checked_add(header_len)
-        .and_then(|v| v.checked_add(7))
-        .map(|v| v & !7)
-        .ok_or_else(|| "safetensors offset overflow".to_string())?;
-    if padded > bytes.len() {
-        return Err("safetensors data region exceeds buffer".into());
-    }
-    let header: serde_json::Value = serde_json::from_slice(&bytes[8..data_start])
+    let header: serde_json::Value = serde_json::from_slice(&bytes[8..header_end])
         .map_err(|error| format!("safetensors header is not valid JSON: {error}"))?;
     let object = header
         .as_object()
         .ok_or_else(|| "safetensors header must be a JSON object".to_string())?;
-    let mut tensors = Vec::with_capacity(object.len());
+    // (name, dtype, shape, relative start, relative end)
+    let mut entries = Vec::with_capacity(object.len());
     for (name, value) in object {
+        if name == "__metadata__" {
+            // Free-form string-to-string metadata defined by the format.
+            let metadata = value
+                .as_object()
+                .ok_or_else(|| "safetensors __metadata__ must be an object".to_string())?;
+            if metadata.values().any(|value| !value.is_string()) {
+                return Err("safetensors __metadata__ values must be strings".into());
+            }
+            continue;
+        }
         let entry = value
             .as_object()
             .ok_or_else(|| format!("safetensors entry '{name}' must be an object"))?;
@@ -193,7 +203,7 @@ pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
             .iter()
             .map(|dim| {
                 dim.as_u64()
-                    .map(|v| v as usize)
+                    .and_then(|v| usize::try_from(v).ok())
                     .ok_or_else(|| format!("safetensors entry '{name}' has a non-integer shape"))
             })
             .collect::<Result<_, _>>()?;
@@ -206,17 +216,18 @@ pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
                 "safetensors entry '{name}' data_offsets must have 2 entries"
             ));
         }
-        let start = offsets[0]
-            .as_u64()
-            .ok_or_else(|| format!("safetensors entry '{name}' has an invalid start offset"))?
-            as usize;
-        let end = offsets[1]
-            .as_u64()
-            .ok_or_else(|| format!("safetensors entry '{name}' has an invalid end offset"))?
-            as usize;
-        if start >= end {
+        let offset = |index: usize, label: &str| {
+            offsets[index]
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| format!("safetensors entry '{name}' has an invalid {label} offset"))
+        };
+        let start = offset(0, "start")?;
+        let end = offset(1, "end")?;
+        // start == end is a zero-element tensor, which the format allows.
+        if start > end {
             return Err(format!(
-                "safetensors entry '{name}' has a non-increasing offset range"
+                "safetensors entry '{name}' has a decreasing offset range"
             ));
         }
         let element_count: usize = shape
@@ -236,10 +247,16 @@ pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
                 dtype.name()
             ));
         }
-        let absolute_start = padded
+        entries.push((name.clone(), dtype, shape, start, end));
+    }
+    let data_len = entries.iter().map(|entry| entry.4).max().unwrap_or(0);
+    let data_start = data_start(bytes, header_end, data_len)?;
+    let mut tensors = Vec::with_capacity(entries.len());
+    for (name, dtype, shape, start, end) in entries {
+        let absolute_start = data_start
             .checked_add(start)
             .ok_or_else(|| "safetensors offset overflow".to_string())?;
-        let absolute_end = padded
+        let absolute_end = data_start
             .checked_add(end)
             .ok_or_else(|| "safetensors offset overflow".to_string())?;
         if absolute_end > bytes.len() {
@@ -249,7 +266,7 @@ pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
             ));
         }
         tensors.push((
-            name.clone(),
+            name,
             TensorView {
                 dtype,
                 shape,
@@ -258,6 +275,45 @@ pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
         ));
     }
     Ok(tensors)
+}
+
+/// Where the data region begins (see [`deserialize`]); `data_len` is the
+/// largest tensor end offset.
+fn data_start(bytes: &[u8], header_end: usize, data_len: usize) -> Result<usize, String> {
+    if header_end.is_multiple_of(8) {
+        // Both readings coincide.
+        return Ok(header_end);
+    }
+    if header_end.checked_add(data_len) == Some(bytes.len()) {
+        // Published format: the tensors exactly fill the rest of the file.
+        return Ok(header_end);
+    }
+    // Legacy Ember layout: padding between header and data, then zero tail
+    // padding up to an 8-byte multiple.
+    let legacy_start = header_end
+        .checked_add(7)
+        .map(|v| v & !7)
+        .ok_or_else(|| "safetensors offset overflow".to_string())?;
+    let legacy_end = legacy_start
+        .checked_add(data_len)
+        .ok_or_else(|| "safetensors offset overflow".to_string())?;
+    let consistent = legacy_end <= bytes.len()
+        && bytes.len() - legacy_end < 8
+        && bytes[header_end..legacy_start]
+            .iter()
+            .all(|&byte| byte == b' ' || byte == 0)
+        && bytes[legacy_end..].iter().all(|&byte| byte == 0);
+    if consistent {
+        Ok(legacy_start)
+    } else {
+        Err(format!(
+            "safetensors data region is inconsistent with the header: {} bytes of tensor data \
+             after a {}-byte header in a {}-byte buffer",
+            data_len,
+            header_end,
+            bytes.len()
+        ))
+    }
 }
 
 /// Load one tensor's f32 data (with f16 conversion when stored as f16).
@@ -447,6 +503,73 @@ mod tests {
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].0, "x");
         assert_eq!(tensor_f32(&bytes, &views[0].1).unwrap(), vec![1.5]);
+    }
+
+    /// A spec-compliant file whose header is *not* padded: data begins at
+    /// exactly `8 + header_len`, even though that is not 8-aligned.
+    fn unpadded_spec_file(header: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(data);
+        bytes
+    }
+
+    #[test]
+    fn unpadded_spec_header_reads_data_immediately_after_it() {
+        let header = br#"{"x":{"dtype":"F32","shape":[2],"data_offsets":[0,8]}}"#;
+        assert!(!(8 + header.len()).is_multiple_of(8));
+        let data: Vec<u8> = [1.5f32, -2.0]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let bytes = unpadded_spec_file(header, &data);
+        let views = deserialize(&bytes).unwrap();
+        assert_eq!(views[0].1.data_offsets.0, 8 + header.len());
+        assert_eq!(tensor_f32(&bytes, &views[0].1).unwrap(), vec![1.5, -2.0]);
+    }
+
+    #[test]
+    fn legacy_padding_must_be_spaces_or_zeros() {
+        let mut header = br#"{"x":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#.to_vec();
+        while (8 + header.len()).is_multiple_of(8) {
+            header.push(b' ');
+        }
+        let data_start = (8 + header.len() + 7) & !7;
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&header);
+        bytes.resize(data_start, b'#'); // not padding Ember ever wrote
+        bytes.extend_from_slice(&1.5f32.to_le_bytes());
+        while !bytes.len().is_multiple_of(8) {
+            bytes.push(0);
+        }
+        assert!(deserialize(&bytes).is_err());
+        for filler in [b' ', 0u8] {
+            bytes[8 + header.len()..data_start].fill(filler);
+            assert_eq!(
+                tensor_f32(&bytes, &deserialize(&bytes).unwrap()[0].1).unwrap(),
+                vec![1.5]
+            );
+        }
+        // Trailing garbage fits neither reading.
+        bytes.push(0);
+        bytes.extend_from_slice(&[0xAB; 7]);
+        assert!(deserialize(&bytes).is_err());
+    }
+
+    #[test]
+    fn metadata_entry_and_zero_element_tensors_are_accepted() {
+        let header = br#"{"__metadata__":{"format":"pt"},"empty":{"dtype":"F32","shape":[0,4],"data_offsets":[0,0]},"x":{"dtype":"F16","shape":[1],"data_offsets":[0,2]}}"#;
+        let data = half::f16::from_f32(0.5).to_le_bytes();
+        let bytes = unpadded_spec_file(header, &data);
+        let views = deserialize(&bytes).unwrap();
+        let names: Vec<&str> = views.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["empty", "x"]);
+        assert!(tensor_f32(&bytes, &views[0].1).unwrap().is_empty());
+        assert_eq!(tensor_f32(&bytes, &views[1].1).unwrap(), vec![0.5]);
+        let bad = br#"{"__metadata__":{"format":1}}"#;
+        assert!(deserialize(&unpadded_spec_file(bad, &[])).is_err());
+        let reversed = br#"{"x":{"dtype":"F32","shape":[0],"data_offsets":[4,0]}}"#;
+        assert!(deserialize(&unpadded_spec_file(reversed, &[0; 4])).is_err());
     }
 
     #[test]

@@ -23,9 +23,12 @@ runs/example/
 │   └── index.jsonl          per-tensor index entries
 ├── interventions/events.jsonl  every intervention application
 ├── traces/events.jsonl      capture route records + per-layer fusion state
-├── checksums.sha256         SHA-256 of every file at publish time
-└── verification.json        written by `verify` (runtime state)
+└── checksums.sha256         SHA-256 of every file at publish time
 ```
+
+`verify` does not write into the bundle. Bundles verified by Ember releases
+before 1.0 may contain a `verification.json`; it is tolerated, never read,
+and reported as ignored.
 
 ## Identity
 
@@ -45,8 +48,13 @@ runs/example/
 
 Canonical JSON: sorted object keys, stable array order, shortest
 round-trip float formatting, UTF-8. `runtime.json`, `manifest.json`,
-`checksums.sha256`, and `verification.json` are excluded from both
-hashes.
+and `checksums.sha256` are excluded from both hashes.
+
+Both hashes are recomputed from bundle contents and compared with values the
+bundle itself records, so a verified bundle is self-consistent, not
+externally authenticated. Anchor it with `--expect-semantic-hash` or a
+signed evidence envelope over `manifest.json`
+(see [reproducibility](reproducibility.md#what-verified-means)).
 
 ## What is deterministic vs runtime
 
@@ -63,7 +71,10 @@ process ID, model/tokenizer local paths, scratch bytes.
 
 `resolved-experiment.json` carries the output directory (a placement
 decision) and is therefore excluded from the semantic payload inventory;
-it remains checksum-verified.
+it remains checksum-verified. Because it is outside the semantic hash,
+`reproduce` uses it only after checking it against the hashed
+`experiment.toml` and the semantic manifest, and pins the model and
+tokenizer to their recorded SHA-256 values.
 
 ## Compatibility
 
@@ -99,8 +110,11 @@ unless `output.overwrite = true`.
 
 Verification rejects symlinks and special files within a bundle before opening
 its documents. Every regular file must appear in the manifest, apart from
-`checksums.sha256` and the optional runtime `verification.json`. Every listed
-file must have a checksum; duplicate checksum paths fail. The inventory walk
+`checksums.sha256` and a legacy `verification.json` (ignored; it may not be
+listed or checksummed). Every listed file must have a checksum; duplicate
+checksum paths fail. Each document the verifier parses is read once, and the
+bytes that were hashed are the bytes parsed and handed to `compare`,
+`inspect`, and `reproduce`. The inventory walk
 is bounded to 100,000 entries and 64 directory levels. Verify an immutable
 bundle copy; this is not an atomic snapshot of a concurrently modified tree.
 

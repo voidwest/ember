@@ -6,7 +6,7 @@
 //! time).
 
 use crate::v05::hook::SemanticHookSite;
-use crate::v05::verify::{load_bundle_for_source, CaptureIndexEntry};
+use crate::v05::verify::{load_bundle_for_source, CaptureIndexEntry, LoadedBundle};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -115,19 +115,28 @@ pub struct RuntimeJson {
 }
 
 impl RuntimeJson {
-    fn read(root: &Path) -> RuntimeJson {
-        let path = root.join("runtime.json");
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return RuntimeJson::default();
-        };
-        serde_json::from_str(&text).unwrap_or_default()
+    fn read(bundle: &LoadedBundle) -> RuntimeJson {
+        bundle
+            .file("runtime.json")
+            .and_then(|bytes| serde_json::from_slice(bytes).ok())
+            .unwrap_or_default()
     }
 }
 
-/// Compare two verified bundles.
+/// Compare two bundles, verifying each first.
 pub fn compare_bundles(a: &Path, b: &Path) -> Result<CompareResult, String> {
     let bundle_a = load_bundle_for_source(a)?;
     let bundle_b = load_bundle_for_source(b)?;
+    compare_loaded(&bundle_a, &bundle_b)
+}
+
+/// Compare two already verified bundles. Every value compared comes from
+/// the bytes verification checked; nothing is re-read from disk.
+pub fn compare_loaded(
+    bundle_a: &LoadedBundle,
+    bundle_b: &LoadedBundle,
+) -> Result<CompareResult, String> {
+    let (a, b) = (bundle_a, bundle_b);
     let sa = &bundle_a.semantic_manifest;
     let sb = &bundle_b.semantic_manifest;
 
@@ -138,7 +147,7 @@ pub fn compare_bundles(a: &Path, b: &Path) -> Result<CompareResult, String> {
         schema_compatible: sa.bundle_schema == sb.bundle_schema
             && sa.experiment_schema == sb.experiment_schema
             && sa.hook_schema == sb.hook_schema,
-        semantic_hash_equal: bundle_identity_hash(a)? == bundle_identity_hash(b)?,
+        semantic_hash_equal: a.semantic_hash == b.semantic_hash,
         model_hash_equal: sa.model.sha256 == sb.model.sha256,
         tokenizer_hash_equal: sa.tokenizer.sha256 == sb.tokenizer.sha256,
         execution_mode_equal: sa.execution.mode == sb.execution.mode,
@@ -205,7 +214,7 @@ pub fn compare_bundles(a: &Path, b: &Path) -> Result<CompareResult, String> {
                 && entry_b.layer == entry_a.layer
         });
         let metrics = match entry_b {
-            Some(entry_b) => Some(tensor_metrics(&bundle_a, &bundle_b, entry_a, entry_b)?),
+            Some(entry_b) => Some(tensor_metrics(bundle_a, bundle_b, entry_a, entry_b)?),
             None => None,
         };
         captures.push(CaptureComparison {
@@ -323,8 +332,8 @@ pub fn compare_bundles(a: &Path, b: &Path) -> Result<CompareResult, String> {
     };
 
     Ok(CompareResult {
-        bundle_a: a.display().to_string(),
-        bundle_b: b.display().to_string(),
+        bundle_a: a.root.display().to_string(),
+        bundle_b: b.root.display().to_string(),
         identity,
         outputs,
         captures,
@@ -396,19 +405,14 @@ fn tensor_metrics(
     })
 }
 
-fn bundle_identity_hash(root: &Path) -> Result<String, String> {
-    let path = root.join("manifest.json");
-    let bytes = std::fs::read(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
-    let manifest: crate::v05::manifest::BundleManifest = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("manifest.json is invalid: {error}"))?;
-    Ok(manifest.semantic_hash)
+/// A verified JSON Lines document as text.
+fn verified_text<'a>(bundle: &'a LoadedBundle, relative: &str) -> Result<&'a str, String> {
+    std::str::from_utf8(bundle.required_file(relative)?)
+        .map_err(|error| format!("{relative} is not UTF-8: {error}"))
 }
 
-fn read_prompt_hashes(root: &Path) -> Result<Vec<String>, String> {
-    let path = root.join("inputs.jsonl");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+fn read_prompt_hashes(bundle: &LoadedBundle) -> Result<Vec<String>, String> {
+    let text = verified_text(bundle, "inputs.jsonl")?;
     let mut hashes = Vec::new();
     for line in text.lines() {
         let value: serde_json::Value = serde_json::from_str(line)
@@ -422,10 +426,8 @@ fn read_prompt_hashes(root: &Path) -> Result<Vec<String>, String> {
     Ok(hashes)
 }
 
-fn read_tokenization_ids(root: &Path) -> Result<Vec<Vec<u32>>, String> {
-    let path = root.join("tokenization.jsonl");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+fn read_tokenization_ids(bundle: &LoadedBundle) -> Result<Vec<Vec<u32>>, String> {
+    let text = verified_text(bundle, "tokenization.jsonl")?;
     let mut ids = Vec::new();
     for line in text.lines() {
         let value: serde_json::Value = serde_json::from_str(line)
@@ -456,10 +458,8 @@ struct FinalTop1 {
     logit: f32,
 }
 
-fn read_outputs(root: &Path) -> Result<Vec<OutputLine>, String> {
-    let path = root.join("outputs.jsonl");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+fn read_outputs(bundle: &LoadedBundle) -> Result<Vec<OutputLine>, String> {
+    let text = verified_text(bundle, "outputs.jsonl")?;
     let mut outputs = Vec::new();
     for line in text.lines() {
         let output: OutputLine = serde_json::from_str(line)
@@ -480,10 +480,8 @@ struct InterventionEventLine {
     source_kind: Option<String>,
 }
 
-fn read_intervention_events(root: &Path) -> Result<Vec<InterventionEventLine>, String> {
-    let path = root.join("interventions/events.jsonl");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+fn read_intervention_events(bundle: &LoadedBundle) -> Result<Vec<InterventionEventLine>, String> {
+    let text = verified_text(bundle, "interventions/events.jsonl")?;
     let mut events = Vec::new();
     for line in text.lines() {
         let event: InterventionEventLine = serde_json::from_str(line)
@@ -494,11 +492,9 @@ fn read_intervention_events(root: &Path) -> Result<Vec<InterventionEventLine>, S
 }
 
 /// Fusion/de-fusion summary of a bundle's plan (defusion route equality).
-fn plan_fusion_summary(root: &Path) -> Result<Vec<String>, String> {
-    let path = root.join("execution-plan.json");
-    let bytes = std::fs::read(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
-    let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&bytes)
+fn plan_fusion_summary(bundle: &LoadedBundle) -> Result<Vec<String>, String> {
+    let bytes = bundle.required_file("execution-plan.json")?;
+    let plan: crate::plan::ExecutionPlan = serde_json::from_slice(bytes)
         .map_err(|error| format!("execution-plan.json is invalid: {error}"))?;
     Ok(plan
         .layers

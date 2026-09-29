@@ -99,6 +99,15 @@ pub fn read_npy_2d_bytes(bytes: &[u8]) -> anyhow::Result<(Vec<usize>, Vec<f32>)>
 /// Returns `(shape, values)` with values in row-major order. Rejects
 /// non-f32 dtypes, fortran order, and truncated or oversized payloads.
 pub fn read_npy_2d(path: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
+    let bytes = read_npy_file_bytes(path)?;
+    read_npy_2d_bytes_named(&bytes, path)
+}
+
+/// Read a `.npy` file's bytes through one handle, bounded by the NPY size
+/// limit and refusing a file replaced while it is read. Callers that must
+/// both hash and parse a file use these bytes for both, so the checked
+/// content is the parsed content.
+pub fn read_npy_file_bytes(path: &str) -> anyhow::Result<Vec<u8>> {
     use std::io::Read;
 
     let path_metadata =
@@ -182,10 +191,14 @@ pub fn read_npy_2d(path: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
             "npy file changed while reading '{path}'"
         );
     }
-    read_npy_2d_bytes_named(&bytes, path)
+    Ok(bytes)
 }
 
-fn read_npy_2d_bytes_named(bytes: &[u8], source: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
+/// [`read_npy_2d_bytes`] with `source` named in error messages.
+pub fn read_npy_2d_bytes_named(
+    bytes: &[u8],
+    source: &str,
+) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
     anyhow::ensure!(
         bytes.len() <= MAX_NPY_BYTES,
         "'{source}' is {} bytes, exceeding the {MAX_NPY_BYTES} byte limit",

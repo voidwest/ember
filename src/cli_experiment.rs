@@ -20,7 +20,7 @@ use ember::model::ForwardModel;
 use ember::plan::{ExecutionMode, HookMode};
 use ember::quant_k::KStrategy;
 use ember::tokenizer::EmberTokenizer;
-use ember::v05::compare::compare_bundles;
+use ember::v05::compare::compare_loaded;
 use ember::v05::hook::SemanticHookSite;
 use ember::v05::manifest::BundleIdentity;
 use ember::v05::run::{
@@ -31,7 +31,7 @@ use ember::v05::runner::{
 };
 use ember::v05::spec::{RawExperimentSpec, EXPERIMENT_SCHEMA_V1};
 use ember::v05::token_select::{tokenize_for_selection, TextNormalization};
-use ember::v05::verify::{verify_bundle, VerifyOptions};
+use ember::v05::verify::{load_verified_bundle, verify_bundle, LoadedBundle, VerifyOptions};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -110,9 +110,41 @@ pub(crate) struct VerifyArgs {
     /// Deep tokenizer verification.
     #[arg(long, value_name = "tokenizer.json")]
     pub tokenizer: Option<PathBuf>,
+    #[command(flatten)]
+    pub anchor: AnchorArgs,
+    /// Also write the JSON report to this path (never inside the bundle;
+    /// verification does not modify the bundle it checks).
+    #[arg(long, value_name = "report.json")]
+    pub write_report: Option<PathBuf>,
     /// Machine-readable output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// External anchors for a bundle's identity. Every hash a bundle carries is
+/// written by the bundle's producer, so verification alone shows only that
+/// the bundle is self-consistent: an edited bundle can be fully resealed.
+/// An anchor compares the recomputed identity with a value from outside.
+#[derive(ClapArgs, Clone, Default)]
+pub(crate) struct AnchorArgs {
+    /// Require this semantic hash (64 hex chars, obtained from a trusted
+    /// record such as a paper or a lab notebook).
+    #[arg(long, value_name = "hex", value_parser = parse_sha256_hex)]
+    pub expect_semantic_hash: Option<String>,
+    /// Require a signed evidence envelope over the bundle's manifest.json
+    /// (`ember evidence sign --manifest <bundle>/manifest.json`) whose signed
+    /// semantic and payload hashes equal the bundle's.
+    #[arg(long, value_name = "envelope.json", requires = "trusted_key")]
+    pub expect_evidence: Option<PathBuf>,
+    /// The envelope signer's public key (`.pub` file or hex fingerprint).
+    #[arg(long, value_name = "key.pub", requires = "expect_evidence")]
+    pub trusted_key: Option<String>,
+}
+
+impl AnchorArgs {
+    fn is_anchored(&self) -> bool {
+        self.expect_semantic_hash.is_some() || self.expect_evidence.is_some()
+    }
 }
 
 #[derive(ClapArgs)]
@@ -121,6 +153,12 @@ pub(crate) struct CompareArgs {
     pub a: PathBuf,
     /// Second bundle directory.
     pub b: PathBuf,
+    /// Require the first bundle to have this semantic hash.
+    #[arg(long, value_name = "hex", value_parser = parse_sha256_hex)]
+    pub expect_a_semantic_hash: Option<String>,
+    /// Require the second bundle to have this semantic hash.
+    #[arg(long, value_name = "hex", value_parser = parse_sha256_hex)]
+    pub expect_b_semantic_hash: Option<String>,
     /// Machine-readable output.
     #[arg(long)]
     pub json: bool,
@@ -133,6 +171,13 @@ pub(crate) struct ReproduceArgs {
     /// Model file to re-run with (validated against the bundle hash).
     #[arg(long, value_name = "model.gguf")]
     pub model: PathBuf,
+    /// Tokenizer file to re-run with (default: the path the bundle's spec
+    /// names). Either way it must match the bundle's recorded SHA-256.
+    #[arg(long, value_name = "tokenizer.json")]
+    pub tokenizer: Option<PathBuf>,
+    /// Anchors for the original bundle, checked before anything runs.
+    #[command(flatten)]
+    pub anchor: AnchorArgs,
     /// Output directory for the new bundle (default:
     /// `<bundle>-reproduced`).
     #[arg(long)]
@@ -312,13 +357,7 @@ pub(crate) fn execute_resolved(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let threads = if resolved.execution.threads > 0 {
-        resolved.execution.threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    };
+    let threads = pool_threads(resolved)?;
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -438,13 +477,7 @@ pub(crate) fn execute_prepared(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let threads = if resolved.execution.threads > 0 {
-        resolved.execution.threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    };
+    let threads = pool_threads(resolved)?;
     if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
         return execute_prepared_inner(
             prepared,
@@ -483,13 +516,7 @@ fn execute_prepared_inner(
 )> {
     let backend = ember::backend::CpuBackend;
     let mode = resolved.execution.mode;
-    let threads = if resolved.execution.threads > 0 {
-        resolved.execution.threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    };
+    let threads = pool_threads(resolved)?;
     let model = &prepared.model;
     let tokenizer = &prepared.tokenizer;
     let architecture = &prepared.architecture;
@@ -825,13 +852,21 @@ pub(crate) fn run_inspect_command(command: &InspectArgs) -> anyhow::Result<()> {
         println!("  experiment: {}", manifest.experiment.name);
         println!(
             "  model: {} ({})",
-            &manifest.model.sha256[..12],
+            manifest
+                .model
+                .sha256
+                .get(..12)
+                .unwrap_or(&manifest.model.sha256),
             manifest.model.architecture
         );
         println!(
             "  execution: {} plan {}",
             manifest.execution.mode,
-            &manifest.execution.plan_hash[..12]
+            manifest
+                .execution
+                .plan_hash
+                .get(..12)
+                .unwrap_or(&manifest.execution.plan_hash)
         );
         println!(
             "  inputs: {:?}",
@@ -867,12 +902,162 @@ pub(crate) fn run_inspect_command(command: &InspectArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Clap parser for an expected SHA-256: 64 hex characters, lowercased.
+fn parse_sha256_hex(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err("expected a SHA-256 as 64 hex characters".into())
+    }
+}
+
+/// Check a signed evidence envelope over a bundle's `manifest.json` against
+/// the bundle's recomputed identity. Returns (ok, detail).
+fn evidence_anchor(
+    envelope: &std::path::Path,
+    trusted_key: &str,
+    semantic_hash: &str,
+    payload_hash: &str,
+) -> (bool, String) {
+    let verified =
+        match crate::cli_evidence::verify_envelope_file_with_trusted_key(envelope, trusted_key) {
+            Ok(verified) => verified,
+            Err(error) => return (false, format!("{error:#}")),
+        };
+    let input = &verified.input;
+    let field = |name: &str| input.get(name).and_then(|value| value.as_str());
+    if field("kind") != Some(ember::v05::manifest::BUNDLE_KIND) {
+        return (
+            false,
+            "the signed record is not an experiment bundle manifest.json".into(),
+        );
+    }
+    let semantic_ok = field("semantic_hash") == Some(semantic_hash);
+    let payload_ok = field("payload_hash") == Some(payload_hash);
+    let signer = verified
+        .signer_fingerprint
+        .get(..12)
+        .unwrap_or(&verified.signer_fingerprint);
+    let timestamp = if verified.timestamp_signed {
+        ""
+    } else {
+        "; its signing time is not covered by the v1 signature"
+    };
+    if semantic_ok && payload_ok {
+        (
+            true,
+            format!(
+                "{} from trusted signer {signer} binds this semantic and payload hash{timestamp}",
+                verified.schema
+            ),
+        )
+    } else {
+        (
+            false,
+            format!(
+                "signed record (trusted signer {signer}) names semantic {} and payload {}, not \
+                 this bundle's (semantic {}, payload {})",
+                field("semantic_hash").unwrap_or("-"),
+                field("payload_hash").unwrap_or("-"),
+                semantic_ok,
+                payload_ok
+            ),
+        )
+    }
+}
+
+/// Load and verify a bundle with its anchors; fails on any failed check.
+fn load_anchored_bundle(
+    bundle: &std::path::Path,
+    anchor: &AnchorArgs,
+) -> anyhow::Result<LoadedBundle> {
+    let options = VerifyOptions {
+        expected_semantic_hash: anchor.expect_semantic_hash.clone(),
+        ..VerifyOptions::default()
+    };
+    let loaded = load_verified_bundle(bundle, &options).map_err(anyhow::Error::msg)?;
+    if let (Some(envelope), Some(trusted_key)) = (&anchor.expect_evidence, &anchor.trusted_key) {
+        let (ok, detail) = evidence_anchor(
+            envelope,
+            trusted_key,
+            &loaded.semantic_hash,
+            &loaded.payload_hash,
+        );
+        anyhow::ensure!(
+            ok,
+            "bundle '{}' failed its evidence anchor: {detail}",
+            bundle.display()
+        );
+    }
+    Ok(loaded)
+}
+
+/// Refuse a report path inside the bundle: verification must not add files
+/// to the bundle it checks.
+fn write_report_outside(
+    bundle: &std::path::Path,
+    path: &std::path::Path,
+    report: &ember::v05::verify::VerificationReport,
+) -> anyhow::Result<()> {
+    let bundle_root = bundle
+        .canonicalize()
+        .with_context(|| format!("cannot resolve '{}'", bundle.display()))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let parent = parent
+        .canonicalize()
+        .with_context(|| format!("cannot resolve '{}'", parent.display()))?;
+    anyhow::ensure!(
+        !parent.starts_with(&bundle_root),
+        "--write-report must point outside the bundle; verification never modifies the bundle"
+    );
+    let mut bytes = serde_json::to_vec_pretty(report)?;
+    bytes.push(b'\n');
+    ember::atomic_file::atomic_write(path, &bytes)
+        .with_context(|| format!("cannot write report '{}'", path.display()))
+}
+
 pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
     let options = VerifyOptions {
         model_path: command.model.clone(),
         tokenizer_path: command.tokenizer.clone(),
+        expected_semantic_hash: command.anchor.expect_semantic_hash.clone(),
     };
-    let report = verify_bundle(&command.bundle, &options).map_err(anyhow::Error::msg)?;
+    let mut report = verify_bundle(&command.bundle, &options).map_err(anyhow::Error::msg)?;
+    if let (Some(envelope), Some(trusted_key)) =
+        (&command.anchor.expect_evidence, &command.anchor.trusted_key)
+    {
+        let (ok, detail) = if report.semantic_hash.is_empty() {
+            (
+                false,
+                "the bundle's identity could not be recomputed".to_string(),
+            )
+        } else {
+            evidence_anchor(
+                envelope,
+                trusted_key,
+                &report.semantic_hash,
+                &report.payload_hash,
+            )
+        };
+        report.add_check("evidence anchor", ok, detail);
+    }
+    let anchored = command.anchor.is_anchored();
+    if !anchored {
+        report.warnings.push(
+            "not anchored: 'verified' means the bundle is self-consistent. Every hash it checks \
+             is written by the bundle's producer, so an edited bundle can be resealed; pass \
+             --expect-semantic-hash or --expect-evidence/--trusted-key to bind it to an identity \
+             obtained elsewhere"
+                .into(),
+        );
+    }
+    if let Some(path) = &command.write_report {
+        write_report_outside(&command.bundle, path, &report)?;
+    }
     if command.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -886,6 +1071,34 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
             );
         }
         println!("verdict: {}", if report.ok { "verified" } else { "FAILED" });
+        if report.ok {
+            println!();
+            println!("  semantic hash: {}", report.semantic_hash);
+            println!("  payload hash:  {}", report.payload_hash);
+            if anchored {
+                println!("  anchored: the identity matches the externally supplied value");
+            } else {
+                println!(
+                    "  note: 'verified' means self-consistent only; every hash checked is \
+                     bundle-authored."
+                );
+                println!(
+                    "        Record the semantic hash somewhere you trust and pass \
+                     --expect-semantic-hash <hex>"
+                );
+                println!(
+                    "        (or --expect-evidence <envelope> --trusted-key <key.pub>) to \
+                     detect a resealed bundle."
+                );
+            }
+        }
+        for warning in report
+            .warnings
+            .iter()
+            .filter(|warning| !warning.starts_with("not anchored"))
+        {
+            println!("  warning: {warning}");
+        }
     }
     if !report.ok {
         return Err(crate::cli_support::VerificationFailed.into());
@@ -894,7 +1107,13 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
 }
 
 pub(crate) fn run_compare_command(command: &CompareArgs) -> anyhow::Result<()> {
-    let result = compare_bundles(&command.a, &command.b).map_err(anyhow::Error::msg)?;
+    let anchor = |expected: &Option<String>| AnchorArgs {
+        expect_semantic_hash: expected.clone(),
+        ..AnchorArgs::default()
+    };
+    let bundle_a = load_anchored_bundle(&command.a, &anchor(&command.expect_a_semantic_hash))?;
+    let bundle_b = load_anchored_bundle(&command.b, &anchor(&command.expect_b_semantic_hash))?;
+    let result = compare_loaded(&bundle_a, &bundle_b).map_err(anyhow::Error::msg)?;
     if command.json {
         println!("{}", serde_json::to_string_pretty(&result)?);
         return Ok(());
@@ -1010,27 +1229,46 @@ fn fmt_opt_u64(value: Option<u64>) -> String {
     value.map(|v| v.to_string()).unwrap_or_else(|| "-".into())
 }
 
+/// Worker threads for a resolved spec: its explicit count, or every core.
+///
+/// Specs also arrive from bundles (`reproduce`), so the count is untrusted
+/// and bounded before a pool is built from it.
+fn pool_threads(resolved: &ember::v05::spec::ExperimentSpecV1) -> anyhow::Result<usize> {
+    const MAX_THREADS: usize = 1024;
+    let requested = resolved.execution.threads;
+    anyhow::ensure!(
+        requested <= MAX_THREADS,
+        "execution.threads = {requested} exceeds the limit of {MAX_THREADS}"
+    );
+    Ok(if requested > 0 {
+        requested
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
+}
+
 pub(crate) fn run_reproduce_command(
     command: &ReproduceArgs,
     k_strategy: KStrategy,
     k_allow_fallback: bool,
 ) -> anyhow::Result<()> {
-    // Load the bundle's resolved experiment + verbatim spec.
-    let bundle =
-        ember::v05::verify::load_bundle_for_source(&command.bundle).map_err(anyhow::Error::msg)?;
-    let manifest = bundle.semantic_manifest;
-    let spec_text = std::fs::read_to_string(command.bundle.join("experiment.toml"))
-        .context("bundle lacks experiment.toml")?;
-    // The verbatim spec is only re-parsed as a corruption check. The
-    // resolved spec is NOT re-derived: a reproduction must re-run what the
-    // original bundle actually recorded, even if resolve() semantics changed
-    // in a newer ember build.
-    let _ = RawExperimentSpec::from_toml_str(&spec_text)
-        .map_err(|error| anyhow::anyhow!("bundle experiment.toml is malformed: {error}"))?;
-    let resolved_text = std::fs::read_to_string(command.bundle.join("resolved-experiment.json"))
-        .context("bundle lacks resolved-experiment.json")?;
-    let mut resolved: ember::v05::spec::ExperimentSpecV1 = serde_json::from_str(&resolved_text)
-        .context("bundle resolved-experiment.json is malformed")?;
+    // Verify (and anchor) the original once; everything below uses the
+    // verified bytes, never a second read of the bundle.
+    let original = load_anchored_bundle(&command.bundle, &command.anchor)?;
+    let manifest = &original.semantic_manifest;
+    let spec_text = std::str::from_utf8(
+        original
+            .required_file("experiment.toml")
+            .map_err(anyhow::Error::msg)?,
+    )
+    .context("bundle experiment.toml is not UTF-8")?
+    .to_string();
+    // resolved-experiment.json is outside the semantic hash; it is used
+    // only after it has been bound to the hashed spec and manifest.
+    let mut resolved =
+        ember::v05::verify::bound_resolved_experiment(&original).map_err(anyhow::Error::msg)?;
 
     // Validate the supplied model against the bundle's recorded hash.
     let model_sha = sha256_file_result(&command.model)
@@ -1045,6 +1283,17 @@ pub(crate) fn run_reproduce_command(
         );
     }
     resolved.model.path = command.model.clone();
+    resolved.model.expected_sha256 = manifest.model.sha256.clone();
+    // The tokenizer path comes from the bundle; whatever file it (or
+    // --tokenizer) names must be the tokenizer the bundle recorded.
+    if let Some(tokenizer) = &command.tokenizer {
+        resolved.model.tokenizer = Some(tokenizer.clone());
+    }
+    resolved.model.tokenizer_expected_sha256 = manifest.tokenizer.sha256.clone();
+    // Nothing from the bundle may widen what this command does to the
+    // filesystem: replacing an existing directory needs the user's say-so,
+    // not the bundle's.
+    resolved.output.overwrite = false;
     let output = command
         .output
         .clone()
@@ -1062,8 +1311,10 @@ pub(crate) fn run_reproduce_command(
         anyhow::bail!("reproduction bundle failed self-verification");
     }
 
-    // Classify against the original.
-    let comparison = compare_bundles(&command.bundle, &path).map_err(anyhow::Error::msg)?;
+    // Classify against the original, as verified above.
+    let reproduction =
+        ember::v05::verify::load_bundle_for_source(&path).map_err(anyhow::Error::msg)?;
+    let comparison = compare_loaded(&original, &reproduction).map_err(anyhow::Error::msg)?;
     let tokens_equal = comparison
         .outputs
         .iter()
@@ -1093,8 +1344,14 @@ pub(crate) fn run_reproduce_command(
         .outputs
         .iter()
         .all(|output| output.final_top1_equal);
+    // Output agreement means nothing unless both ran the same inputs: outputs
+    // are paired by position, so a reproduction over a subset or different
+    // prompts could otherwise still grade as exact.
+    let inputs_equal = comparison.identity.input_ids_equal && comparison.identity.prompts_equal;
     let verdict = if comparison.identity.semantic_hash_equal {
         "exact-semantic"
+    } else if !inputs_equal {
+        "inputs-differ"
     } else if tokens_equal && (captures_exact || !captures_declared) {
         "exact"
     } else if tokens_equal && (!captures_declared || captures_within_envelope) {
@@ -1113,7 +1370,10 @@ pub(crate) fn run_reproduce_command(
                 "verdict": verdict,
                 "original": command.bundle.display().to_string(),
                 "reproduction": path.display().to_string(),
+                "original_semantic_hash": original.semantic_hash,
+                "original_anchored": command.anchor.is_anchored(),
                 "semantic_hash": identity.semantic_hash,
+                "inputs_equal": inputs_equal,
                 "tokens_equal": tokens_equal,
                 "captures_declared": captures_declared,
                 "captures_aligned": captures_aligned,
@@ -1133,6 +1393,15 @@ pub(crate) fn run_reproduce_command(
             yesno(top1_equal)
         );
         println!("  semantic hash: {}", identity.semantic_hash);
+        println!(
+            "  original semantic hash: {} ({})",
+            original.semantic_hash,
+            if command.anchor.is_anchored() {
+                "anchored"
+            } else {
+                "not anchored: self-consistent only"
+            }
+        );
     }
     if verdict == "failed" || verdict == "captures-misaligned" {
         return Err(crate::cli_support::VerificationFailed.into());

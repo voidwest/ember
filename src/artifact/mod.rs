@@ -1025,19 +1025,23 @@ pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<()
         }
 
         let tensor_path = resolve_record_path(path, &record.path)?;
-        let actual_sha = crate::extraction::sha256_file_result(&tensor_path)
-            .map_err(|e| format!("failed to hash record {}: {e}", record.index))?;
+        let tensor_path_str = tensor_path
+            .to_str()
+            .ok_or_else(|| format!("record {} path is not valid UTF-8", record.index))?;
+        // Read once: the bytes whose hash is checked are the bytes parsed,
+        // so the file cannot be swapped between the two.
+        let tensor_bytes = crate::npy::read_npy_file_bytes(tensor_path_str)
+            .map_err(|e| format!("failed to read record {}: {e}", record.index))?;
+        let actual_sha = crate::extraction::sha256_bytes(&tensor_bytes);
         if !actual_sha.eq_ignore_ascii_case(&record.sha256) {
             return Err(format!(
                 "record {} SHA-256 mismatch: manifest {}, actual {}",
                 record.index, record.sha256, actual_sha
             ));
         }
-        let tensor_path_str = tensor_path
-            .to_str()
-            .ok_or_else(|| format!("record {} path is not valid UTF-8", record.index))?;
-        let (shape, values) = crate::npy::read_npy_2d(tensor_path_str)
-            .map_err(|e| format!("record {} tensor is invalid: {e}", record.index))?;
+        let (shape, values) =
+            crate::npy::read_npy_2d_bytes_named(&tensor_bytes, tensor_path_str)
+                .map_err(|e| format!("record {} tensor is invalid: {e}", record.index))?;
         if shape.as_slice() != record.shape {
             return Err(format!(
                 "record {} tensor shape {:?} disagrees with manifest {:?}",

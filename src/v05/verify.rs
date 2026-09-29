@@ -70,7 +70,11 @@ pub struct CheckResult {
     pub detail: String,
 }
 
-/// The verification report (also written to `verification.json`).
+/// The verification report.
+///
+/// Verification never writes into the bundle it checks; callers that want a
+/// report on disk write it themselves (`ember experiment verify
+/// --write-report <path>`), outside the bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationReport {
     pub bundle_schema: String,
@@ -106,13 +110,39 @@ impl VerificationReport {
             detail,
         });
     }
+
+    /// Add a check computed outside the bundle verifier (for example an
+    /// external anchor such as a signed evidence envelope). A failed check
+    /// fails the report.
+    pub fn add_check(&mut self, name: &str, ok: bool, detail: String) {
+        self.record(name, ok, detail);
+    }
+
+    fn finished(mut self) -> VerificationReport {
+        self.timestamp = now_iso8601();
+        self
+    }
 }
 
-/// A verified bundle loaded for cross-bundle sources.
+/// A verified bundle loaded for cross-bundle sources, comparison and
+/// reproduction.
+///
+/// Every document verification parsed is kept here as the exact bytes that
+/// were hashed, so callers never re-read a file from disk after it was
+/// checked (a bundle modified between verification and use cannot substitute
+/// different content).
 pub struct LoadedBundle {
     pub root: PathBuf,
+    /// The top-level `manifest.json`.
+    pub manifest: BundleManifest,
     pub semantic_manifest: SemanticManifest,
     pub capture_index: Vec<CaptureIndexEntry>,
+    /// Recomputed semantic hash (verification proved it equals the stored
+    /// one; for legacy encodings it is the preserved historical hash).
+    pub semantic_hash: String,
+    /// Recomputed payload hash.
+    pub payload_hash: String,
+    files: BTreeMap<String, Vec<u8>>,
     payload_bytes: Vec<u8>,
     tensors: Vec<(String, TensorView)>,
 }
@@ -127,6 +157,24 @@ impl LoadedBundle {
             .ok_or_else(|| format!("tensor '{name}' not found in the payload"))?;
         safetensors::tensor_f32(&self.payload_bytes, view)
     }
+
+    /// The verified bytes of one bundle document (for example
+    /// `outputs.jsonl` or `resolved-experiment.json`). Only documents the
+    /// verifier reads are retained; the tensor payload is available through
+    /// [`LoadedBundle::tensor_f32_by_name`].
+    pub fn file(&self, relative: &str) -> Option<&[u8]> {
+        self.files.get(relative).map(Vec::as_slice)
+    }
+
+    /// Like [`LoadedBundle::file`], with an error naming the bundle.
+    pub fn required_file(&self, relative: &str) -> Result<&[u8], String> {
+        self.file(relative).ok_or_else(|| {
+            format!(
+                "bundle '{}' has no verified '{relative}'",
+                self.root.display()
+            )
+        })
+    }
 }
 
 /// Verify a bundle and load its payloads for source use.
@@ -134,7 +182,14 @@ impl LoadedBundle {
 /// The source bundle must pass full basic verification before its tensors
 /// can back an intervention.
 pub fn load_bundle_for_source(root: &Path) -> Result<LoadedBundle, String> {
-    let report = verify_bundle(root, &VerifyOptions::default())?;
+    load_verified_bundle(root, &VerifyOptions::default())
+}
+
+/// Verify a bundle with `options` (for example an expected semantic hash)
+/// and return its verified contents. Fails unless every check passes.
+pub fn load_verified_bundle(root: &Path, options: &VerifyOptions) -> Result<LoadedBundle, String> {
+    check_not_staging(root)?;
+    let (report, contents) = verify_and_load(root, options)?;
     if !report.ok {
         let errors: Vec<String> = report
             .checks
@@ -143,24 +198,119 @@ pub fn load_bundle_for_source(root: &Path) -> Result<LoadedBundle, String> {
             .map(|check| format!("{}: {}", check.name, check.detail))
             .collect();
         return Err(format!(
-            "source bundle '{}' failed verification: {}",
+            "bundle '{}' failed verification: {}",
             root.display(),
             errors.join("; ")
         ));
     }
-    let semantic_manifest = read_semantic_manifest(root)?;
-    let capture_index = read_capture_index(root)?;
-    let payload_path = root.join("captures/tensors.safetensors");
-    let payload_bytes = std::fs::read(&payload_path)
-        .map_err(|error| format!("cannot read '{}': {error}", payload_path.display()))?;
-    let tensors = safetensors::deserialize(&payload_bytes)?;
+    let contents =
+        contents.ok_or_else(|| format!("bundle '{}' was not fully read", root.display()))?;
     Ok(LoadedBundle {
         root: root.to_path_buf(),
-        semantic_manifest,
-        capture_index,
-        payload_bytes,
-        tensors,
+        manifest: contents.manifest,
+        semantic_manifest: contents.semantic_manifest,
+        capture_index: contents.capture_index,
+        semantic_hash: report.semantic_hash,
+        payload_hash: report.payload_hash,
+        files: contents.files,
+        payload_bytes: contents.payload_bytes,
+        tensors: contents.tensors,
     })
+}
+
+/// The resolved experiment a reproduction may run, bound to the bundle's
+/// verified identity.
+///
+/// `resolved-experiment.json` sits outside the semantic hash (it records
+/// placement such as the output directory), so it is not trusted as is. It
+/// is accepted only when it equals what the hashed `experiment.toml`
+/// resolves to, apart from the run-time choices a user can override without
+/// editing the spec (execution mode and thread count, output directory)
+/// and the informational list of applied defaults, and when everything it shares with the semantic manifest agrees:
+/// experiment metadata, execution mode and determinism, inputs, captures and
+/// interventions. The tokenizer and model paths it names come from the
+/// bundle, so callers must still pin them to the recorded SHA-256 values.
+pub fn bound_resolved_experiment(
+    bundle: &LoadedBundle,
+) -> Result<crate::v05::spec::ExperimentSpecV1, String> {
+    let spec_text = std::str::from_utf8(bundle.required_file("experiment.toml")?)
+        .map_err(|error| format!("bundle experiment.toml is not UTF-8: {error}"))?;
+    bind_resolved_experiment(
+        spec_text,
+        bundle.required_file("resolved-experiment.json")?,
+        &bundle.semantic_manifest,
+    )
+}
+
+fn bind_resolved_experiment(
+    spec_text: &str,
+    resolved_bytes: &[u8],
+    semantic: &SemanticManifest,
+) -> Result<crate::v05::spec::ExperimentSpecV1, String> {
+    use crate::v05::spec::{ExperimentSpecV1, RawExperimentSpec};
+    let stored: ExperimentSpecV1 = serde_json::from_slice(resolved_bytes)
+        .map_err(|error| format!("bundle resolved-experiment.json is malformed: {error}"))?;
+    let mut derived = RawExperimentSpec::from_toml_str(spec_text)
+        .and_then(|raw| raw.resolve())
+        .map_err(|error| format!("bundle experiment.toml does not resolve: {error}"))?;
+    derived.execution.mode = stored.execution.mode;
+    derived.execution.threads = stored.execution.threads;
+    derived.output.directory = stored.output.directory.clone();
+    // The list of defaults applied is a record of how resolution went, not
+    // an input to execution, and its contents vary across Ember releases.
+    derived.defaults = stored.defaults.clone();
+    if derived != stored {
+        let derived_value = serde_json::to_value(&derived).map_err(|error| error.to_string())?;
+        let stored_value = serde_json::to_value(&stored).map_err(|error| error.to_string())?;
+        let differing: Vec<String> = derived_value
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, value)| stored_value.get(key.as_str()) != Some(*value))
+            .map(|(key, _)| key.clone())
+            .collect();
+        return Err(format!(
+            "resolved-experiment.json does not match the hashed experiment.toml (differs in: \
+             {}); refusing to run an unbound specification",
+            differing.join(", ")
+        ));
+    }
+    let mut mismatches = Vec::new();
+    if stored.experiment.name != semantic.experiment.name
+        || stored.experiment.description != semantic.experiment.description
+        || stored.experiment.seed != semantic.experiment.seed
+    {
+        mismatches.push("experiment");
+    }
+    if stored.execution.mode.name() != semantic.execution.mode
+        || stored.execution.deterministic != semantic.execution.deterministic
+    {
+        mismatches.push("execution");
+    }
+    let inputs_match = stored.inputs.len() == semantic.inputs.len()
+        && stored
+            .inputs
+            .iter()
+            .zip(&semantic.inputs)
+            .all(|(input, meta)| {
+                input.id == meta.id && sha256_hex(input.text.as_bytes()) == meta.prompt_hash
+            });
+    if !inputs_match {
+        mismatches.push("inputs");
+    }
+    if stored.captures != semantic.captures {
+        mismatches.push("captures");
+    }
+    if stored.interventions != semantic.interventions {
+        mismatches.push("interventions");
+    }
+    if !mismatches.is_empty() {
+        return Err(format!(
+            "resolved-experiment.json disagrees with the semantic manifest in: {}",
+            mismatches.join(", ")
+        ));
+    }
+    Ok(stored)
 }
 
 /// Options for bundle verification.
@@ -169,10 +319,46 @@ pub struct VerifyOptions {
     /// Deep verification: check model/tokenizer files when supplied.
     pub model_path: Option<PathBuf>,
     pub tokenizer_path: Option<PathBuf>,
+    /// External anchor: the semantic hash the caller obtained from a trusted
+    /// source. Without an anchor, "verified" means only that the bundle is
+    /// self-consistent, since every hash it checks is bundle-authored.
+    pub expected_semantic_hash: Option<String>,
 }
+
+/// Files the verifier reads fully into memory. Each is read exactly once;
+/// the same bytes are hashed, parsed, and returned in [`LoadedBundle`].
+const REQUIRED_FILES: [&str; 15] = [
+    "semantic-manifest.json",
+    "runtime.json",
+    "experiment.toml",
+    "resolved-experiment.json",
+    "model.json",
+    "tokenizer.json",
+    "execution-plan.json",
+    "inputs.jsonl",
+    "outputs.jsonl",
+    "tokenization.jsonl",
+    "captures/tensors.safetensors",
+    "captures/index.jsonl",
+    "interventions/events.jsonl",
+    "traces/events.jsonl",
+    "checksums.sha256",
+];
+
+const PAYLOAD_FILE: &str = "captures/tensors.safetensors";
+
+/// A report file that older Ember versions wrote into the bundle itself.
+/// It is tolerated in the inventory but never read: its contents cannot
+/// influence verification.
+const LEGACY_REPORT_FILE: &str = "verification.json";
 
 /// Verify a bundle fully offline (unless deep verification is requested).
 pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<VerificationReport, String> {
+    check_not_staging(root)?;
+    verify_staged_bundle(root, options)
+}
+
+fn check_not_staging(root: &Path) -> Result<(), String> {
     if root
         .file_name()
         .and_then(|name| name.to_str())
@@ -180,7 +366,7 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     {
         return Err("incomplete staging directory is not a published bundle".into());
     }
-    verify_staged_bundle(root, options)
+    Ok(())
 }
 
 /// Used only by the writer before atomic publication. All content checks are
@@ -189,14 +375,57 @@ pub(crate) fn verify_staged_bundle(
     root: &Path,
     options: &VerifyOptions,
 ) -> Result<VerificationReport, String> {
+    verify_and_load(root, options).map(|(report, _)| report)
+}
+
+/// Everything verification read, kept for [`LoadedBundle`].
+struct VerifiedContents {
+    manifest: BundleManifest,
+    semantic_manifest: SemanticManifest,
+    capture_index: Vec<CaptureIndexEntry>,
+    files: BTreeMap<String, Vec<u8>>,
+    payload_bytes: Vec<u8>,
+    tensors: Vec<(String, TensorView)>,
+}
+
+/// SHA-256 of bundle files, each computed once: from the in-memory bytes
+/// for documents the verifier parses, and by streaming for any other listed
+/// file (which is only ever hashed, never interpreted).
+struct FileHashes<'a> {
+    root: &'a Path,
+    present: &'a BTreeSet<String>,
+    files: &'a BTreeMap<String, Vec<u8>>,
+    cache: BTreeMap<String, String>,
+}
+
+impl FileHashes<'_> {
+    /// `Ok(None)` when the file is absent.
+    fn hash(&mut self, relative: &str) -> Result<Option<String>, String> {
+        if let Some(hash) = self.cache.get(relative) {
+            return Ok(Some(hash.clone()));
+        }
+        let hash = if let Some(bytes) = self.files.get(relative) {
+            sha256_hex(bytes)
+        } else if self.present.contains(relative) {
+            hash_regular_file(self.root, relative)?
+        } else {
+            return Ok(None);
+        };
+        self.cache.insert(relative.to_string(), hash.clone());
+        Ok(Some(hash))
+    }
+}
+
+fn verify_and_load(
+    root: &Path,
+    options: &VerifyOptions,
+) -> Result<(VerificationReport, Option<VerifiedContents>), String> {
     // Check entry types before opening even manifest.json: verification must
     // never follow a bundle-supplied symlink or block on a special file.
     let actual_files = regular_bundle_files(root)?;
     // ---- phase 1: manifest load + schema/basic identity checks ----
-    let manifest_path = root.join("manifest.json");
-    let bytes = std::fs::read(&manifest_path)
-        .map_err(|error| format!("cannot read '{}': {error}", manifest_path.display()))?;
-    let manifest: BundleManifest = serde_json::from_slice(&bytes)
+    let manifest_bytes = read_regular_file(root, "manifest.json")?;
+    let manifest: BundleManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("manifest.json is not valid JSON: {error}"))?;
     let mut report = VerificationReport::new(String::new(), String::new());
 
@@ -220,14 +449,22 @@ pub(crate) fn verify_staged_bundle(
     for name in &manifest.files {
         if crate::v05::bundle::validate_relative_path(name).is_err() {
             inventory_errors.push(format!("unsafe manifest path: {name}"));
+        } else if name == LEGACY_REPORT_FILE {
+            inventory_errors.push(format!("{LEGACY_REPORT_FILE} must not be a listed file"));
         } else if !listed.insert(name.clone()) {
             inventory_errors.push(format!("duplicate manifest path: {name}"));
         }
     }
     let mut expected_files = listed.clone();
     expected_files.insert("checksums.sha256".into());
-    if actual_files.contains("verification.json") {
-        expected_files.insert("verification.json".into());
+    if actual_files.contains(LEGACY_REPORT_FILE) {
+        // Written into bundles by Ember versions before 1.0. It is runtime
+        // state outside every checksum, so it is ignored, never trusted.
+        expected_files.insert(LEGACY_REPORT_FILE.into());
+        report.warnings.push(format!(
+            "{LEGACY_REPORT_FILE} in the bundle is ignored: it is unchecked runtime state from an \
+             earlier verification and has no bearing on this result"
+        ));
     }
     for name in actual_files.symmetric_difference(&expected_files) {
         inventory_errors.push(format!("file inventory mismatch: {name}"));
@@ -239,30 +476,11 @@ pub(crate) fn verify_staged_bundle(
     );
 
     // ---- phase 2: required files + checksum scan ----
-    // required files exist
-    let required = [
-        "semantic-manifest.json",
-        "runtime.json",
-        "experiment.toml",
-        "resolved-experiment.json",
-        "model.json",
-        "tokenizer.json",
-        "execution-plan.json",
-        "inputs.jsonl",
-        "outputs.jsonl",
-        "tokenization.jsonl",
-        "captures/tensors.safetensors",
-        "captures/index.jsonl",
-        "interventions/events.jsonl",
-        "traces/events.jsonl",
-        "checksums.sha256",
-    ];
-    let mut missing: Vec<String> = Vec::new();
-    for relative in required {
-        if !root.join(relative).is_file() {
-            missing.push(relative.to_string());
-        }
-    }
+    let missing: Vec<&str> = REQUIRED_FILES
+        .iter()
+        .copied()
+        .filter(|relative| !actual_files.contains(*relative))
+        .collect();
     report.record(
         "required files",
         missing.is_empty(),
@@ -274,12 +492,16 @@ pub(crate) fn verify_staged_bundle(
     );
     if !missing.is_empty() {
         report.ok = false;
-        report.timestamp = now_iso8601();
-        let _ = write_verification_json(root, &report);
-        return Ok(report);
+        return Ok((report.finished(), None));
     }
+    // Read every parsed document exactly once.
+    let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for relative in REQUIRED_FILES {
+        files.insert(relative.to_string(), read_regular_file(root, relative)?);
+    }
+    files.insert("manifest.json".to_string(), manifest_bytes);
 
-    let semantic_manifest = read_semantic_manifest(root)?;
+    let semantic_manifest = parse_semantic_manifest(&files["semantic-manifest.json"])?;
     report.record(
         "semantic manifest schema",
         semantic_manifest.bundle_schema == BUNDLE_SCHEMA_V1,
@@ -308,16 +530,20 @@ pub(crate) fn verify_staged_bundle(
         semantic_manifest.plan_schema.to_string(),
     );
     if !report.ok {
-        report.timestamp = now_iso8601();
-        let _ = write_verification_json(root, &report);
-        return Ok(report);
+        return Ok((report.finished(), None));
     }
 
     // checksums: every file covered by checksums.sha256 must match. Keys
     // come from the untrusted bundle and are path-validated before use:
     // an absolute or `..`-bearing key must fail verification, never escape
     // the bundle root (traversal → arbitrary-file hash oracle / read).
-    let checksums = read_checksums(root)?;
+    let checksums = parse_checksums(&files["checksums.sha256"])?;
+    let mut hashes = FileHashes {
+        root,
+        present: &actual_files,
+        files: &files,
+        cache: BTreeMap::new(),
+    };
     let mut checksum_mismatches: Vec<String> = Vec::new();
     for name in &listed {
         if !checksums.contains_key(name) {
@@ -329,21 +555,18 @@ pub(crate) fn verify_staged_bundle(
             checksum_mismatches.push(format!("{relative}: unsafe path in checksums"));
             continue;
         };
-        let path = root.join(relative);
-        if !path.is_file() {
-            checksum_mismatches.push(format!("{relative}: missing file"));
+        if relative == LEGACY_REPORT_FILE || relative == "checksums.sha256" {
+            checksum_mismatches.push(format!("{relative}: may not be checksummed"));
             continue;
         }
-        // stream-hash so a large file inside the bundle cannot force a
-        // full-buffer read during verification
-        let actual = crate::extraction::sha256_file_result(&path)
-            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
-        if actual != *expected {
-            checksum_mismatches.push(format!("{relative}: checksum mismatch"));
+        match hashes.hash(relative)? {
+            None => checksum_mismatches.push(format!("{relative}: missing file")),
+            Some(actual) if actual != *expected => {
+                checksum_mismatches.push(format!("{relative}: checksum mismatch"))
+            }
+            Some(_) => {}
         }
     }
-    // verification.json is runtime state; it is not covered by the
-    // publish-time checksum file.
     report.record(
         "checksums",
         checksum_mismatches.is_empty(),
@@ -355,7 +578,7 @@ pub(crate) fn verify_staged_bundle(
     );
 
     // capture index consistency
-    let capture_index = read_capture_index(root)?;
+    let capture_index = parse_capture_index(&files["captures/index.jsonl"])?;
     let mut index_errors: Vec<String> = Vec::new();
     let mut seen_ids: BTreeMap<(String, String, SemanticHookSite, usize), usize> = BTreeMap::new();
     for entry in &capture_index {
@@ -410,12 +633,24 @@ pub(crate) fn verify_staged_bundle(
         },
     );
 
-    // payload: shapes/dtypes match the index; no unindexed tensors
-    let payload_path = root.join("captures/tensors.safetensors");
-    let payload_bytes = std::fs::read(&payload_path)
-        .map_err(|error| format!("cannot read '{}': {error}", payload_path.display()))?;
-    let payload_tensors = safetensors::deserialize(&payload_bytes)?;
+    // payload: shapes/dtypes match the index; no unindexed tensors. The
+    // bytes checked here are the bytes checksummed above and returned to
+    // callers.
+    let payload_bytes = &files[PAYLOAD_FILE];
+    let payload_tensors = safetensors::deserialize(payload_bytes)?;
     let mut payload_errors: Vec<String> = Vec::new();
+    // Two index entries naming one tensor would let the map below keep only
+    // the last, so the other entry's shape, dtype and checksum would never be
+    // compared with anything.
+    let mut tensor_names = std::collections::BTreeSet::new();
+    for entry in capture_index.iter().filter(|entry| entry.summary.is_none()) {
+        if !tensor_names.insert(entry.tensor_name.as_str()) {
+            payload_errors.push(format!(
+                "tensor '{}' is indexed more than once",
+                entry.tensor_name
+            ));
+        }
+    }
     let indexed_names: BTreeMap<&str, &CaptureIndexEntry> = capture_index
         .iter()
         .map(|entry| (entry.tensor_name.as_str(), entry))
@@ -511,10 +746,7 @@ pub(crate) fn verify_staged_bundle(
     );
 
     // execution-plan hash matches the stored plan
-    let plan_path = root.join("execution-plan.json");
-    let plan_bytes = std::fs::read(&plan_path)
-        .map_err(|error| format!("cannot read '{}': {error}", plan_path.display()))?;
-    let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&plan_bytes)
+    let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&files["execution-plan.json"])
         .map_err(|error| format!("execution-plan.json is not valid JSON: {error}"))?;
     report.record(
         "execution plan schema",
@@ -539,10 +771,7 @@ pub(crate) fn verify_staged_bundle(
         "execution plan hash",
         plan_matches,
         if plan_matches {
-            format!(
-                "plan hash {}",
-                &plan.plan_hash[..12.min(plan.plan_hash.len())]
-            )
+            format!("plan hash {}", short_hash(&plan.plan_hash))
         } else {
             format!(
                 "stored {} != recomputed {}",
@@ -554,8 +783,7 @@ pub(crate) fn verify_staged_bundle(
     // semantic hash + payload hash recompute
     let canonical_semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
     let stored_semantic = manifest.semantic_hash.clone();
-    let semantic_file = std::fs::read(root.join("semantic-manifest.json"))
-        .map_err(|error| format!("cannot read semantic-manifest.json: {error}"))?;
+    let semantic_file = &files["semantic-manifest.json"];
     // Released 0.5/0.6 writers could inherit serde_json/preserve_order and
     // hash insertion order despite documenting sorted keys. Preserve those
     // identities explicitly; never rewrite historical payload bytes.
@@ -575,7 +803,7 @@ pub(crate) fn verify_staged_bundle(
     );
     let legacy_hash = if legacy_version && canonical_semantic_hash != stored_semantic {
         let value: serde_json::Value =
-            serde_json::from_slice(&semantic_file).map_err(|error| error.to_string())?;
+            serde_json::from_slice(semantic_file).map_err(|error| error.to_string())?;
         Some(sha256_hex(
             &serde_json::to_vec(&value).map_err(|error| error.to_string())?,
         ))
@@ -593,8 +821,8 @@ pub(crate) fn verify_staged_bundle(
         semantic_hash == stored_semantic,
         format!(
             "recomputed {} vs stored {} ({})",
-            &semantic_hash[..12],
-            &stored_semantic[..12.min(stored_semantic.len())],
+            short_hash(&semantic_hash),
+            short_hash(&stored_semantic),
             if used_legacy {
                 "legacy insertion-order JSON"
             } else {
@@ -607,7 +835,7 @@ pub(crate) fn verify_staged_bundle(
     let mut inventory = semantic_manifest.payloads.clone();
     inventory.insert(
         "semantic-manifest.json".to_string(),
-        sha256_hex(&semantic_file),
+        sha256_hex(semantic_file),
     );
     let payload_hash = BundleIdentity::payload_hash(&inventory)?;
     let stored_payload = manifest.payload_hash.clone();
@@ -616,8 +844,8 @@ pub(crate) fn verify_staged_bundle(
         payload_hash == stored_payload,
         format!(
             "recomputed {} vs stored {}",
-            &payload_hash[..12],
-            &stored_payload[..12.min(stored_payload.len())]
+            short_hash(&payload_hash),
+            short_hash(&stored_payload)
         ),
     );
 
@@ -630,15 +858,16 @@ pub(crate) fn verify_staged_bundle(
             payload_errors.push(format!("{relative}: unsafe path in semantic manifest"));
             continue;
         };
-        let path = root.join(relative);
-        if !path.is_file() {
-            payload_errors.push(format!("{relative}: missing"));
+        if relative == LEGACY_REPORT_FILE {
+            payload_errors.push(format!("{relative}: not a payload"));
             continue;
         }
-        let actual = crate::extraction::sha256_file_result(&path)
-            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
-        if actual != *expected {
-            payload_errors.push(format!("{relative}: checksum mismatch"));
+        match hashes.hash(relative)? {
+            None => payload_errors.push(format!("{relative}: missing")),
+            Some(actual) if actual != *expected => {
+                payload_errors.push(format!("{relative}: checksum mismatch"))
+            }
+            Some(_) => {}
         }
     }
     report.record(
@@ -651,11 +880,25 @@ pub(crate) fn verify_staged_bundle(
         },
     );
 
+    // external anchor: the only check here whose expected value does not
+    // come from the bundle itself.
+    if let Some(expected) = &options.expected_semantic_hash {
+        let expected = expected.trim().to_ascii_lowercase();
+        report.record(
+            "semantic hash anchor",
+            expected == semantic_hash,
+            format!(
+                "expected {} vs recomputed {}",
+                short_hash(&expected),
+                short_hash(&semantic_hash)
+            ),
+        );
+    }
+
     report.semantic_hash = semantic_hash;
     report.payload_hash = payload_hash;
 
     // ---- phase 3: deep verification (model/tokenizer/plan) ----
-    // deep verification
     if let Some(model_path) = &options.model_path {
         deep_model_check(model_path, &semantic_manifest, &mut report);
     }
@@ -672,15 +915,92 @@ pub(crate) fn verify_staged_bundle(
             ok,
             format!(
                 "file {} vs manifest {}",
-                &actual[..12],
-                &semantic_manifest.tokenizer.sha256[..12]
+                short_hash(&actual),
+                short_hash(&semantic_manifest.tokenizer.sha256)
             ),
         );
     }
 
-    report.timestamp = now_iso8601();
-    let _ = write_verification_json(root, &report);
-    Ok(report)
+    let payload_bytes = files.remove(PAYLOAD_FILE).unwrap_or_default();
+    let manifest_value = manifest;
+    Ok((
+        report.finished(),
+        Some(VerifiedContents {
+            manifest: manifest_value,
+            semantic_manifest,
+            capture_index,
+            files,
+            payload_bytes,
+            tensors: payload_tensors,
+        }),
+    ))
+}
+
+/// Read one bundle file, refusing anything but a regular file and refusing
+/// a file that was swapped for another entry between the type check and the
+/// open.
+fn read_regular_file(root: &Path, relative: &str) -> Result<Vec<u8>, String> {
+    let path = &root.join(relative);
+    let mut file = open_regular_file(root, relative)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+    Ok(bytes)
+}
+
+/// Stream-hash a bundle file that the verifier never parses.
+fn hash_regular_file(root: &Path, relative: &str) -> Result<String, String> {
+    use sha2::Digest as _;
+    let path = &root.join(relative);
+    let mut file = open_regular_file(root, relative)?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+    Ok(crate::v05::manifest::hex(&hasher.finalize()))
+}
+
+fn open_regular_file(root: &Path, relative: &str) -> Result<std::fs::File, String> {
+    let path = &root.join(relative);
+    #[cfg(test)]
+    tests::note_open(path);
+    // The inventory walk rejected symlinks, but that was earlier: a folder
+    // such as `captures/` replaced by a symlink since then would make the open
+    // below follow it out of the bundle. Re-check every folder on the way.
+    let mut folder = root.to_path_buf();
+    if let Some(parent) = Path::new(relative).parent() {
+        for component in parent.components() {
+            folder.push(component);
+            let metadata = std::fs::symlink_metadata(&folder)
+                .map_err(|error| format!("cannot read '{}': {error}", folder.display()))?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "bundle contains a symlink or special file: {}",
+                    folder.display()
+                ));
+            }
+        }
+    }
+    let before = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+    if !before.file_type().is_file() {
+        return Err(format!(
+            "bundle contains a symlink or special file: {}",
+            path.display()
+        ));
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let opened = file
+            .metadata()
+            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+        if opened.dev() != before.dev() || opened.ino() != before.ino() {
+            return Err(format!("'{}' changed while being opened", path.display()));
+        }
+    }
+    Ok(file)
 }
 
 fn regular_bundle_files(root: &Path) -> Result<BTreeSet<String>, String> {
@@ -735,8 +1055,8 @@ fn deep_model_check(
                 ok,
                 format!(
                     "file {} vs manifest {}",
-                    &actual[..12.min(actual.len())],
-                    &semantic_manifest.model.sha256[..12.min(semantic_manifest.model.sha256.len())]
+                    short_hash(&actual),
+                    short_hash(&semantic_manifest.model.sha256)
                 ),
             );
         }
@@ -993,18 +1313,23 @@ fn dtype_bytes(dtype: &str) -> Option<usize> {
     }
 }
 
-fn read_semantic_manifest(root: &Path) -> Result<SemanticManifest, String> {
-    let path = root.join("semantic-manifest.json");
-    let bytes = std::fs::read(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
+/// The first 12 characters of a hash for a report line. Hashes read from a
+/// bundle are untrusted: they may be short or not ASCII, and a byte slice
+/// would then panic in the middle of verification.
+fn short_hash(hash: &str) -> &str {
+    hash.char_indices()
+        .nth(12)
+        .map_or(hash, |(end, _)| &hash[..end])
+}
+
+fn parse_semantic_manifest(bytes: &[u8]) -> Result<SemanticManifest, String> {
+    serde_json::from_slice(bytes)
         .map_err(|error| format!("semantic-manifest.json is not valid JSON: {error}"))
 }
 
-fn read_capture_index(root: &Path) -> Result<Vec<CaptureIndexEntry>, String> {
-    let path = root.join("captures/index.jsonl");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+fn parse_capture_index(bytes: &[u8]) -> Result<Vec<CaptureIndexEntry>, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("captures/index.jsonl is not UTF-8: {error}"))?;
     let mut entries = Vec::new();
     for (line_index, line) in text.lines().enumerate() {
         let entry: CaptureIndexEntry = serde_json::from_str(line).map_err(|error| {
@@ -1018,10 +1343,9 @@ fn read_capture_index(root: &Path) -> Result<Vec<CaptureIndexEntry>, String> {
     Ok(entries)
 }
 
-fn read_checksums(root: &Path) -> Result<BTreeMap<String, String>, String> {
-    let path = root.join("checksums.sha256");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+fn parse_checksums(bytes: &[u8]) -> Result<BTreeMap<String, String>, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("checksums.sha256 is not UTF-8: {error}"))?;
     let mut checksums = BTreeMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -1046,13 +1370,6 @@ fn read_checksums(root: &Path) -> Result<BTreeMap<String, String>, String> {
     Ok(checksums)
 }
 
-fn write_verification_json(root: &Path, report: &VerificationReport) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(report)
-        .map_err(|error| format!("verification.json serialization failed: {error}"))?;
-    crate::atomic_file::atomic_write(root.join("verification.json"), &bytes)
-        .map_err(|error| format!("cannot write verification.json: {error}"))
-}
-
 fn now_iso8601() -> String {
     // Runtime metadata only; not part of any hash.
     format!("epoch-seconds-{}", crate::extraction::unix_timestamp())
@@ -1060,6 +1377,15 @@ fn now_iso8601() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn short_hash_never_panics_on_untrusted_hashes() {
+        assert_eq!(super::short_hash("0123456789abcdef"), "0123456789ab");
+        assert_eq!(super::short_hash(""), "");
+        assert_eq!(super::short_hash("abc"), "abc");
+        // A multi-byte character straddling byte 12.
+        assert_eq!(super::short_hash("0123456789aé-tail"), "0123456789aé");
+    }
+
     #[test]
     fn generated_selection_uses_absolute_decode_positions() {
         use crate::v05::token_select::TokenSelector;
@@ -1086,6 +1412,24 @@ mod tests {
     use super::*;
     use crate::v05::testutil;
     use crate::v05::testutil::temp_root;
+
+    thread_local! {
+        /// Bundle file opens per path on this test thread.
+        static OPENS: std::cell::RefCell<BTreeMap<PathBuf, usize>> =
+            const { std::cell::RefCell::new(BTreeMap::new()) };
+    }
+
+    pub(super) fn note_open(path: &Path) {
+        OPENS.with(|opens| *opens.borrow_mut().entry(path.to_path_buf()).or_insert(0) += 1);
+    }
+
+    fn take_opens() -> BTreeMap<PathBuf, usize> {
+        OPENS.with(|opens| std::mem::take(&mut *opens.borrow_mut()))
+    }
+
+    fn read_semantic_manifest(root: &Path) -> Result<SemanticManifest, String> {
+        parse_semantic_manifest(&std::fs::read(root.join("semantic-manifest.json")).unwrap())
+    }
 
     /// Write the standard test bundle into a fresh temp dir, run `mutate`,
     /// verify, and require exactly the named checks to fail.
@@ -1129,9 +1473,194 @@ mod tests {
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);
         assert_eq!(report.checks.len(), 21);
-        // verification.json is written but excluded from hashes
-        assert!(root.join("verification.json").is_file());
+        // Verification never writes into the bundle it checks.
+        assert!(!root.join("verification.json").exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verification_leaves_a_read_only_bundle_untouched() {
+        let root = temp_root("read-only");
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        let before: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(report.ok, "{:?}", report.checks);
+        let after: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(before, after);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_forged_verification_json_cannot_change_the_verdict() {
+        let forged = serde_json::json!({
+            "bundle_schema": BUNDLE_SCHEMA_V1, "ok": true, "semantic_hash": "0",
+            "payload_hash": "0", "checks": [], "warnings": [], "timestamp": "x",
+        });
+        // A valid bundle with a stale report still verifies, with a warning.
+        let root = temp_root("forged-report");
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        std::fs::write(root.join("verification.json"), forged.to_string()).unwrap();
+        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("verification.json")));
+        // A corrupted bundle with a report claiming success still fails.
+        let path = root.join("outputs.jsonl");
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(&path, bytes).unwrap();
+        assert!(!verify_bundle(&root, &VerifyOptions::default()).unwrap().ok);
+        std::fs::remove_dir_all(root).unwrap();
+        // Listing the report as a bundle file is not a way to smuggle it in.
+        assert_verification_failure(
+            "listed-report",
+            |root| {
+                std::fs::write(root.join("verification.json"), forged.to_string()).unwrap();
+                let path = root.join("manifest.json");
+                let mut manifest: BundleManifest =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                manifest.files.push("verification.json".into());
+                std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            },
+            &["bundle file inventory"],
+        );
+    }
+
+    #[test]
+    fn each_bundle_file_is_opened_once_and_the_checked_bytes_are_returned() {
+        let root = temp_root("read-once");
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        take_opens();
+        let loaded = load_bundle_for_source(&root).unwrap();
+        let opens = take_opens();
+        let repeated: Vec<_> = opens.iter().filter(|(_, count)| **count > 1).collect();
+        assert!(repeated.is_empty(), "{repeated:?}");
+        assert!(opens.contains_key(&root.join("captures/tensors.safetensors")));
+        // Replacing files after verification changes nothing that was loaded.
+        let outputs = loaded.file("outputs.jsonl").unwrap().to_vec();
+        std::fs::write(root.join("outputs.jsonl"), b"tampered\n").unwrap();
+        std::fs::write(root.join("captures/tensors.safetensors"), b"x").unwrap();
+        assert_eq!(loaded.file("outputs.jsonl").unwrap(), outputs.as_slice());
+        assert_eq!(
+            loaded
+                .tensor_f32_by_name("cap-1/i1/residual-post-mlp/0")
+                .unwrap(),
+            testutil::sample_rows()
+        );
+        assert_eq!(loaded.semantic_hash, loaded.manifest.semantic_hash);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn fixture(name: &str) -> Vec<u8> {
+        std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/bundle-v050")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn resolved_experiment_is_bound_to_the_hashed_spec_and_manifest() {
+        let spec = String::from_utf8(fixture("experiment.toml")).unwrap();
+        let resolved = fixture("resolved-experiment.json");
+        let semantic = parse_semantic_manifest(&fixture("semantic-manifest.json")).unwrap();
+        // The frozen v0.5 bundle (run with an --output override) binds.
+        let bound = bind_resolved_experiment(&spec, &resolved, &semantic).unwrap();
+        assert_eq!(bound.generation.max_new_tokens, 8);
+        let edit = |change: &dyn Fn(&mut serde_json::Value)| {
+            let mut value: serde_json::Value = serde_json::from_slice(&resolved).unwrap();
+            change(&mut value);
+            bind_resolved_experiment(&spec, &serde_json::to_vec(&value).unwrap(), &semantic)
+        };
+        // Fields outside the semantic hash that change what runs.
+        for change in [
+            &(|v: &mut serde_json::Value| v["generation"]["max_new_tokens"] = 4096.into())
+                as &dyn Fn(&mut serde_json::Value),
+            &|v| v["generation"]["temperature"] = 1.5.into(),
+            &|v| v["model"]["tokenizer"] = "/elsewhere/tokenizer.json".into(),
+            &|v| v["model"]["tokenizer_expected_sha256"] = "".into(),
+            &|v| v["output"]["overwrite"] = true.into(),
+        ] {
+            let error = edit(change).unwrap_err();
+            assert!(error.contains("hashed experiment.toml"), "{error}");
+        }
+        // A mode override is legitimate only when the manifest agrees.
+        let error = edit(&|v| v["execution"]["mode"] = "planned".into()).unwrap_err();
+        assert!(error.contains("semantic manifest"), "{error}");
+        assert!(edit(&|v| v["execution"]["threads"] = 2.into()).is_ok());
+        assert!(edit(&|v| v["output"]["directory"] = "runs/x".into()).is_ok());
+        // An edited spec that no longer matches the recorded semantics.
+        let edited_spec = spec.replace("max_new_tokens = 8", "max_new_tokens = 9");
+        assert!(bind_resolved_experiment(&edited_spec, &resolved, &semantic).is_err());
+    }
+
+    #[test]
+    fn semantic_hash_anchor_rejects_a_resealed_bundle() {
+        let root = temp_root("anchor");
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        let original = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+        let anchored = |expected: &str| VerifyOptions {
+            expected_semantic_hash: Some(expected.to_string()),
+            ..VerifyOptions::default()
+        };
+        let report =
+            verify_bundle(&root, &anchored(&original.semantic_hash.to_uppercase())).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        assert!(report
+            .checks
+            .iter()
+            .any(|check| check.name == "semantic hash anchor" && check.ok));
+        // Edit the science and reseal every bundle-authored hash: the bundle
+        // is self-consistent again, so only the external anchor catches it.
+        let mut semantic = read_semantic_manifest(&root).unwrap();
+        semantic.experiment.name = "edited".into();
+        reseal(&root, &mut semantic);
+        assert!(verify_bundle(&root, &VerifyOptions::default()).unwrap().ok);
+        let report = verify_bundle(&root, &anchored(&original.semantic_hash)).unwrap();
+        let failed: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|check| !check.ok)
+            .map(|check| check.name.as_str())
+            .collect();
+        assert_eq!(failed, ["semantic hash anchor"]);
+        assert!(load_verified_bundle(&root, &anchored(&original.semantic_hash)).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Reseal mutated fixtures so a failed schema/identity check cannot be
@@ -1254,6 +1783,27 @@ mod tests {
             },
             &["checksums"],
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_symlink_is_not_followed() {
+        let root = temp_root("folder-symlink");
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        assert!(open_regular_file(&root, "captures/tensors.safetensors").is_ok());
+        // After the inventory walk: move captures/ out and point a symlink at it.
+        let outside = root.with_extension("outside");
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::rename(root.join("captures"), &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("captures")).unwrap();
+        let error = open_regular_file(&root, "captures/tensors.safetensors").unwrap_err();
+        assert!(error.contains("symlink"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
@@ -1380,6 +1930,29 @@ mod tests {
     }
 
     #[test]
+    fn index_entries_sharing_a_tensor_name_fail() {
+        assert_verification_failure(
+            "duplicate-tensor-name",
+            |root| {
+                // A second entry for another capture that points at the same
+                // tensor: only one of the two could ever be compared.
+                let path = root.join("captures/index.jsonl");
+                let text = std::fs::read_to_string(&path).unwrap();
+                let first = text.lines().next().unwrap();
+                let mut entry: serde_json::Value = serde_json::from_str(first).unwrap();
+                entry["capture_id"] = "shadow".into();
+                entry["shape"] = serde_json::json!([9, 9]);
+                // Placed first, so the genuine entry after it would win a
+                // last-one-wins lookup and this one would go unchecked.
+                std::fs::write(&path, format!("{entry}\n{text}")).unwrap();
+                let mut semantic = read_semantic_manifest(root).unwrap();
+                reseal(root, &mut semantic);
+            },
+            &["tensor payload"],
+        );
+    }
+
+    #[test]
     fn incomplete_bundle_fails() {
         let root = temp_root("incomplete");
         std::fs::create_dir_all(&root).unwrap();
@@ -1452,7 +2025,7 @@ mod tests {
         std::fs::write(&model_path, b"not a model").unwrap();
         let options = VerifyOptions {
             model_path: Some(model_path.clone()),
-            tokenizer_path: None,
+            ..VerifyOptions::default()
         };
         let report = verify_bundle(&root, &options).unwrap();
         assert!(!report.ok);

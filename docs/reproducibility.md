@@ -17,7 +17,38 @@ additionally checks the model SHA-256, architecture, and layer count
 against the manifest.
 
 Failures return a nonzero exit code; the machine-readable report
-(`--json`) lists every check.
+(`--json`) lists every check. Verification never writes into the bundle it
+checks, so shared or read-only bundles are not modified; `--write-report
+<path>` saves the JSON report to a path outside the bundle. A
+`verification.json` left inside a bundle by an earlier Ember release is
+ignored (and reported as ignored): it cannot influence the verdict.
+
+### What "verified" means
+
+Every value verification compares against, including `checksums.sha256`,
+the hashes in `manifest.json`, and the payload checksums in
+`semantic-manifest.json`, is written by whoever produced the bundle. A
+verified bundle is therefore **self-consistent**: nothing was corrupted or
+edited without also updating the hashes. It is not proof that the bundle is
+the one a paper, a colleague, or your own earlier run produced: an edited
+bundle can be fully resealed and will verify.
+
+To bind a bundle to an identity obtained elsewhere, anchor it:
+
+- `--expect-semantic-hash <hex>`: the recomputed semantic hash must equal a
+  value you recorded somewhere you trust (a paper, a lab notebook, a signed
+  commit). `verify` prints the semantic hash on success for this purpose.
+- `--expect-evidence <envelope> --trusted-key <key.pub>`: a signed evidence
+  envelope over the bundle's `manifest.json` (`ember evidence sign --manifest
+  <bundle>/manifest.json`) must verify against the trusted key, and its
+  signed semantic and payload hashes must equal the recomputed ones. See
+  [attested execution](embersec/attested-execution.md).
+
+`experiment reproduce` accepts the same options for the original bundle,
+and `experiment compare` accepts `--expect-a-semantic-hash` and
+`--expect-b-semantic-hash`. Anchors are checked before anything else runs.
+Without an anchor the verdict still says `verified`, and the text output
+states that this means self-consistent only.
 
 ## Comparison
 
@@ -45,17 +76,30 @@ deterministic.
 
 `ember experiment reproduce <bundle> --model <model.gguf>`:
 
-1. reads the bundle's resolved experiment;
-2. validates the supplied model SHA-256 against the bundle record;
-3. re-runs the experiment to a new bundle (never overwriting the
-   original);
-4. compares against the original and classifies:
+1. verifies the bundle (checking any anchors) and reads its resolved
+   experiment from the verified bytes;
+2. binds `resolved-experiment.json`, which is outside the semantic hash, to
+   the hashed identity: it must equal what the hashed `experiment.toml`
+   resolves to (apart from the execution mode, thread count, and output
+   directory a run may override, and the informational list of applied
+   defaults), and its experiment metadata, execution mode, inputs, captures
+   and interventions must match the semantic manifest; otherwise
+   reproduction is refused;
+3. validates the supplied model SHA-256 against the bundle record, and
+   requires the tokenizer (the one the spec names, or `--tokenizer`) to
+   match the recorded tokenizer SHA-256;
+4. re-runs the experiment to a new bundle (never overwriting an existing
+   directory, whatever the bundle's spec says);
+5. compares against the original and classifies:
 
 - `exact-semantic`: identical semantic hashes (same output directory
   placement, bit-identical execution);
+- `inputs-differ`: the two bundles did not run the same input IDs and
+  prompts, so no output comparison is meaningful;
 - `exact`: identical tokens and exact captures;
 - `output-equivalent`: identical tokens, captures within the
   float envelope;
+- `captures-misaligned`: a requested capture is missing from one side;
 - `top1-equivalent`: only the final top-1 agrees;
 - `failed`: divergence or incompatibility.
 

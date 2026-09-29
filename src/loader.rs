@@ -1368,9 +1368,10 @@ fn estimated_tensor_allocation_bytes(
     };
 
     match info.dtype {
-        // Conversion reads an encoded buffer and keeps a f32 destination until
-        // CpuTensor takes ownership of it.
-        0 | 1 | 30 => add(encoded_bytes, f32_bytes),
+        // Conversion streams the encoded bytes through a fixed
+        // FLOAT_READ_BUFFER_BYTES stack buffer (`read_float_values`), so only
+        // the f32 destination is allocated, whether or not a mapping exists.
+        0 | 1 | 30 => Ok(f32_bytes),
         // Q8_0 is mapped directly for file loads. A small number of model
         // builders (currently GPT-2 embeddings) explicitly dequantize a Q8
         // tensor into an owned f32 table, so include that downstream storage.
@@ -2152,14 +2153,23 @@ mod tests {
             .expect("a sparse f32 tensor declaration must not allocate");
         assert!(error.to_string().contains("encoded bytes"), "{error}");
 
-        // This declaration is exactly at the encoded-byte cap but still needs
-        // two f32-sized buffers during conversion, so the transient cap must
-        // reject it before reading the payload.
-        let mut cursor = std::io::Cursor::new(gguf_one_tensor(&[1u64 << 28], 0));
+        // A 1 GiB f16 declaration is well under the encoded-byte cap, but its
+        // f32 destination is 2 GiB, so the allocation cap must reject it
+        // before reading the payload.
+        let mut cursor = std::io::Cursor::new(gguf_one_tensor(&[1u64 << 29], 1));
         let error = load_gguf_from_reader(&mut cursor)
             .err()
             .expect("transient tensor allocation must be bounded");
         assert!(error.to_string().contains("while loading"), "{error}");
+
+        // f32 conversion streams through a small stack buffer, so a 1 GiB
+        // f32 tensor needs exactly its 1 GiB destination: it passes the
+        // allocation cap and is rejected only because the file is short.
+        let mut cursor = std::io::Cursor::new(gguf_one_tensor(&[1u64 << 28], 0));
+        let error = load_gguf_from_reader(&mut cursor)
+            .err()
+            .expect("a truncated tensor must be rejected");
+        assert!(error.to_string().contains("exceeds file length"), "{error}");
     }
 
     #[test]
@@ -2673,6 +2683,36 @@ mod tests {
                 .unwrap(),
                 4096 + encoded
             );
+        }
+    }
+
+    #[test]
+    fn float_tensor_estimate_counts_only_the_f32_destination() {
+        // read_float_values streams through a fixed stack buffer; the encoded
+        // bytes are never held in an allocation of their own.
+        for (dtype, width) in [(0u32, 4u64), (1, 2), (30, 2)] {
+            let info = TensorInfo {
+                name: "float".into(),
+                dims: vec![1024, 16],
+                dtype,
+                offset: 0,
+            };
+            for mmap_present in [false, true] {
+                assert_eq!(
+                    estimated_tensor_allocation_bytes(
+                        &info,
+                        16 * 1024,
+                        16 * 1024 * width,
+                        crate::quant_k::KStrategy::EagerF32,
+                        false,
+                        mmap_present,
+                        false,
+                    )
+                    .unwrap(),
+                    16 * 1024 * 4,
+                    "dtype {dtype}"
+                );
+            }
         }
     }
 

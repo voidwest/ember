@@ -405,7 +405,8 @@ named remains experimental under `docs/api-stability.md`.
 The 1.x serialized anchors are `ember.experiment.v1`, `ember.bundle.v1`,
 `ember.hook.v1`, the execution-plan schema (`v04-plan/1`), the run manifest
 (`schema_version` 2 with `execution-identity-v2`, v1 digests still verifiable),
-`signed-evidence-v1`, and `ember.kv-snapshot.v1`. For each: an unknown major
+`signed-evidence-v2` (with `signed-evidence-v1` still verified), and
+`ember.kv-snapshot.v1`. For each: an unknown major
 version fails, a missing required field fails, unknown fields are rejected where
 the reader is strict and ignored only where the format says so (agent traces),
 and a field's meaning is never reinterpreted in place. Semantic changes require a

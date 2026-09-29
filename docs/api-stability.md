@@ -23,7 +23,8 @@ The 1.0 line commits to the surfaces named in
 [v0.5 research contract section 19](v05-research-contract.md): the serialized
 anchors (`ember.experiment.v1`, `ember.bundle.v1`, `ember.hook.v1`,
 `v04-plan/1`, run-manifest `schema_version` 2 with `execution-identity-v2`,
-`signed-evidence-v1`, `ember.kv-snapshot.v1`) and the documented CLI and Python
+`signed-evidence-v2` (v1 still verified), `ember.kv-snapshot.v1`) and the
+documented CLI and Python
 surfaces. Within that line, normal SemVer major/minor/patch rules apply to those
 surfaces. The Rust library stays experimental unless a module is explicitly
 listed as stable here; diagnostic commands, kernel names, timing fields, and the
