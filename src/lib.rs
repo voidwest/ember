@@ -11,16 +11,16 @@
 
 extern crate alloc;
 
-// NOTE: the counting allocator is deliberately installed by the *library*,
-// not by the binary. Gate E (`tests/k_parity.rs`, v04-execution-contract.md)
-// measures per-token allocations under `cargo test --all-targets`, which runs
-// test binaries linked against this lib — an allocator installed only in
-// `main.rs` would make those measurements silently meaningless (always 0).
-// The cost is one relaxed atomic pair per allocation, and steady-state
-// planned decode performs no allocations at all (see `alloc_counter` module
-// docs), so the hot path pays nothing. The optional Python binding
-// (`bindings/python`) links this crate headless and inherits this allocator,
-// which counts Rust-side allocations only.
+// The counting allocator is *not* installed by the library: a library
+// `#[global_allocator]` is forced on every consumer (the Python binding,
+// downstream crates with their own allocator) and taxes every allocation.
+// It is registered here only for the lib's own unit tests; the `ember`
+// binary (`src/main.rs`) and the integration tests/examples that measure
+// allocations (`tests/k_parity.rs`, `examples/rayon_alloc_test.rs`) register
+// it themselves. Zero-allocation assertions check
+// `alloc_counter::counting_active()` so a missing registration cannot make
+// them pass vacuously.
+#[cfg(test)]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 

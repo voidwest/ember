@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use half::{f16, slice::HalfFloatSliceExt};
+use half::{f16, slice::HalfFloatSliceExt, vec::HalfBitsVecExt};
 
 /// Physical storage requested by one model layer. Shared layers read an
 /// earlier layer's owner slab and never write a second copy.
@@ -29,8 +29,9 @@ struct LayerAllocation {
 /// `Clone` exists for session-level provisional inference: a scratch copy
 /// lets speculative prefill/decode run without touching the committed
 /// cache. Clones are independent; bytes beyond a rolled-back cursor are
-/// never read (see [`KVCache::truncate_to`]).
-#[derive(Clone)]
+/// never read (see [`KVCache::truncate_to`]). A clone copies only the
+/// positions ever written (not the whole `max_seq_len` slab) into a zeroed
+/// allocation of the same capacity, so every slab reads identically.
 pub struct KVCache {
     /// Key owner slabs, each laid out as [head][pos][head_dim].
     k: Vec<f16>,
@@ -54,6 +55,45 @@ pub struct KVCache {
     max_seq_len: usize,
     /// write position in the sequence dimension
     cursor: usize,
+    /// High-water mark: every position `>= written` of every slab is still
+    /// zero from allocation. Lets `Clone` copy only the written prefix.
+    written: usize,
+}
+
+impl Clone for KVCache {
+    fn clone(&self) -> Self {
+        // `vec![0u16; n]` is a zeroed allocation (calloc): untouched capacity
+        // costs neither a copy nor a page write. f16 zero is all-zero bits.
+        let zeroed = |len: usize| -> Vec<f16> { vec![0u16; len].reinterpret_into() };
+        let mut k = zeroed(self.k.len());
+        let mut v = zeroed(self.v.len());
+        for layer in 0..self.n_layers {
+            let allocation = self.layer_allocation(layer);
+            if allocation.owner != layer {
+                // Shared layers alias an earlier owner slab: nothing to copy.
+                continue;
+            }
+            let head_stride = self.max_seq_len * allocation.head_dim;
+            let prefix = self.written * allocation.head_dim;
+            for head in 0..allocation.n_kv_heads {
+                let start = allocation.offset + head * head_stride;
+                k[start..start + prefix].copy_from_slice(&self.k[start..start + prefix]);
+                v[start..start + prefix].copy_from_slice(&self.v[start..start + prefix]);
+            }
+        }
+        Self {
+            k,
+            v,
+            n_layers: self.n_layers,
+            layers: self.layers.clone(),
+            qk_scratch: self.qk_scratch.clone(),
+            n_kv_heads: self.n_kv_heads,
+            head_dim: self.head_dim,
+            max_seq_len: self.max_seq_len,
+            cursor: self.cursor,
+            written: self.written,
+        }
+    }
 }
 
 impl KVCache {
@@ -190,6 +230,7 @@ impl KVCache {
             head_dim,
             max_seq_len,
             cursor: 0,
+            written: 0,
         })
     }
 
@@ -253,6 +294,7 @@ impl KVCache {
             self.max_seq_len
         );
 
+        self.written = self.written.max(pos + 1);
         let layer_offset = allocation.offset;
         let seq_offset = pos
             .checked_mul(allocation.head_dim)
@@ -367,6 +409,7 @@ impl KVCache {
                 source += compact_head;
             }
         }
+        self.written = self.written.max(sequence_length);
         self.cursor = sequence_length;
         Ok(())
     }
@@ -617,6 +660,86 @@ mod tests {
         let mut imported = KVCache::new(2, 2, 4, 5);
         imported.import_compact_prefix(1, &keys, &values).unwrap();
         assert_eq!(imported.export_compact_prefix(1).unwrap(), (keys, values));
+    }
+
+    fn assert_caches_read_identically(left: &KVCache, right: &KVCache) {
+        assert_eq!(left.cursor(), right.cursor());
+        assert_eq!(left.n_layers(), right.n_layers());
+        assert_eq!(left.max_seq_len(), right.max_seq_len());
+        assert_eq!(left.storage_bytes(), right.storage_bytes());
+        for layer in 0..left.n_layers() {
+            assert_eq!(left.layer_head_dim(layer), right.layer_head_dim(layer));
+            assert_eq!(left.layer_n_kv_heads(layer), right.layer_n_kv_heads(layer));
+            let (lk, lv) = left.get(layer);
+            let (rk, rv) = right.get(layer);
+            let bits = |values: &[f16]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(lk), bits(rk), "layer {layer} keys");
+            assert_eq!(bits(lv), bits(rv), "layer {layer} values");
+        }
+    }
+
+    #[test]
+    fn clone_of_partial_uniform_cache_reads_and_continues_identically() {
+        let mut cache = KVCache::new(3, 2, 4, 16);
+        for pos in 0..5 {
+            for layer in 0..3 {
+                let base = (layer * 100 + pos) as f32;
+                let k: Vec<f32> = (0..8).map(|i| base + i as f32 * 0.25).collect();
+                let v: Vec<f32> = (0..8).map(|i| -base - i as f32 * 0.5).collect();
+                cache.append(layer, pos, &k, &v);
+            }
+            cache.advance_cursor();
+        }
+        // Roll back: stale positions 3..5 stay in the slab and must survive
+        // the clone byte-for-byte too.
+        cache.truncate_to(3);
+        let mut clone = cache.clone();
+        assert_caches_read_identically(&cache, &clone);
+        assert_eq!(
+            clone.export_compact_prefix(3).unwrap(),
+            cache.export_compact_prefix(3).unwrap()
+        );
+        for pos in 3..7 {
+            for layer in 0..3 {
+                let k = [pos as f32 + layer as f32; 8];
+                let v = [pos as f32 * 2.0; 8];
+                cache.append(layer, pos, &k, &v);
+                clone.append(layer, pos, &k, &v);
+            }
+            cache.advance_cursor();
+            clone.advance_cursor();
+        }
+        assert_caches_read_identically(&cache, &clone);
+        // Clones are independent.
+        clone.append(0, 7, &[42.0; 8], &[42.0; 8]);
+        assert_eq!(cache.get(0).0[7 * 4].to_f32(), 0.0);
+    }
+
+    #[test]
+    fn clone_of_heterogeneous_and_imported_caches_reads_identically() {
+        let mut cache = heterogeneous_cache(6);
+        for pos in 0..2 {
+            cache.append(0, pos, &[pos as f32 + 1.0; 8], &[2.0; 8]);
+            cache.append(1, pos, &[pos as f32 + 10.0; 8], &[20.0; 8]);
+            cache.advance_cursor();
+        }
+        let clone = cache.clone();
+        assert_caches_read_identically(&cache, &clone);
+        assert_eq!(clone.get(0).0.as_ptr(), clone.get(2).0.as_ptr());
+
+        let mut source = KVCache::new(2, 2, 4, 4);
+        for layer in 0..2 {
+            source.append(layer, 0, &[layer as f32 + 1.5; 8], &[3.0; 8]);
+            source.append(layer, 1, &[layer as f32 - 1.5; 8], &[4.0; 8]);
+        }
+        source.advance_cursor();
+        source.advance_cursor();
+        let (keys, values) = source.export_compact_prefix(2).unwrap();
+        let mut imported = KVCache::new(2, 2, 4, 9);
+        imported.import_compact_prefix(2, &keys, &values).unwrap();
+        let clone = imported.clone();
+        assert_caches_read_identically(&imported, &clone);
+        assert_eq!(clone.export_compact_prefix(2).unwrap(), (keys, values));
     }
 
     #[test]

@@ -589,16 +589,16 @@ mod x86 {
             let mut min_acc = _mm_setzero_ps();
             for (block_index, activation) in input.iter().enumerate() {
                 let block = row.add(block_index * Q4_K_BLOCK_BYTES);
-                let d = f16_to_f32(*block.cast::<u16>());
-                let dmin = f16_to_f32(*block.add(2).cast::<u16>());
+                let d = f16_to_f32(block.cast::<u16>().read_unaligned());
+                let dmin = f16_to_f32(block.add(2).cast::<u16>().read_unaligned());
                 // Unpack the 12 scale/min bytes into one 16-byte vector
                 // (8 scales + 8 mins) with the four-scalar shuffle (same
                 // dataflow as ggml's q4_K dot): a handful of scalar ops
                 // instead of a per-byte unpack with stack spills, and the
                 // scale register then feeds shuffle-based broadcasts.
-                let s0 = *block.add(4).cast::<u32>();
-                let s1 = *block.add(8).cast::<u32>();
-                let s2 = *block.add(12).cast::<u32>();
+                let s0 = block.add(4).cast::<u32>().read_unaligned();
+                let s1 = block.add(8).cast::<u32>().read_unaligned();
+                let s2 = block.add(12).cast::<u32>().read_unaligned();
                 let utmp0 = s0 & 0x3f3f_3f3f;
                 let utmp1 = (s2 & 0x0f0f_0f0f) | (((s0 >> 6) & 0x0303_0303) << 4);
                 let utmp2 = s1 & 0x3f3f_3f3f;
@@ -672,7 +672,7 @@ mod x86 {
             let mut acc = _mm256_setzero_ps();
             for (block_index, activation) in input.iter().enumerate() {
                 let block = row.add(block_index * Q6_K_BLOCK_BYTES);
-                let d = f16_to_f32(*block.add(208).cast::<u16>());
+                let d = f16_to_f32(block.add(208).cast::<u16>().read_unaligned());
                 // Unpack the 16 scale bytes once per block: they feed the
                 // eight segment broadcasts and the bsums offset correction.
                 let scale_bytes = _mm_loadu_si128(block.add(192).cast());
@@ -764,11 +764,11 @@ mod x86 {
             ];
             for (block_index, activation) in input.iter().enumerate() {
                 let block = row.add(block_index * Q4_K_BLOCK_BYTES);
-                let d = f16_to_f32(*block.cast::<u16>());
-                let dmin = f16_to_f32(*block.add(2).cast::<u16>());
-                let s0 = *block.add(4).cast::<u32>();
-                let s1 = *block.add(8).cast::<u32>();
-                let s2 = *block.add(12).cast::<u32>();
+                let d = f16_to_f32(block.cast::<u16>().read_unaligned());
+                let dmin = f16_to_f32(block.add(2).cast::<u16>().read_unaligned());
+                let s0 = block.add(4).cast::<u32>().read_unaligned();
+                let s1 = block.add(8).cast::<u32>().read_unaligned();
+                let s2 = block.add(12).cast::<u32>().read_unaligned();
                 let utmp0 = s0 & 0x3f3f_3f3f;
                 let utmp1 = (s2 & 0x0f0f_0f0f) | (((s0 >> 6) & 0x0303_0303) << 4);
                 let utmp2 = s1 & 0x3f3f_3f3f;
@@ -840,14 +840,13 @@ mod x86 {
             let mask12 = _mm256_set1_epi8(12);
             let mask48 = _mm256_set1_epi8(48);
             let mask_signed = _mm256_set1_epi8(-64);
-            // Byte-uniform selectors for `vpternlogq`: imm 0xD2 = (a & ~c) |
-            // (b & c), imm 0xE4 = (a & c) | (b & ~c).
-            let select_high = _mm256_set1_epi8(0x30);
+            // Byte-uniform selector for `vpternlogq`: imm 0xE4 = (a & c) |
+            // (b & ~c), i.e. bits 0-3 from `a` and bits 4-7 from `b`.
             let select_low = _mm256_set1_epi8(0x0f);
             let mut acc = _mm256_setzero_ps();
             for (block_index, activation) in input.iter().enumerate() {
                 let block = row.add(block_index * Q6_K_BLOCK_BYTES);
-                let d = f16_to_f32(*block.add(208).cast::<u16>());
+                let d = f16_to_f32(block.add(208).cast::<u16>().read_unaligned());
                 let scale_bytes = _mm_loadu_si128(block.add(192).cast());
                 let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
                 let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
@@ -866,12 +865,14 @@ mod x86 {
                         high_bits,
                         high_bits,
                     ];
-                    // imm 0xD2 = (a & ~c) | (b & c): low nibble from `a`,
-                    // high nibble from the shifted `b`. imm 0xE4 = (a & c) |
-                    // (b & ~c): the inverse selection.
+                    // Every segment is the same select: the 4-bit low quant
+                    // from `a` in bits 0-3, the 2 high bits (already moved to
+                    // bits 4-5, zero elsewhere) from `b` in bits 4-7. Selecting
+                    // bits 0-3 of `a` also discards its upper nibble, which
+                    // belongs to the next segment.
                     let raw = [
-                        _mm256_ternarylogic_epi32(low_a, high_shifted[0], select_high, 0xD2),
-                        _mm256_ternarylogic_epi32(low_b, high_shifted[1], select_high, 0xD2),
+                        _mm256_ternarylogic_epi32(low_a, high_shifted[0], select_low, 0xE4),
+                        _mm256_ternarylogic_epi32(low_b, high_shifted[1], select_low, 0xE4),
                         _mm256_ternarylogic_epi32(
                             _mm256_srli_epi16(low_a, 4),
                             _mm256_and_si256(high_shifted[2], mask48),
@@ -1926,6 +1927,23 @@ mod tests {
             let q6_x86 = unsafe { super::x86::q6_k_dot_q8_k(q6_weight.data(), 2, 0, &packed) };
             assert_eq!(q4_x86.to_bits(), 0xc5eb_1fde);
             assert_eq!(q6_x86.to_bits(), 0xc701_2543);
+            // The AVX-512 kernels are documented bit-identical to AVX2. They
+            // are opt-in at runtime, so test them whenever the host could run
+            // them rather than only when EMBER_K_AVX512 happens to be set.
+            if is_x86_feature_detected!("avx512f")
+                && is_x86_feature_detected!("avx512bw")
+                && is_x86_feature_detected!("avx512dq")
+                && is_x86_feature_detected!("avx512vl")
+            {
+                // SAFETY: guarded by the x86 and AVX-512 feature predicates.
+                let q4_avx512 =
+                    unsafe { super::x86::q4_k_dot_q8_k_avx512(q4_weight.data(), 2, 0, &packed) };
+                // SAFETY: as above.
+                let q6_avx512 =
+                    unsafe { super::x86::q6_k_dot_q8_k_avx512(q6_weight.data(), 2, 0, &packed) };
+                assert_eq!(q4_avx512.to_bits(), q4_x86.to_bits());
+                assert_eq!(q6_avx512.to_bits(), q6_x86.to_bits());
+            }
         }
     }
 
@@ -2119,6 +2137,7 @@ mod tests {
                 let mut dst = vec![0.0; rows * weight.out_features()];
                 matmul_k_q8_into(&src, rows, &weight, &mut dst, false).unwrap();
                 dst.fill(0.0);
+                assert!(crate::alloc_counter::counting_active());
                 let (result, allocations) = crate::alloc_counter::count_allocations(|| {
                     matmul_k_q8_into(&src, rows, &weight, &mut dst, false)
                 });

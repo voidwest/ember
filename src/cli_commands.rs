@@ -1620,6 +1620,9 @@ where
     // via the counting allocator, plus process-global deltas across the
     // timed loop (includes worker-thread allocations). Only collected on
     // measured repetitions, never warmups.
+    if command.allocations && !ember::alloc_counter::counting_active() {
+        anyhow::bail!("--allocations requires the counting global allocator in this executable");
+    }
     let mut allocation_samples = if command.allocations {
         let count = command
             .tokens
@@ -1653,6 +1656,9 @@ where
         if profile_operators {
             ember::decode_profile::resume();
         }
+        // Global totals are only maintained inside a tracking window; open
+        // one around the timed loop when allocations are being reported.
+        let global_tracking = track_allocations.then(ember::alloc_counter::track_global);
         let global_events_before = ember::alloc_counter::total_allocations();
         let global_bytes_before = ember::alloc_counter::total_requested_bytes();
         let start = Instant::now();
@@ -1689,6 +1695,7 @@ where
         let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
         let global_events_after = ember::alloc_counter::total_allocations();
         let global_bytes_after = ember::alloc_counter::total_requested_bytes();
+        drop(global_tracking);
         validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
         if elapsed_ns == 0 {
             anyhow::bail!("decode benchmark timer resolution produced a zero-duration sample");

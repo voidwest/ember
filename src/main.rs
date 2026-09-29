@@ -1,3 +1,9 @@
+// The library no longer installs the counting allocator; the binary does, so
+// `bench-decode --allocations` and residency reports keep real numbers.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: ember::alloc_counter::CountingAllocator =
+    ember::alloc_counter::CountingAllocator;
+
 mod cli_diff;
 mod cli_diff_corpus;
 mod cli_experiment;

@@ -27,7 +27,8 @@ pub enum FileKind {
     Unknown,
 }
 
-/// One tensor row in the GGUF digest (capped at 12 rows by [`inspect_path`]).
+/// One tensor row in the GGUF digest. [`GgufDigest::tensors`] holds the full
+/// inventory; only the CLI's human rendering truncates it.
 #[derive(Debug, Clone, Serialize)]
 pub struct TensorDigestEntry {
     pub name: String,
@@ -44,6 +45,7 @@ pub struct GgufDigest {
     pub tensor_count: usize,
     pub total_elements: u64,
     pub dtype_histogram: BTreeMap<String, usize>,
+    /// Every tensor, sorted by name (the full inventory `--json` promises).
     pub tensors: Vec<TensorDigestEntry>,
     pub k_decisions: BTreeMap<String, String>,
 }
@@ -172,10 +174,11 @@ fn gguf_value_summary(value: &GgufValue) -> String {
         GgufValue::F64(v) => v.to_string(),
         GgufValue::Bool(v) => v.to_string(),
         GgufValue::Str(v) => {
-            if v.len() > 80 {
-                format!("{}...", &v[..80])
-            } else {
-                v.clone()
+            // Truncate on a character boundary: metadata strings are
+            // untrusted UTF-8 and a byte index can land inside a character.
+            match v.char_indices().nth(80) {
+                Some((end, _)) => format!("{}...", &v[..end]),
+                None => v.clone(),
             }
         }
         GgufValue::Array(items) => format!("<array of {}>", items.len()),
@@ -203,7 +206,7 @@ fn inspect_gguf(path: &Path) -> anyhow::Result<(GgufDigest, Vec<String>)> {
         );
     }
     let mut dtype_histogram: BTreeMap<String, usize> = BTreeMap::new();
-    let mut tensors: Vec<TensorDigestEntry> = Vec::new();
+    let mut tensors: Vec<TensorDigestEntry> = Vec::with_capacity(loader.tensor_meta.len());
     let mut total_elements: u64 = 0;
     let mut names: Vec<&String> = loader.tensor_meta.keys().collect();
     names.sort();
@@ -235,13 +238,6 @@ fn inspect_gguf(path: &Path) -> anyhow::Result<(GgufDigest, Vec<String>)> {
             None => format!("{:?}", decision.execution),
         };
         k_decisions.insert(name.clone(), entry);
-    }
-    if tensors.len() > 12 {
-        let dropped = tensors.len() - 12;
-        tensors.truncate(12);
-        notes.push(format!(
-            "{dropped} more tensors omitted from digest (see --json for full inventory)"
-        ));
     }
     Ok((
         GgufDigest {
@@ -328,6 +324,14 @@ pub fn inspect_plan(path: &Path, arch: &str, execution: &str) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_metadata_strings_truncate_on_a_character_boundary() {
+        // 79 ASCII bytes then a two-byte character: byte 80 is mid-character.
+        let value = format!("{}é and more", "a".repeat(79));
+        let summary = gguf_value_summary(&GgufValue::Str(value));
+        assert!(summary.ends_with("aé..."), "{summary}");
+    }
 
     #[test]
     fn unknown_kind_for_missing_trailing_snapshot_files() {

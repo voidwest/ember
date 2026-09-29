@@ -24,6 +24,12 @@
 //!   (the 2026-08-11 amendment scopes the original Gate B; Gate C/llama.cpp
 //!   is the authoritative model-level numerical gate for production K-quant).
 
+// Gate E reads allocation counts; the library does not install the counting
+// allocator, so this test binary registers it.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: ember::alloc_counter::CountingAllocator =
+    ember::alloc_counter::CountingAllocator;
+
 use ember::backend::CpuBackend;
 use ember::experiments::ExperimentalForwardModel;
 use ember::loader::{load_gguf_with_k_strategy, GgufLoader};
@@ -1259,6 +1265,7 @@ fn v04_planned_allocations_stay_within_existing_scheduler_bound() {
     // measure two consecutive decodes: a one-shot lazy-init allocation on
     // the first (e.g. rayon pool internals) is distinguishable from a
     // per-token allocation
+    assert!(ember::alloc_counter::counting_active());
     let mut counts = Vec::new();
     for step in 0..2 {
         let (_, allocations) = ember::alloc_counter::count_allocations(|| {
@@ -1327,6 +1334,7 @@ fn v04_planned_into_route_is_bit_identical_with_bounded_scheduler_allocations() 
     )
     .expect("reference decode");
     let mut buffer = CpuTensor::zeroes(&[1, vocab]);
+    assert!(ember::alloc_counter::counting_active());
     let (result, allocations) = ember::alloc_counter::count_allocations(|| {
         ForwardModel::forward_last_logits_with_cache_reusing(
             &model,
@@ -1406,6 +1414,8 @@ fn cpu_session_has_zero_steady_state_allocations() {
             )
             .unwrap();
         }
+        assert!(ember::alloc_counter::counting_active());
+        let global_tracking = ember::alloc_counter::track_global();
         let before = ember::alloc_counter::total_allocations();
         let (_, caller) = ember::alloc_counter::count_allocations(|| {
             for offset in 8..72 {
@@ -1429,6 +1439,7 @@ fn cpu_session_has_zero_steady_state_allocations() {
             }
         });
         let global = ember::alloc_counter::total_allocations() - before;
+        drop(global_tracking);
         assert_eq!(
             caller, 0,
             "caller allocations across 64 steady-state tokens"

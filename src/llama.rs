@@ -39,6 +39,31 @@ thread_local! {
     /// One decode workspace per calling thread. Dimensions are checked before
     /// every use so sequential inference with different models remains safe.
     static LLAMA_DECODE_WORKSPACE: RefCell<Option<Workspace>> = const { RefCell::new(None) };
+    /// Reused `[vocab]` logits buffer for greedy decode (see
+    /// `greedy_next_token_with_cache`).
+    static GREEDY_LOGITS: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Argmax of a full logits row with the sampler's tie rule (lowest index
+/// wins), rejecting non-finite values like the materialized greedy route.
+fn greedy_argmax(logits: &[f32]) -> Result<(u32, f32), CpuError> {
+    if let Some((index, value)) = logits
+        .iter()
+        .enumerate()
+        .find(|(_, value)| !value.is_finite())
+    {
+        return Err(CpuError::ShapeMismatch(format!(
+            "greedy logits contain non-finite value {value} at index {index}"
+        )));
+    }
+    if logits.is_empty() {
+        return Err(CpuError::ShapeMismatch("greedy logits are empty".into()));
+    }
+    let best = crate::sampler::argmax_token(logits);
+    let best_u32 = u32::try_from(best).map_err(|_| {
+        CpuError::ShapeMismatch("model vocabulary exceeds u32 token-ID space".into())
+    })?;
+    Ok((best_u32, logits[best]))
 }
 
 macro_rules! llama_trace_span {
@@ -90,6 +115,72 @@ pub struct LlamaConfig {
     pub vocab_size: usize,
 }
 
+/// A present GGUF metadata value as `u32`: any integer type, or an integral
+/// float, that converts exactly. Other types and out-of-range values error.
+fn metadata_u32(key: &str, value: &crate::loader::GgufValue) -> anyhow::Result<u32> {
+    use crate::loader::GgufValue as V;
+    let converted = match *value {
+        V::U8(v) => Some(u32::from(v)),
+        V::I8(v) => u32::try_from(v).ok(),
+        V::U16(v) => Some(u32::from(v)),
+        V::I16(v) => u32::try_from(v).ok(),
+        V::U32(v) => Some(v),
+        V::I32(v) => u32::try_from(v).ok(),
+        V::U64(v) => u32::try_from(v).ok(),
+        V::I64(v) => u32::try_from(v).ok(),
+        V::F32(v) => integral_f64_to_u32(f64::from(v)),
+        V::F64(v) => integral_f64_to_u32(v),
+        _ => anyhow::bail!(
+            "GGUF metadata {key} must be numeric, got {}",
+            metadata_type_name(value)
+        ),
+    };
+    converted.ok_or_else(|| anyhow::anyhow!("GGUF metadata {key} value {value:?} does not fit u32"))
+}
+
+fn integral_f64_to_u32(value: f64) -> Option<u32> {
+    (value.is_finite() && value.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&value))
+        .then_some(value as u32)
+}
+
+/// A present GGUF metadata value as `f32`: `F32` as-is, integers that f32
+/// represents exactly (|v| <= 2^24), and finite `F64` within f32 range
+/// (rounded to nearest, as llama.cpp does). Other types error.
+fn metadata_f32(key: &str, value: &crate::loader::GgufValue) -> anyhow::Result<f32> {
+    use crate::loader::GgufValue as V;
+    const EXACT: i64 = 1 << f32::MANTISSA_DIGITS;
+    let exact_int = |v: i64| (-EXACT..=EXACT).contains(&v).then_some(v as f32);
+    let converted = match *value {
+        V::F32(v) => Some(v),
+        V::F64(v) => (v.is_finite() && v.abs() <= f64::from(f32::MAX)).then_some(v as f32),
+        V::U8(v) => Some(f32::from(v)),
+        V::I8(v) => Some(f32::from(v)),
+        V::U16(v) => Some(f32::from(v)),
+        V::I16(v) => Some(f32::from(v)),
+        V::U32(v) => exact_int(i64::from(v)),
+        V::I32(v) => exact_int(i64::from(v)),
+        V::U64(v) => i64::try_from(v).ok().and_then(exact_int),
+        V::I64(v) => exact_int(v),
+        _ => anyhow::bail!(
+            "GGUF metadata {key} must be numeric, got {}",
+            metadata_type_name(value)
+        ),
+    };
+    converted.ok_or_else(|| {
+        anyhow::anyhow!("GGUF metadata {key} value {value:?} does not fit f32 exactly")
+    })
+}
+
+fn metadata_type_name(value: &crate::loader::GgufValue) -> &'static str {
+    use crate::loader::GgufValue as V;
+    match value {
+        V::Bool(_) => "bool",
+        V::Str(_) => "string",
+        V::Array(_) | V::SkippedArray { .. } => "array",
+        _ => "number",
+    }
+}
+
 impl LlamaConfig {
     /// read config from gguf metadata, supporting multiple architectures.
     ///
@@ -109,7 +200,7 @@ impl LlamaConfig {
     ///   `{prefix}.vocab_size`                        -> vocab_size (default 32000)
     ///
     /// supported architectures: llama, qwen2 (including qwen2.5)
-    pub fn from_gguf_metadata(loader: &crate::loader::GgufLoader) -> Self {
+    pub fn from_gguf_metadata(loader: &crate::loader::GgufLoader) -> anyhow::Result<Self> {
         use crate::loader::GgufValue;
 
         // detect architecture prefix from gguf metadata.
@@ -134,46 +225,48 @@ impl LlamaConfig {
             _ => (RopeLayout::AdjacentPair, QkNormOrder::AfterRope),
         };
 
-        let get_u32 = |key: &str, default: u32| -> u32 {
-            // try architecture-specific key first, then fall back to llama
-            let arch_key = format!("{}.{}", prefix, key);
-            let llama_key = format!("llama.{}", key);
-            match (
-                loader.metadata.get(&arch_key),
-                loader.metadata.get(&llama_key),
-            ) {
-                (Some(GgufValue::U32(v)), _) => *v,
-                (_, Some(GgufValue::U32(v))) => *v,
-                _ => default,
+        // Architecture-specific key first, then the llama fallback. A present
+        // key of any numeric GGUF type is accepted when it converts without
+        // loss; a present key of another type (or out of range) is an error
+        // rather than a silent default. Missing keys keep their defaults.
+        let lookup = |key: &str| -> Option<(String, &GgufValue)> {
+            let arch_key = format!("{prefix}.{key}");
+            if let Some(value) = loader.metadata.get(&arch_key) {
+                return Some((arch_key, value));
+            }
+            let llama_key = format!("llama.{key}");
+            loader
+                .metadata
+                .get(&llama_key)
+                .map(|value| (llama_key, value))
+        };
+        let get_u32 = |key: &str, default: u32| -> anyhow::Result<u32> {
+            match lookup(key) {
+                None => Ok(default),
+                Some((name, value)) => metadata_u32(&name, value),
             }
         };
-        let get_f32 = |key: &str, default: f32| -> f32 {
-            let arch_key = format!("{}.{}", prefix, key);
-            let llama_key = format!("llama.{}", key);
-            match (
-                loader.metadata.get(&arch_key),
-                loader.metadata.get(&llama_key),
-            ) {
-                (Some(GgufValue::F32(v)), _) => *v,
-                (_, Some(GgufValue::F32(v))) => *v,
-                _ => default,
+        let get_f32 = |key: &str, default: f32| -> anyhow::Result<f32> {
+            match lookup(key) {
+                None => Ok(default),
+                Some((name, value)) => metadata_f32(&name, value),
             }
         };
 
-        let n_layers = get_u32("block_count", 32) as usize;
-        let n_heads = get_u32("attention.head_count", 32) as usize;
-        let n_kv_heads = get_u32("attention.head_count_kv", n_heads as u32) as usize;
-        let embed_dim = get_u32("embedding_length", 4096) as usize;
+        let n_layers = get_u32("block_count", 32)? as usize;
+        let n_heads = get_u32("attention.head_count", 32)? as usize;
+        let n_kv_heads = get_u32("attention.head_count_kv", n_heads as u32)? as usize;
+        let embed_dim = get_u32("embedding_length", 4096)? as usize;
         // some architectures (qwen3, deepseek, etc.) specify head_dim explicitly
         // in the gguf metadata. fall back to embed_dim / n_heads when absent.
         let default_head_dim = embed_dim.checked_div(n_heads).unwrap_or(0);
-        let head_dim = get_u32("attention.key_length", default_head_dim as u32) as usize;
-        let max_seq_len = get_u32("context_length", 2048) as usize;
-        let rope_theta = get_f32("rope.freq_base", 10000.0);
-        let norm_eps = get_f32("attention.layer_norm_rms_epsilon", 1e-5);
-        let vocab_size = get_u32("vocab_size", 32000) as usize;
+        let head_dim = get_u32("attention.key_length", default_head_dim as u32)? as usize;
+        let max_seq_len = get_u32("context_length", 2048)? as usize;
+        let rope_theta = get_f32("rope.freq_base", 10000.0)?;
+        let norm_eps = get_f32("attention.layer_norm_rms_epsilon", 1e-5)?;
+        let vocab_size = get_u32("vocab_size", 32000)? as usize;
 
-        Self {
+        Ok(Self {
             n_layers,
             n_heads,
             n_kv_heads,
@@ -185,7 +278,7 @@ impl LlamaConfig {
             rope_layout,
             qk_norm_order,
             vocab_size,
-        }
+        })
     }
 
     fn validate(&self) -> anyhow::Result<()> {
@@ -494,6 +587,9 @@ pub struct LlamaAttention<B: Backend> {
     pub(crate) q_norm: Option<B::Tensor>,
     /// optional qk normalization weight (qwen3): applied to k after rope, shape [head_dim]
     pub(crate) k_norm: Option<B::Tensor>,
+    /// RMSNorm epsilon for the Q/K norms: the model's parsed `norm_eps`
+    /// when loaded from GGUF (see [`LlamaAttention::with_qk_norm_eps`]).
+    qk_norm_eps: f32,
 }
 
 impl<B: Backend> LlamaAttention<B> {
@@ -560,12 +656,26 @@ impl<B: Backend> LlamaAttention<B> {
             qk_norm_order,
             q_norm,
             k_norm,
+            qk_norm_eps: DEFAULT_QK_NORM_EPS,
         }
+    }
+
+    /// Use `eps` for the Q/K RMSNorms. GGUF loading passes the model's
+    /// parsed `attention.layer_norm_rms_epsilon`; direct constructors keep
+    /// the historical [`DEFAULT_QK_NORM_EPS`] (Qwen3's value).
+    pub fn with_qk_norm_eps(mut self, eps: f32) -> Self {
+        self.qk_norm_eps = eps;
+        self
     }
 }
 
+/// Q/K RMSNorm epsilon used when no model epsilon is supplied (Qwen3's
+/// `attention.layer_norm_rms_epsilon`).
+pub const DEFAULT_QK_NORM_EPS: f32 = 1e-6;
+
 #[derive(Clone, Copy)]
 struct RopeQkNormSpec {
+    qk_norm_eps: f32,
     start_pos: usize,
     n_heads: usize,
     head_dim: usize,
@@ -620,7 +730,7 @@ fn apply_rope_and_qk_norm<B: Backend>(
             spec.n_heads,
             spec.head_dim,
             backend.data(norm),
-            1e-6,
+            spec.qk_norm_eps,
         );
     }
 
@@ -666,7 +776,7 @@ fn apply_rope_and_qk_norm<B: Backend>(
             spec.n_heads,
             spec.head_dim,
             backend.data(norm),
-            1e-6,
+            spec.qk_norm_eps,
         );
     }
 
@@ -689,7 +799,14 @@ impl LlamaAttention<CpuBackend> {
         if self.qk_norm_order == QkNormOrder::BeforeRope
             && let Some(norm) = norm
         {
-            apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
+            apply_headwise_rms_norm(
+                data,
+                1,
+                n_heads,
+                self.head_dim,
+                norm.data(),
+                self.qk_norm_eps,
+            );
         }
 
         let half = self.head_dim / 2;
@@ -718,7 +835,14 @@ impl LlamaAttention<CpuBackend> {
         if self.qk_norm_order == QkNormOrder::AfterRope
             && let Some(norm) = norm
         {
-            apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
+            apply_headwise_rms_norm(
+                data,
+                1,
+                n_heads,
+                self.head_dim,
+                norm.data(),
+                self.qk_norm_eps,
+            );
         }
     }
 }
@@ -737,6 +861,7 @@ impl<B: Backend> LlamaAttention<B> {
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
+                qk_norm_eps: self.qk_norm_eps,
                 start_pos: 0,
                 n_heads: self.n_heads,
                 head_dim,
@@ -753,6 +878,7 @@ impl<B: Backend> LlamaAttention<B> {
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
+                qk_norm_eps: self.qk_norm_eps,
                 start_pos: 0,
                 n_heads: self.n_kv_heads,
                 head_dim,
@@ -798,6 +924,7 @@ impl<B: Backend> LlamaAttention<B> {
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
+                qk_norm_eps: self.qk_norm_eps,
                 start_pos: 0,
                 n_heads: self.n_heads,
                 head_dim,
@@ -814,6 +941,7 @@ impl<B: Backend> LlamaAttention<B> {
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
+                qk_norm_eps: self.qk_norm_eps,
                 start_pos: 0,
                 n_heads: self.n_kv_heads,
                 head_dim,
@@ -929,6 +1057,7 @@ impl<B: Backend> LlamaAttention<B> {
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
+                qk_norm_eps: self.qk_norm_eps,
                 start_pos,
                 n_heads: self.n_heads,
                 head_dim,
@@ -961,6 +1090,7 @@ impl<B: Backend> LlamaAttention<B> {
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
+                qk_norm_eps: self.qk_norm_eps,
                 start_pos,
                 n_heads: self.n_kv_heads,
                 head_dim,
@@ -1316,9 +1446,6 @@ pub struct Llama<B: Backend> {
     /// `pub(crate)` so `src/planned_decode.rs` (the plan interpreter) can
     /// own the session lifecycle.
     pub(crate) decode_state: RefCell<Option<PlannedDecodeState>>,
-    /// Lazily computed suffix-norm table for the fused greedy lm_head
-    /// (only present when the head is Q8_0).
-    head_topk_norms: std::sync::OnceLock<Option<std::sync::Arc<crate::quant::Q8TopkNorms>>>,
     /// Diagnostics: wall time spent building packed decode representations
     /// (Q8_0 VNNI tiles) during load.
     packing_ns: u64,
@@ -1448,33 +1575,29 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<(u32, f32), CpuError> {
-        if let Some(result) = self.forward_decode_fast_greedy(backend, token_ids, cache, start_pos)
-        {
-            return result;
+        // Greedy is defined as the argmax of exactly the logits the sampling
+        // route would compute: same route order (fast, planned, reference),
+        // same kernels and accumulation order on every architecture, so a
+        // near-tie cannot resolve differently. The vocab-sized buffer is
+        // thread-local and reused, so steady-state greedy decode performs no
+        // heap allocation after the first token.
+        let vocab = self.config.vocab_size;
+        let mut logits = GREEDY_LOGITS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+        if logits.len() != vocab {
+            logits.clear();
+            logits.resize(vocab, 0.0);
         }
-        let logits = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
-        let shape = backend.shape(&logits);
-        if shape != [1, self.config.vocab_size] {
-            return Err(CpuError::ShapeMismatch(format!(
-                "greedy logits must have shape [1, {}], got {shape:?}",
-                self.config.vocab_size
-            )));
-        }
-        let data = backend.data(&logits);
-        if let Some((index, value)) = data
-            .iter()
-            .enumerate()
-            .find(|(_, value)| !value.is_finite())
-        {
-            return Err(CpuError::ShapeMismatch(format!(
-                "greedy logits contain non-finite value {value} at index {index}"
-            )));
-        }
-        let best = crate::sampler::argmax_token(data);
-        let best_u32 = u32::try_from(best).map_err(|_| {
-            CpuError::ShapeMismatch("model vocabulary exceeds u32 token-ID space".into())
-        })?;
-        Ok((best_u32, data[best]))
+        let result = self
+            .forward_last_logits_with_cache_cpu_into(
+                backend,
+                token_ids,
+                cache,
+                start_pos,
+                &mut logits,
+            )
+            .and_then(|()| greedy_argmax(&logits));
+        GREEDY_LOGITS.with(|cell| *cell.borrow_mut() = logits);
+        result
     }
     fn n_layers(&self) -> usize {
         self.blocks.len()
@@ -1585,19 +1708,6 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
 }
 
 impl Llama<CpuBackend> {
-    /// Suffix-norm table for the fused greedy lm_head, or `None` when the
-    /// head is not Q8_0. Computed once on first greedy fast-path use.
-    fn head_topk_norms(&self) -> Option<std::sync::Arc<crate::quant::Q8TopkNorms>> {
-        self.head_topk_norms
-            .get_or_init(|| {
-                let weight = self.head.q8_weight_without_bias()?;
-                Some(std::sync::Arc::new(crate::quant::Q8TopkNorms::compute(
-                    weight,
-                )))
-            })
-            .clone()
-    }
-
     fn eligible_fast_decode_inter_dim(&self) -> Option<usize> {
         // The allocation-free path is validated for Llama's adjacent-pair
         // RoPE. Real Qwen3 end-to-end coverage showed decode divergence with
@@ -1696,82 +1806,6 @@ impl Llama<CpuBackend> {
             })
     }
 
-    /// Single-token greedy decode via the fast workspace path with the
-    /// fused branch-and-bound lm_head. Returns `None` when ineligible
-    /// (multi-token, tracing active, no fast path, non-Q8_0 head).
-    fn forward_decode_fast_greedy(
-        &self,
-        backend: &CpuBackend,
-        token_ids: &[u32],
-        cache: &mut crate::kv_cache::KVCache,
-        start_pos: usize,
-    ) -> Option<Result<(u32, f32), CpuError>> {
-        if token_ids.len() != 1
-            || crate::trace::is_tracing()
-            || self.config.vocab_size > (1usize << f32::MANTISSA_DIGITS)
-        {
-            return None;
-        }
-        cache.validate_start_pos(start_pos);
-        let inter_dim = self.fast_decode_inter_dim?;
-        let norms = self.head_topk_norms()?;
-        let embed_dim = self.config.embed_dim;
-        let q_dim = self.config.n_heads * self.config.head_dim;
-        let kv_dim = self.config.n_kv_heads * self.config.head_dim;
-        let mut hooks = DisabledHooks;
-        Some(LLAMA_DECODE_WORKSPACE.with(|workspace| {
-            let mut workspace = workspace.borrow_mut();
-            let needs_resize = workspace.as_ref().is_none_or(|current| {
-                current.max_rows() != 1
-                    || current.embed_dim() != embed_dim
-                    || current.inter_dim() != inter_dim
-                    || current.q_dim() != q_dim
-                    || current.kv_dim() != kv_dim
-            });
-            if needs_resize {
-                *workspace = Some(Workspace::new(
-                    1,
-                    embed_dim,
-                    inter_dim,
-                    self.config.n_heads,
-                    self.config.n_kv_heads,
-                    self.config.head_dim,
-                ));
-            }
-            let result = self
-                .forward_decode_with_workspace(
-                    backend,
-                    token_ids[0],
-                    cache,
-                    start_pos,
-                    workspace.as_mut().expect("decode workspace initialized"),
-                    &mut hooks,
-                    Some(&norms),
-                    None,
-                )?
-                .expect("greedy fast path materializes a token/logit pair");
-            let data = result.data();
-            if data.len() != 2
-                || !data[0].is_finite()
-                || data[0] < 0.0
-                || data[0].fract() != 0.0
-                || !data[1].is_finite()
-            {
-                return Err(CpuError::ShapeMismatch(
-                    "fused greedy path returned an invalid token/logit pair".into(),
-                ));
-            }
-            let token = data[0] as usize;
-            if token >= self.config.vocab_size {
-                return Err(CpuError::ShapeMismatch(format!(
-                    "fused greedy token {token} exceeds vocabulary size {}",
-                    self.config.vocab_size
-                )));
-            }
-            Ok((token as u32, data[1]))
-        }))
-    }
-
     fn forward_decode_fast_hooked<H>(
         &self,
         backend: &CpuBackend,
@@ -1820,7 +1854,6 @@ impl Llama<CpuBackend> {
                 start_pos,
                 workspace.as_mut().expect("decode workspace initialized"),
                 hooks,
-                None,
                 logits_out,
             )
         }))
@@ -1835,7 +1868,6 @@ impl Llama<CpuBackend> {
         start_pos: usize,
         workspace: &mut Workspace,
         hooks: &mut H,
-        greedy_norms: Option<&crate::quant::Q8TopkNorms>,
         logits_out: Option<&mut [f32]>,
     ) -> Result<Option<CpuTensor>, CpuError>
     where
@@ -2171,19 +2203,6 @@ impl Llama<CpuBackend> {
             .head
             .q8_weight_without_bias()
             .expect("fast path eligibility checked");
-        if let Some(norms) = greedy_norms {
-            // Fused greedy lm_head: exact branch-and-bound argmax over the
-            // quantized activation; only a [1, 2] tensor (token, logit) is
-            // materialized instead of the full vocabulary.
-            let mut encoded = Vec::new();
-            crate::quant::quantize_q8_0_into(norm, &mut encoded);
-            let (token, logit) =
-                crate::simd::matmul_q8_0_decode_argmax(&encoded, head_weight, norms, 1.001);
-            return Ok(Some(CpuTensor::from_data(
-                vec![1, 2],
-                vec![token as f32, logit],
-            )));
-        }
         let mut owned_logits = Vec::new();
         let wrote_caller_logits = logits_out.is_some();
         let logits: &mut [f32] = match logits_out {
@@ -2324,7 +2343,7 @@ impl Llama<CpuBackend> {
             }
         }
 
-        let mut config = LlamaConfig::from_gguf_metadata(&loader);
+        let mut config = LlamaConfig::from_gguf_metadata(&loader)?;
         // Some Qwen2.5 GGUFs omit the family vocab_size key (a converter
         // quirk seen in the v0.3 validation artifacts). When the key is
         // absent, the token embedding tensor's row count is authoritative
@@ -2591,7 +2610,8 @@ impl Llama<CpuBackend> {
                 config.qk_norm_order,
                 qk_q_norm,
                 qk_k_norm,
-            );
+            )
+            .with_qk_norm_eps(config.norm_eps);
 
             let mlp = LlamaMlp::new(
                 take_llama_linear(
@@ -2689,7 +2709,6 @@ impl Llama<CpuBackend> {
             head_tied: !has_output_weight,
             execution_mode: RefCell::new(ExecutionMode::Reference),
             decode_state: RefCell::new(None),
-            head_topk_norms: std::sync::OnceLock::new(),
             packing_ns,
             packing_interleaved_ns,
         };
@@ -3659,7 +3678,7 @@ mod tests {
             tensor_meta: HashMap::new(),
         };
 
-        let config = LlamaConfig::from_gguf_metadata(&loader);
+        let config = LlamaConfig::from_gguf_metadata(&loader).unwrap();
 
         assert_eq!(config.max_seq_len, 131_072);
     }
@@ -3678,7 +3697,7 @@ mod tests {
                 k_decisions: HashMap::new(),
                 tensor_meta: HashMap::new(),
             };
-            LlamaConfig::from_gguf_metadata(&loader)
+            LlamaConfig::from_gguf_metadata(&loader).unwrap()
         }
 
         let odd = config_with(&[("llama.attention.key_length", 1)])
@@ -3774,6 +3793,191 @@ mod tests {
         );
     }
 
+    fn metadata_loader(metadata: HashMap<String, GgufValue>) -> GgufLoader {
+        GgufLoader {
+            metadata,
+            tensors: HashMap::new(),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn llama_config_accepts_lossless_numeric_types_and_rejects_others() {
+        let config = LlamaConfig::from_gguf_metadata(&metadata_loader(HashMap::from([
+            (
+                "general.architecture".to_string(),
+                GgufValue::Str("qwen3".into()),
+            ),
+            ("qwen3.block_count".to_string(), GgufValue::U64(3)),
+            ("qwen3.attention.head_count".to_string(), GgufValue::I32(4)),
+            (
+                "qwen3.attention.head_count_kv".to_string(),
+                GgufValue::U16(2),
+            ),
+            ("llama.embedding_length".to_string(), GgufValue::I64(64)),
+            ("qwen3.context_length".to_string(), GgufValue::F32(512.0)),
+            (
+                "qwen3.rope.freq_base".to_string(),
+                GgufValue::U32(1_000_000),
+            ),
+            (
+                "qwen3.attention.layer_norm_rms_epsilon".to_string(),
+                GgufValue::F64(1e-6),
+            ),
+        ])))
+        .unwrap();
+        assert_eq!(config.n_layers, 3);
+        assert_eq!(config.n_heads, 4);
+        assert_eq!(config.n_kv_heads, 2);
+        assert_eq!(config.embed_dim, 64, "llama.* fallback key is still read");
+        assert_eq!(config.head_dim, 16);
+        assert_eq!(config.max_seq_len, 512);
+        assert_eq!(config.rope_theta, 1_000_000.0);
+        assert_eq!(config.norm_eps, 1e-6f64 as f32);
+        assert_eq!(config.vocab_size, 32000, "missing keys keep their defaults");
+
+        for (key, value, needle) in [
+            (
+                "llama.context_length",
+                GgufValue::Str("4096".into()),
+                "must be numeric",
+            ),
+            (
+                "llama.block_count",
+                GgufValue::Bool(true),
+                "must be numeric",
+            ),
+            ("llama.block_count", GgufValue::I32(-1), "does not fit u32"),
+            (
+                "llama.context_length",
+                GgufValue::U64(1 << 40),
+                "does not fit u32",
+            ),
+            (
+                "llama.context_length",
+                GgufValue::F32(1.5),
+                "does not fit u32",
+            ),
+            (
+                "llama.rope.freq_base",
+                GgufValue::U64((1 << 24) + 1),
+                "does not fit f32",
+            ),
+            (
+                "llama.attention.layer_norm_rms_epsilon",
+                GgufValue::Array(vec![]),
+                "must be numeric",
+            ),
+        ] {
+            let error = LlamaConfig::from_gguf_metadata(&metadata_loader(HashMap::from([(
+                key.to_string(),
+                value,
+            )])))
+            .expect_err(key)
+            .to_string();
+            assert!(error.contains(key) && error.contains(needle), "{error}");
+        }
+    }
+
+    #[test]
+    fn qk_norm_uses_the_model_norm_epsilon() {
+        let f32_tensor = |shape: Vec<usize>, seed: usize| {
+            let len = shape.iter().product::<usize>();
+            let values = (0..len)
+                .map(|index| ((index * 7 + seed * 3) % 11) as f32 * 0.1 - 0.5)
+                .collect();
+            LoadedTensor::F32(CpuTensor::from_data(shape, values))
+        };
+        // GGUF dimension order: [ne0 = in/embed, ne1 = out/vocab].
+        let tensors = HashMap::from([
+            ("token_embd.weight".to_string(), f32_tensor(vec![8, 4], 1)),
+            ("output_norm.weight".to_string(), f32_tensor(vec![8], 2)),
+            ("blk.0.attn_norm.weight".to_string(), f32_tensor(vec![8], 3)),
+            ("blk.0.ffn_norm.weight".to_string(), f32_tensor(vec![8], 4)),
+            ("blk.0.attn_q.weight".to_string(), f32_tensor(vec![8, 8], 5)),
+            ("blk.0.attn_k.weight".to_string(), f32_tensor(vec![8, 4], 6)),
+            ("blk.0.attn_v.weight".to_string(), f32_tensor(vec![8, 4], 7)),
+            (
+                "blk.0.attn_output.weight".to_string(),
+                f32_tensor(vec![8, 8], 8),
+            ),
+            (
+                "blk.0.ffn_gate.weight".to_string(),
+                f32_tensor(vec![8, 8], 9),
+            ),
+            (
+                "blk.0.ffn_up.weight".to_string(),
+                f32_tensor(vec![8, 8], 10),
+            ),
+            (
+                "blk.0.ffn_down.weight".to_string(),
+                f32_tensor(vec![8, 8], 11),
+            ),
+            (
+                "blk.0.attn_q_norm.weight".to_string(),
+                f32_tensor(vec![4], 12),
+            ),
+            (
+                "blk.0.attn_k_norm.weight".to_string(),
+                f32_tensor(vec![4], 13),
+            ),
+        ]);
+        let metadata = HashMap::from([
+            (
+                "general.architecture".to_string(),
+                GgufValue::Str("qwen3".into()),
+            ),
+            ("qwen3.block_count".to_string(), GgufValue::U32(1)),
+            ("qwen3.embedding_length".to_string(), GgufValue::U32(8)),
+            ("qwen3.attention.head_count".to_string(), GgufValue::U32(2)),
+            (
+                "qwen3.attention.head_count_kv".to_string(),
+                GgufValue::U32(1),
+            ),
+            ("qwen3.attention.key_length".to_string(), GgufValue::U32(4)),
+            ("qwen3.context_length".to_string(), GgufValue::U32(8)),
+            ("qwen3.vocab_size".to_string(), GgufValue::U32(4)),
+            (
+                "qwen3.attention.layer_norm_rms_epsilon".to_string(),
+                GgufValue::F32(0.25),
+            ),
+        ]);
+        let loader = GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let model = Llama::from_loader(loader).unwrap();
+        let attention = &model.blocks[0].self_attn;
+        assert_eq!(attention.qk_norm_eps, 0.25);
+
+        // The decode Q/K norm really uses it: compare against a manual
+        // RMSNorm with eps = 0.25 (before RoPE at position 0, where RoPE is
+        // the identity).
+        let norm = attention.q_norm.as_ref().unwrap();
+        let input: Vec<f32> = (0..8).map(|i| i as f32 * 0.05 - 0.2).collect();
+        let mut actual = input.clone();
+        attention.apply_decode_rope_and_qk_norm(&mut actual, 2, 0, Some(norm));
+        let mut expected = input;
+        for head in expected.chunks_exact_mut(4) {
+            let mean_square = head.iter().map(|v| v * v).sum::<f32>() / 4.0;
+            let rstd = (mean_square + 0.25).sqrt().recip();
+            for (value, weight) in head.iter_mut().zip(norm.data()) {
+                *value = *value * rstd * weight;
+            }
+        }
+        for (a, e) in actual.iter().zip(&expected) {
+            assert!(
+                (a - e).abs() <= 1e-6,
+                "actual={actual:?} expected={expected:?}"
+            );
+        }
+    }
+
     fn test_q8_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {
         assert!(in_features.is_multiple_of(Q8_0_BLOCK_SIZE));
         let blocks = out_features * in_features / Q8_0_BLOCK_SIZE;
@@ -3841,12 +4045,20 @@ mod tests {
     }
 
     fn test_llama_model_with_layers(n_layers: usize) -> Llama<CpuBackend> {
-        let embed_dim = 32;
-        let head_dim = 16;
+        test_llama_model_with_dims(n_layers, 32, 32)
+    }
+
+    /// Synthetic Q8_0 Llama with two query heads of `embed_dim / 2` and one
+    /// KV head; `embed_dim / 2` must be a multiple of the Q8_0 block size.
+    fn test_llama_model_with_dims(
+        n_layers: usize,
+        embed_dim: usize,
+        vocab_size: usize,
+    ) -> Llama<CpuBackend> {
+        let head_dim = embed_dim / 2;
         let n_heads = 2;
         let n_kv_heads = 1;
-        let inter_dim = 64;
-        let vocab_size = 32;
+        let inter_dim = 2 * embed_dim;
         let max_seq_len = 8;
         let blocks = (0..n_layers)
             .map(|layer| {
@@ -3913,7 +4125,6 @@ mod tests {
             head_tied: false,
             execution_mode: RefCell::new(ExecutionMode::Reference),
             decode_state: RefCell::new(None),
-            head_topk_norms: std::sync::OnceLock::new(),
             packing_ns: 0,
             packing_interleaved_ns: 0,
         }
@@ -3964,12 +4175,143 @@ mod tests {
         }
     }
 
+    /// Synthetic model whose lm_head input is known exactly: the attention
+    /// and MLP outputs are zero (all-zero Q8_0 scales), so the final hidden
+    /// state is the token embedding, which is block-periodic. Every Q8_0
+    /// block of the quantized head activation is therefore identical, and
+    /// head rows that are block permutations of one another have
+    /// mathematically equal logits that differ only by float summation
+    /// order — a constructed near-tie that a kernel with a different
+    /// accumulation order would resolve differently.
+    fn near_tie_head_model() -> Llama<CpuBackend> {
+        const EMBED: usize = 256;
+        const VOCAB: usize = 64;
+        let blocks = EMBED / Q8_0_BLOCK_SIZE;
+        let mut model = test_llama_model_with_dims(1, EMBED, VOCAB);
+        let zero_q8 = |out_features: usize, in_features: usize| {
+            let n_blocks = out_features * in_features / Q8_0_BLOCK_SIZE;
+            Linear::new_q8_0(
+                QuantizedWeight::try_new(
+                    vec![0u8; n_blocks * Q8_0_TYPE_SIZE],
+                    vec![out_features, in_features],
+                )
+                .unwrap(),
+                None,
+            )
+        };
+        for block in &mut model.blocks {
+            block.self_attn.o_proj = zero_q8(EMBED, EMBED);
+            block.mlp.down_proj = zero_q8(EMBED, 2 * EMBED);
+        }
+        let embedding: Vec<f32> = (0..VOCAB * EMBED)
+            .map(|index| {
+                let k = index % Q8_0_BLOCK_SIZE;
+                ((k * 7 + 3) % 13) as f32 * 0.1 - 0.55
+            })
+            .collect();
+        model.embed_tokens =
+            LlamaEmbedding::F32(CpuTensor::from_data(vec![VOCAB, EMBED], embedding));
+
+        // One base row with a wide dynamic range of block scales and mixed
+        // signs, so the cross-block sum is order-sensitive.
+        let base: Vec<(half::f16, [i8; Q8_0_BLOCK_SIZE])> = (0..blocks)
+            .map(|b| {
+                let scale =
+                    half::f16::from_f32((2.0f32).powi(3 * b as i32 - 9) * (1.0 + 0.37 * b as f32));
+                let mut quants = [0i8; Q8_0_BLOCK_SIZE];
+                for (k, quant) in quants.iter_mut().enumerate() {
+                    let sign = if (b + k) % 2 == 0 { 1 } else { -1 };
+                    *quant = (sign * (((k * 11 + b * 5) % 97) as i32 + 17)) as i8;
+                }
+                (scale, quants)
+            })
+            .collect();
+        let mut data = Vec::with_capacity(VOCAB * blocks * Q8_0_TYPE_SIZE);
+        for row in 0..VOCAB {
+            // Row 63 duplicates row 5 exactly: an exact tie, which must go
+            // to the lowest index.
+            let source = if row == VOCAB - 1 { 5 } else { row };
+            for b in 0..blocks {
+                let (scale, quants) = &base[(b * (2 * source + 1) + source / 3) % blocks];
+                data.extend_from_slice(&scale.to_bits().to_le_bytes());
+                data.extend(quants.iter().map(|&quant| quant as u8));
+            }
+        }
+        model.head = Linear::new_q8_0(
+            QuantizedWeight::try_new(data, vec![VOCAB, EMBED]).unwrap(),
+            None,
+        );
+        model
+    }
+
+    /// Greedy must pick exactly `argmax` of the logits the sampling route
+    /// computes. With this head, an AVX2-order reduction (8 lane partial
+    /// sums, then a horizontal add) ranks row 16 first while the sequential
+    /// scalar block order the old fused greedy kernel used ranks row 0 first
+    /// (checked by simulating both orders), so on x86 the old path failed
+    /// this; on aarch64 the dotprod kernel keeps scalar block order.
+    #[test]
+    fn greedy_token_is_argmax_of_full_logits_including_near_ties() {
+        let model = near_tie_head_model();
+        let backend = CpuBackend;
+        assert!(model.fast_decode_inter_dim.is_some());
+        let mut logits_cache = model.create_cache(&backend, model.config.max_seq_len);
+        let mut greedy_cache = model.create_cache(&backend, model.config.max_seq_len);
+        for (position, token) in [3u32, 3, 7].into_iter().enumerate() {
+            let logits = ForwardModel::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[token],
+                &mut logits_cache,
+                position,
+            )
+            .unwrap();
+            let logits = logits.data();
+            let expected = crate::sampler::argmax_token(logits);
+            // The construction must really be a near-tie: many rows share the
+            // same mathematical logit.
+            let near = logits
+                .iter()
+                .filter(|value| {
+                    (*value - logits[expected]).abs() <= 1e-4 * logits[expected].abs().max(1.0)
+                })
+                .count();
+            assert!(near >= 8, "expected a dense near-tie, found {near} rows");
+            let (greedy, greedy_logit) = ForwardModel::greedy_next_token_with_cache(
+                &model,
+                &backend,
+                &[token],
+                &mut greedy_cache,
+                position,
+            )
+            .unwrap();
+            assert_eq!(greedy as usize, expected, "position {position}");
+            assert_eq!(greedy_logit.to_bits(), logits[expected].to_bits());
+        }
+    }
+
+    #[test]
+    fn greedy_decode_is_allocation_free_after_warmup() {
+        let model = test_llama_model();
+        let backend = CpuBackend;
+        let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+        ForwardModel::greedy_next_token_with_cache(&model, &backend, &[3], &mut cache, 0).unwrap();
+        ForwardModel::greedy_next_token_with_cache(&model, &backend, &[4], &mut cache, 1).unwrap();
+        assert!(crate::alloc_counter::counting_active());
+        let (result, allocations) = crate::alloc_counter::count_allocations(|| {
+            ForwardModel::greedy_next_token_with_cache(&model, &backend, &[5], &mut cache, 2)
+        });
+        result.unwrap();
+        assert_eq!(allocations, 0, "steady-state greedy decode allocated");
+    }
+
     fn warmed_disabled_decode_allocation_count(n_layers: usize) -> usize {
         let model = test_llama_model_with_layers(n_layers);
         let backend = CpuBackend;
         let mut cache = model.create_cache(&backend, model.config.max_seq_len);
         ForwardModel::forward_last_logits_with_cache(&model, &backend, &[3], &mut cache, 0)
             .unwrap();
+        assert!(crate::alloc_counter::counting_active());
         let (result, allocations) = crate::alloc_counter::count_allocations(|| {
             ForwardModel::forward_last_logits_with_cache(&model, &backend, &[5], &mut cache, 1)
         });
@@ -4801,6 +5143,7 @@ mod tests {
         // shape, strides, and data vectors (Gate E's bound of three).
         let next_input = *replay_tokens.last().unwrap();
         let replay_start = replay_cache.cursor();
+        assert!(crate::alloc_counter::counting_active());
         let (result, allocations) = crate::alloc_counter::count_allocations(|| {
             ForwardModel::forward_last_logits_with_cache(
                 &model,
@@ -4995,6 +5338,7 @@ mod tests {
         // warmup: build the plan + decode session + run one token
         ForwardModel::forward_last_logits_with_cache(&model, &backend, &[3], &mut cache, 3)
             .unwrap();
+        assert!(crate::alloc_counter::counting_active());
         let (_, allocations) = crate::alloc_counter::count_allocations(|| {
             ForwardModel::forward_last_logits_with_cache(&model, &backend, &[5], &mut cache, 4)
                 .unwrap();
@@ -5032,6 +5376,7 @@ mod tests {
                     position,
                 )
                 .unwrap();
+                assert!(crate::alloc_counter::counting_active());
                 let (result, allocations) = crate::alloc_counter::count_allocations(|| {
                     ForwardModel::forward_last_logits_with_cache_reusing(
                         &model,
@@ -5632,6 +5977,7 @@ mod tests {
                     &cos,
                     &sin,
                     RopeQkNormSpec {
+                        qk_norm_eps: DEFAULT_QK_NORM_EPS,
                         start_pos: position,
                         n_heads: 1,
                         head_dim: dim,
@@ -5702,7 +6048,7 @@ mod reference_rope_diagnostic {
         let loader =
             crate::loader::load_gguf_with_k_strategy(&model, crate::quant_k::KStrategy::Arm, false)
                 .unwrap();
-        let config = LlamaConfig::from_gguf_metadata(&loader);
+        let config = LlamaConfig::from_gguf_metadata(&loader).unwrap();
         let factors = loader.tensors.get("rope_freqs.weight").map(|weight| {
             let crate::loader::LoadedTensor::F32(tensor) = weight else {
                 panic!("expected f32 factors")
@@ -5749,6 +6095,7 @@ mod reference_rope_diagnostic {
                     cos,
                     sin,
                     RopeQkNormSpec {
+                        qk_norm_eps: DEFAULT_QK_NORM_EPS,
                         start_pos: position,
                         n_heads: heads,
                         head_dim: config.head_dim,

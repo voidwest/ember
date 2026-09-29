@@ -48,6 +48,33 @@ fn build_minimal_gguf() -> Vec<u8> {
     buf
 }
 
+/// Valid GGUF v3 with `count` one-element f32 tensors and no metadata.
+fn build_gguf_with_tensors(count: usize) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&0x46554747u32.to_le_bytes());
+    buf.extend_from_slice(&3u32.to_le_bytes());
+    buf.extend_from_slice(&(count as u64).to_le_bytes());
+    buf.extend_from_slice(&0u64.to_le_bytes());
+    for index in 0..count {
+        let name = format!("t{index:03}.weight");
+        buf.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        // 32-byte aligned offsets relative to the tensor-data start.
+        buf.extend_from_slice(&((index as u64) * 32).to_le_bytes());
+    }
+    let data_start = buf.len().div_ceil(32) * 32;
+    buf.resize(data_start, 0);
+    for _ in 0..count {
+        let mut slot = [0u8; 32];
+        slot[..4].copy_from_slice(&1.0f32.to_le_bytes());
+        buf.extend_from_slice(&slot);
+    }
+    buf
+}
+
 fn temp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "ember-inspect-it-{}-{}-{name}",
@@ -57,6 +84,23 @@ fn temp_path(name: &str) -> PathBuf {
             .unwrap()
             .as_nanos(),
     ))
+}
+
+#[test]
+fn gguf_report_lists_every_tensor() {
+    let path = temp_path("many-tensors.gguf");
+    std::fs::write(&path, build_gguf_with_tensors(20)).unwrap();
+    let report = inspect_path(&path, false).unwrap();
+    let gguf = report.gguf.as_ref().expect("gguf digest");
+    assert_eq!(gguf.tensor_count, 20);
+    assert_eq!(gguf.tensors.len(), 20, "--json promises the full inventory");
+    assert_eq!(gguf.tensors[19].name, "t019.weight");
+    assert!(
+        report.notes.iter().all(|note| !note.contains("omitted")),
+        "{:?}",
+        report.notes
+    );
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

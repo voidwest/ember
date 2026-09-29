@@ -976,9 +976,9 @@ where
             );
             return Err(anyhow::Error::new(Cancelled));
         }
-        // Greedy decode steps after the first can use the fused argmax path
-        // (the model may compute only the top token instead of the full
-        // vocabulary). Tracing and sampling always use the full path.
+        // Greedy decode steps after the first use the model's greedy entry
+        // point (argmax of the same logits, computed into a reused buffer so
+        // no tensor is materialized). Tracing and sampling use the full path.
         let greedy_fused = fused_greedy && step > 0 && temperature == 0.0 && !trace_ops;
         if greedy_fused {
             let (token, logit) = execution.forward_greedy_token(

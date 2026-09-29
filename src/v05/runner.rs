@@ -774,17 +774,30 @@ fn source_kind(source: &InterventionSource) -> String {
     }
 }
 
+/// SHA-256 over the little-endian bytes of `values`, as lowercase hex.
+///
+/// Hashes in fixed-size chunks through a stack buffer (one `update` per
+/// chunk rather than per float) and hex-encodes through a lookup table; the
+/// digest is identical to hashing each float's `to_le_bytes` in turn.
 fn checksum_f32(values: &[f32]) -> String {
     use sha2::{Digest, Sha256};
+    const CHUNK: usize = 1024;
     let mut hasher = Sha256::new();
-    for value in values {
-        hasher.update(value.to_le_bytes());
+    let mut bytes = [0u8; CHUNK * 4];
+    for chunk in values.chunks(CHUNK) {
+        for (dst, value) in bytes.chunks_exact_mut(4).zip(chunk) {
+            dst.copy_from_slice(&value.to_le_bytes());
+        }
+        hasher.update(&bytes[..chunk.len() * 4]);
     }
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push(HEX[usize::from(byte >> 4)] as char);
+        out.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    out
 }
 
 /// Deterministic summary statistics over a row slice.
@@ -1210,6 +1223,24 @@ pub fn load_bundle_source(
 mod tests {
     use super::*;
     use crate::experiments::{LayerContext, ModelFamily, TracingState};
+
+    /// Pinned against the original per-float `update` + per-byte `format!`
+    /// implementation (and independently against Python's hashlib over the
+    /// same little-endian bytes); 1027 values straddle the internal chunk.
+    #[test]
+    fn checksum_f32_digest_is_pinned() {
+        let values: Vec<f32> = (0u32..1027)
+            .map(|i| f32::from_bits(i.wrapping_mul(2_654_435_761)))
+            .collect();
+        assert_eq!(
+            checksum_f32(&values),
+            "e95474f423de87316fd007b2eb42bfa1dbbc13016eed90e41a7b85fae0d4c4ad"
+        );
+        assert_eq!(
+            checksum_f32(&[]),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
     use crate::v05::spec::RawExperimentSpec;
 
     /// A resolvable v0.5 spec exercising both captures (selected-rows and

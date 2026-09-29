@@ -1324,6 +1324,14 @@ mod x86_64 {
         let p4 = _mm256_set1_ps(0.041_666_668_f32);
         let p5 = _mm256_set1_ps(0.008_333_334_f32);
 
+        // 2^k is built by writing k + 127 into the exponent field, which
+        // only holds a normal float for k in [-126, 127]. Clamp to the range
+        // where that holds (ln(FLT_MIN) up to Cephes' exp_hi): beyond it the
+        // field wraps into the sign bit and exp(-88.5) came out as -inf.
+        let x = _mm256_min_ps(
+            _mm256_max_ps(x, _mm256_set1_ps(-87.336_54_f32)),
+            _mm256_set1_ps(88.376_26_f32),
+        );
         let a = _mm256_mul_ps(x, log2e);
         let k = _mm256_sub_ps(_mm256_add_ps(a, magic), magic);
         let r = _mm256_fnmadd_ps(k, ln2, x);
@@ -2176,155 +2184,6 @@ use crate::quant::QuantizedWeight;
 ///
 /// Panics if `x` is not a valid quantized input row, `out.len() !=
 /// out_features`, or the
-/// Exact branch-and-bound argmax over a Q8_0 decode matmul.
-///
-/// Mirrors [`matmul_q8_0_decode_scalar`] accumulation exactly (row-major,
-/// per-block f32 sum), so the returned argmax is bit-for-bit the scalar
-/// path's argmax. Rows whose running sum plus a Cauchy-Schwarz bound on the
-/// remaining in-blocks cannot beat the running maximum are pruned; the
-/// bound uses the same quantized values the matmul consumes, so pruning can
-/// never remove the true argmax.
-#[allow(clippy::needless_range_loop)]
-pub(crate) fn matmul_q8_0_decode_argmax(
-    x: &[u8],
-    w: &QuantizedWeight,
-    norms: &crate::quant::Q8TopkNorms,
-    margin: f32,
-) -> (u32, f32) {
-    let out_features = norms.out_features();
-    let in_blocks = norms.in_blocks();
-    let data = w.data();
-    assert_eq!(
-        out_features,
-        w.out_features(),
-        "argmax norms/weight row mismatch"
-    );
-    assert_eq!(
-        in_blocks,
-        w.in_features() / Q8_0_BLOCK_SIZE,
-        "argmax norms/weight column mismatch"
-    );
-    assert!(out_features > 0, "argmax requires at least one output row");
-    assert!(
-        out_features <= u32::MAX as usize,
-        "argmax output row count exceeds u32 token range"
-    );
-    assert!(
-        margin.is_finite() && margin >= 1.0,
-        "argmax pruning margin must be finite and at least 1"
-    );
-    let encoded_row_len = in_blocks
-        .checked_mul(Q8_0_TYPE_SIZE)
-        .expect("argmax input size overflow");
-    assert_eq!(x.len(), encoded_row_len, "argmax input length mismatch");
-
-    // activation suffix bound: b_g = |scale_x_g| * ||qx_g||
-    let mut act_suffix = vec![0.0f32; in_blocks + 1];
-    {
-        let mut acc = 0.0f64;
-        for b in (0..in_blocks).rev() {
-            let x_offset = b * Q8_0_TYPE_SIZE;
-            let scale = half::f16::from_bits(u16::from_le_bytes(
-                x[x_offset..x_offset + 2].try_into().unwrap(),
-            ))
-            .to_f32();
-            let block = &x[x_offset + 2..x_offset + 2 + Q8_0_BLOCK_SIZE];
-            let q_norm: f64 = block
-                .iter()
-                .map(|&v| f64::from(f32::from(i8::from_le_bytes([v]))).powi(2))
-                .sum();
-            acc += f64::from(scale).powi(2) * q_norm;
-            act_suffix[b] = acc.sqrt() as f32;
-        }
-    }
-
-    // A few fully-computed rows provide a *complete* solution: the optimum
-    // is at least the best of them, so pruning against that lower bound can
-    // never remove the true argmax. (Pruning against a running *partial*
-    // maximum would be unsound: a partial can peak above the final maximum.)
-    const SAMPLE_ROWS: usize = 16;
-    let sample = out_features.min(SAMPLE_ROWS);
-    let mut sums = vec![0.0f32; out_features];
-    let mut best_solution = f32::NEG_INFINITY;
-    let mut best_row = 0usize;
-    for row in 0..sample {
-        let mut sum = 0.0f32;
-        for b in 0..in_blocks {
-            let offset = (row * in_blocks + b) * Q8_0_TYPE_SIZE;
-            let weight_scale = half::f16::from_bits(u16::from_le_bytes(
-                data[offset..offset + 2].try_into().unwrap(),
-            ))
-            .to_f32();
-            let input_scale = half::f16::from_bits(u16::from_le_bytes(
-                x[b * Q8_0_TYPE_SIZE..b * Q8_0_TYPE_SIZE + 2]
-                    .try_into()
-                    .unwrap(),
-            ))
-            .to_f32();
-            let mut block_sum = 0i32;
-            for j in 0..Q8_0_BLOCK_SIZE {
-                let weight = data[offset + 2 + j] as i8 as i32;
-                let input = x[b * Q8_0_TYPE_SIZE + 2 + j] as i8 as i32;
-                block_sum += weight * input;
-            }
-            sum += block_sum as f32 * weight_scale * input_scale;
-        }
-        sums[row] = sum;
-        if sum > best_solution {
-            best_solution = sum;
-            best_row = row;
-        }
-    }
-
-    let mut active = vec![true; out_features];
-    for b in 0..in_blocks {
-        let x_offset = b * Q8_0_TYPE_SIZE;
-        let input_scale = half::f16::from_bits(u16::from_le_bytes(
-            x[x_offset..x_offset + 2].try_into().unwrap(),
-        ))
-        .to_f32();
-        for row in sample..out_features {
-            if !active[row] {
-                continue;
-            }
-            let offset = (row * in_blocks + b) * Q8_0_TYPE_SIZE;
-            let weight_scale = half::f16::from_bits(u16::from_le_bytes(
-                data[offset..offset + 2].try_into().unwrap(),
-            ))
-            .to_f32();
-            let mut block_sum = 0i32;
-            for j in 0..Q8_0_BLOCK_SIZE {
-                let weight = data[offset + 2 + j] as i8 as i32;
-                let input = x[x_offset + 2 + j] as i8 as i32;
-                block_sum += weight * input;
-            }
-            sums[row] += block_sum as f32 * weight_scale * input_scale;
-        }
-        let act_bound = act_suffix[b + 1] * margin;
-        for row in sample..out_features {
-            if !active[row] {
-                continue;
-            }
-            if sums[row] + norms.suffix(row, b + 1) * act_bound < best_solution {
-                active[row] = false;
-            }
-        }
-    }
-
-    let mut max_val = best_solution;
-    let mut argmax = best_row as u32;
-    for row in 0..out_features {
-        if !active[row] {
-            continue;
-        }
-        if sums[row] > max_val {
-            max_val = sums[row];
-            argmax = row as u32;
-        }
-    }
-    (argmax, max_val)
-}
-
 /// weight data is not a valid Q8_0 encoding.
 #[inline]
 pub(crate) fn matmul_q8_0_decode(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
@@ -3022,6 +2881,34 @@ pub(crate) fn rope_split_half(
 
 #[cfg(test)]
 mod tests {
+    /// SiLU must stay correct where exp over- or underflows f32. The AVX2
+    /// exp used to wrap its exponent field there, so silu(88.5) came out as
+    /// -0.0 and silu(-90) as -90. Runs on every architecture's dispatch.
+    #[test]
+    fn silu_is_correct_at_large_magnitudes() {
+        let src: Vec<f32> = vec![
+            -120.0, -95.0, -90.0, -88.5, -87.5, -50.0, -1.0, 0.0, 1.0, 50.0, 87.5, 88.5, 90.0,
+            95.0, 120.0, 3.0,
+        ];
+        let mut out = vec![0.0; src.len()];
+        super::silu_into(&src, &mut out);
+        let ones = vec![1.0; src.len()];
+        let mut fused = vec![0.0; src.len()];
+        super::silu_mul_into(&src, &ones, &mut fused);
+        for ((&x, &y), &z) in src.iter().zip(&out).zip(&fused) {
+            let expected = (x as f64 / (1.0 + (-(x as f64)).exp())) as f32;
+            let tolerance = 1e-5 * x.abs().max(1.0);
+            assert!(
+                (y - expected).abs() <= tolerance,
+                "silu({x}) = {y}, expected {expected}"
+            );
+            assert!(
+                (z - expected).abs() <= tolerance,
+                "silu_mul({x}) = {z}, expected {expected}"
+            );
+        }
+    }
+
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn arm_inplace_norm_is_exact_with_tensor_reference() {
@@ -3137,7 +3024,7 @@ mod tests {
         }
     }
 
-    use crate::quant::{quantize_q8_0_into, Q8TopkNorms, QuantizedWeight};
+    use crate::quant::QuantizedWeight;
 
     /// Fast-exp error ladder, level 1 (kernel): the AVX2 approximation vs
     /// libm `expf` over a dense grid plus adversarial points. Gate: max
@@ -3188,84 +3075,6 @@ mod tests {
         let mut inplace = cases.clone();
         super::fast_exp_in_place(&mut inplace);
         assert_eq!(got, inplace);
-    }
-
-    /// The branch-and-bound argmax must match the scalar decode matmul
-    /// bit-for-bit (same accumulation order) across randomized inputs.
-    #[test]
-    fn argmax_kernel_matches_scalar_exactly() {
-        let mut seed = 0x9e37_79b9u64;
-        let mut next = move || {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (seed >> 33) as u8
-        };
-        for _trial in 0..32 {
-            let out = 512;
-            let in_ = 256;
-            let blocks_per_row = in_ / Q8_0_BLOCK_SIZE;
-            let mut bytes = Vec::with_capacity(out * blocks_per_row * Q8_0_TYPE_SIZE);
-            for _ in 0..out * blocks_per_row {
-                // random f16 scale (finite) + 32 random int8 quants
-                let mut scale_bits: u16 = ((next() as u16) << 8) | next() as u16;
-                scale_bits &= 0x7FFF;
-                if scale_bits >= 0x7C00 {
-                    scale_bits = 0x3C00;
-                }
-                bytes.extend_from_slice(&scale_bits.to_le_bytes());
-                for _ in 0..Q8_0_BLOCK_SIZE {
-                    bytes.push(next());
-                }
-            }
-            let weight = QuantizedWeight::try_new(bytes, vec![out, in_]).unwrap();
-            let norms = Q8TopkNorms::compute(&weight);
-            // random activation, quantized exactly like the decode path
-            let mut act = vec![0.0f32; in_];
-            let mut aseed = seed;
-            for value in &mut act {
-                aseed = aseed
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                *value = (((aseed >> 40) as f32) / 16_777_216.0 - 0.5) * 3.0;
-            }
-            let mut encoded = Vec::new();
-            quantize_q8_0_into(&act, &mut encoded);
-            let mut full = vec![0.0f32; out];
-            matmul_q8_0_decode_scalar(&encoded, weight.data(), out, blocks_per_row, &mut full);
-            let (token, logit) = matmul_q8_0_decode_argmax(&encoded, &weight, &norms, 1.001);
-            // first-index max semantics (matches the kernel's strict-greater
-            // update; ties resolve to the lowest index)
-            let expected = full.iter().enumerate().fold(
-                (0usize, f32::NEG_INFINITY),
-                |(best_idx, best_val), (idx, &value)| {
-                    if value > best_val {
-                        (idx, value)
-                    } else {
-                        (best_idx, best_val)
-                    }
-                },
-            );
-            if token as usize != expected.0 {
-                eprintln!(
-                    "trial {_trial}: argmax {token} (val {logit}) vs expected {} (val {}); \
-                     best_solution-relevant: sample rows 0..{}",
-                    expected.0,
-                    expected.1,
-                    16.min(out)
-                );
-            }
-            assert_eq!(
-                token as usize, expected.0,
-                "trial {_trial}: argmax mismatch"
-            );
-            assert!(
-                (logit - expected.1).abs() < 1e-3,
-                "trial {_trial}: logit mismatch {logit} vs {}",
-                expected.1
-            );
-            seed = aseed;
-        }
     }
 
     use super::*;

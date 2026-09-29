@@ -44,6 +44,9 @@ pub(crate) struct VerifySnapshotArgs {
     pub snapshot: Option<PathBuf>,
 }
 
+/// Tensor rows shown by the human digest; `--json` lists every tensor.
+const HUMAN_TENSOR_ROWS: usize = 12;
+
 fn render_human(report: &InspectReport) -> String {
     let mut lines = Vec::new();
     let kind = match report.kind {
@@ -72,10 +75,16 @@ fn render_human(report: &InspectReport) -> String {
             .collect::<Vec<_>>()
             .join(" ");
         lines.push(format!("dtypes: {histogram}"));
-        for tensor in &gguf.tensors {
+        for tensor in gguf.tensors.iter().take(HUMAN_TENSOR_ROWS) {
             lines.push(format!(
                 "  {}  {}  {:?}  ({} elements)",
                 tensor.name, tensor.dtype, tensor.dims, tensor.elements
+            ));
+        }
+        if gguf.tensors.len() > HUMAN_TENSOR_ROWS {
+            lines.push(format!(
+                "  ... {} more tensors omitted (see --json for the full inventory)",
+                gguf.tensors.len() - HUMAN_TENSOR_ROWS
             ));
         }
         let fallbacks = gguf
@@ -217,6 +226,41 @@ mod tests {
         assert!(text.contains("note: a note"));
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"kind\":\"gguf\""));
+    }
+
+    #[test]
+    fn human_digest_truncates_tensor_rows_but_json_keeps_all() {
+        let tensors: Vec<TensorDigestEntry> = (0..20)
+            .map(|index| TensorDigestEntry {
+                name: format!("blk.{index:02}.weight"),
+                dtype: "f32".to_string(),
+                dims: vec![4],
+                elements: 4,
+            })
+            .collect();
+        let report = InspectReport {
+            file: "model.gguf".to_string(),
+            kind: FileKind::Gguf,
+            sha256: None,
+            gguf: Some(GgufDigest {
+                architecture: None,
+                metadata_keys: 1,
+                tensor_count: 20,
+                total_elements: 80,
+                dtype_histogram: BTreeMap::from([("f32".to_string(), 20)]),
+                tensors,
+                k_decisions: BTreeMap::new(),
+            }),
+            tokenizer: None,
+            kv_snapshot: None,
+            notes: Vec::new(),
+        };
+        let text = render_human(&report);
+        assert!(text.contains("blk.11.weight"));
+        assert!(!text.contains("blk.12.weight"));
+        assert!(text.contains("8 more tensors omitted"));
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("blk.19.weight"));
     }
 
     #[test]

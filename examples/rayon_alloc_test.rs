@@ -1,3 +1,9 @@
+// Reads allocation counts, so it registers the counting allocator (the
+// library does not install one).
+#[global_allocator]
+static GLOBAL_ALLOCATOR: ember::alloc_counter::CountingAllocator =
+    ember::alloc_counter::CountingAllocator;
+
 fn main() {
     let mut v = vec![0.0f32; 65536];
     fn fill_range(v: &mut [f32], _start: usize, len: usize) {
@@ -17,6 +23,7 @@ fn main() {
     }
     // warm
     fill_range(&mut v, 0, 65536);
+    assert!(ember::alloc_counter::counting_active());
     for i in 0..3 {
         let (_, a) = ember::alloc_counter::count_allocations(|| {
             {
