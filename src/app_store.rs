@@ -36,6 +36,25 @@ pub const STORE_SCHEMA: &str = "ember.appstate.v1";
 /// than misread.
 pub const STORE_SCHEMA_MAJOR: u32 = 1;
 
+/// The intervention configuration of a completed run, as typed into the form.
+/// Enough to branch from a past run without the original session; the prompt
+/// and model live on the record itself. Optional on [`RunRecord`] so stores
+/// written before this field existed still load unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordConfig {
+    pub model_path: String,
+    pub execution: String,
+    pub site: String,
+    pub layer: String,
+    pub op: String,
+    pub value: String,
+    pub source: String,
+    pub source_layer: String,
+    pub token: String,
+    pub span: String,
+    pub max_tokens: String,
+}
+
 /// One completed run, as a record rather than a line of history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRecord {
@@ -70,6 +89,10 @@ pub struct RunRecord {
     pub pinned: bool,
     /// The prompt text, so a run can be reopened without retyping it.
     pub prompt: String,
+    /// The full form configuration, so a run can be branched from. Absent on
+    /// records written before branching existed.
+    #[serde(default)]
+    pub config: Option<RecordConfig>,
 }
 
 impl RunRecord {
@@ -318,6 +341,7 @@ mod tests {
             verified: true,
             pinned,
             prompt: "اكتب جملة قصيرة عن المدينة المنورة".into(),
+            config: None,
         }
     }
 
@@ -326,6 +350,42 @@ mod tests {
             std::env::temp_dir().join(format!("ember-store-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("app-state.json")
+    }
+
+    #[test]
+    fn store_written_before_configurations_still_loads() {
+        let path = temp_path("pre-config");
+        // Exactly the shape this app wrote before RunRecord grew `config`:
+        // the field must default to None, not fail the read.
+        let legacy = serde_json::json!({
+            "schema": STORE_SCHEMA,
+            "schema_version": STORE_SCHEMA_MAJOR,
+            "runs": [{
+                "number": 1,
+                "finished_at": 1_700_000_000,
+                "model": "Llama-3.2-1B-Instruct-Q8_0",
+                "intervention": "Scale ×0.5",
+                "hook": "ember.hook.v1 · after-mlp",
+                "layer": 8,
+                "duration_ms": 1_240,
+                "baseline_tokens": 48,
+                "intervention_tokens": 48,
+                "diverged_at_step": null,
+                "outputs_equal": false,
+                "verified": true,
+                "pinned": false,
+                "prompt": "p"
+            }],
+            "models": [],
+            "draft": null,
+        });
+        std::fs::create_dir_all(path.parent().expect("temp path has a parent"))
+            .expect("create temp store directory");
+        std::fs::write(&path, serde_json::to_vec(&legacy).expect("serialize legacy store"))
+            .expect("write legacy store");
+        let store = load(path).expect("a pre-configuration store still loads");
+        assert_eq!(store.runs.len(), 1);
+        assert!(store.runs[0].config.is_none());
     }
 
     #[test]
