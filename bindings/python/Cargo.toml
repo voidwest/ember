@@ -17,3 +17,9 @@ ember = { path = "../..", default-features = false }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
 anyhow = "1"
 serde_json = "1"
+
+[build-dependencies]
+# Supplies the macOS extension-module link flags (`-undefined
+# dynamic_lookup`) so a plain `cargo build -p ember-python` links, not only
+# maturin builds.
+pyo3-build-config = "0.29"

@@ -1910,6 +1910,7 @@ dependencies = [
  "anyhow",
  "ember",
  "pyo3",
+ "pyo3-build-config",
  "serde_json",
 ]
 
