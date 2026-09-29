@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/gui/icon.png" width="112" alt="Ember"></p>
+
 # ember
 
 [![rust](https://img.shields.io/badge/rust-1.92-blue)](https://www.rust-lang.org)
@@ -55,6 +57,34 @@ The [full workflow](examples/experiments/README.md) adds restoration and
 reproduction. On the reference machine, restoration compares bit-exact and
 baseline reproduction reports `exact-semantic`. This is a workflow example,
 not a reproduction of a paper result or a promise of cross-machine bit identity.
+
+## the experiment console
+
+Ember ships a native desktop console (`ember gui`) for running the same kind of
+intervention without writing a spec. Pick a model, write a prompt, change one
+thing inside the model, and compare against the untouched baseline.
+
+![Ember result overview: the output changed and the internal divergence begins at layer 7](docs/assets/gui/results-overview.png)
+
+![Layer-by-layer divergence chart with the intervention layer marked](docs/assets/gui/results-layers.png)
+
+Silencing an early layer's output at the last prompt token turned "Paris. The
+Eiffel Tower is located in Paris…" into "covered in a thick layer of fog…" on
+Llama-3.2-1B-Instruct Q8_0; the Layers tab shows the change beginning exactly
+at the layer that was touched. Zeroing a middle MLP instead leaves the words
+unchanged while the internals still diverge. (One deterministic run on a
+16-layer model, not a general claim.)
+
+```bash
+cargo run --release --bin ember -- gui
+# macOS: a double-clickable app with an icon and a menu bar
+scripts/bundle-macos.sh && open target/bundle/Ember.app
+```
+
+It has a built-in sample result that needs no model, dark and light themes, a
+command palette (Cmd+K) and a Presentation mode. Runs are saved and can be
+reopened. See the [console notes](docs/v06-gui.md) and the
+[demo outline](docs/demo-outline.md).
 
 ## why this instrument exists
 
