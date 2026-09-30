@@ -413,6 +413,8 @@ impl WorkspaceStep {
         }
     }
 
+    /// Only the render harness labels its scenes by step number.
+    #[cfg(feature = "gui-tests")]
     fn number(self) -> &'static str {
         match self {
             Self::Prompt => "1",
