@@ -25,14 +25,16 @@ runs/example/
 ├── traces/events.jsonl      capture route records + per-layer fusion state
 ├── artifacts/               optional deterministic artifacts (see below)
 │   ├── directions/<id>.{safetensors,json}  resolved steering directions
-│   └── attribution/{attribution.json,candidates.csv}  attribution report
+│   ├── attribution/{attribution.json,candidates.csv}  attribution report
+│   └── probe/{probe.json,effects.csv,direction.safetensors}  probe bridge report
 └── checksums.sha256         SHA-256 of every file at publish time
 ```
 
 `artifacts/` holds deterministic files produced by the run beyond captures:
 resolved `vector-file`/`contrastive` directions (`ember.direction.v1`, see
-`docs/interventions.md`) and attribution reports (`ember.attribution.v1`, see
-`docs/experiments.md#attribution-patching`). They are ordinary payloads: listed in
+`docs/interventions.md`) attribution reports (`ember.attribution.v1`, see
+`docs/experiments.md#attribution-patching`), and probe-bridge reports
+(`ember.probe-bridge.v1`). They are ordinary payloads: listed in
 `manifest.json`, checksummed, and part of the semantic manifest's payload map
 (so of both hashes). `verify` reads them once and checks their records.
 

@@ -122,9 +122,11 @@ fn contrastive_direction(
     let means = prompt_means(
         prepared,
         resolved,
-        intervention,
+        intervention.site,
+        &intervention.layers,
         tokens,
         positive.iter().chain(negative.iter()),
+        &format!("intervention '{}'", intervention.id),
     )?;
     let (positive_means, negative_means) = means.split_at(positive.len());
     let layers = intervention_layers(intervention, prepared.n_layers)?;
@@ -154,14 +156,18 @@ fn contrastive_direction(
     Ok(out)
 }
 
-/// Per-prompt, per-layer mean of the rows `tokens` selects at the
-/// intervention's site, from a capture-only prefill of each prompt.
+/// Per-prompt, per-layer mean of the rows `tokens` selects at `site` and
+/// `layers`, from a capture-only prefill of each prompt (`label` names the
+/// caller in errors).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prompt_means<'a>(
     prepared: &PreparedRun,
     resolved: &ExperimentSpecV1,
-    intervention: &InterventionSpec,
+    site: ember::v05::hook::SemanticHookSite,
+    layers: &ember::v05::capture::LayerSelector,
     tokens: &ember::v05::token_select::TokenSelector,
     prompts: impl Iterator<Item = &'a String>,
+    label: &str,
 ) -> anyhow::Result<Vec<std::collections::BTreeMap<usize, Vec<f64>>>> {
     let mut derived = resolved.clone();
     derived.inputs = prompts
@@ -173,9 +179,9 @@ pub(crate) fn prompt_means<'a>(
         .collect();
     derived.captures = vec![CaptureSpec {
         id: "direction".into(),
-        site: intervention.site,
-        layers: if intervention.site.is_per_layer() {
-            intervention.layers.clone()
+        site,
+        layers: if site.is_per_layer() {
+            layers.clone()
         } else {
             ember::v05::capture::LayerSelector::All("all".into())
         },
@@ -185,6 +191,8 @@ pub(crate) fn prompt_means<'a>(
         dtype: CaptureDType::F32,
     }];
     derived.interventions = Vec::new();
+    derived.attribution = None;
+    derived.probe = None;
     derived.generation.max_new_tokens = 0;
     let active = activate_spec(prepared, &derived)?;
     let mut out = Vec::with_capacity(derived.inputs.len());
@@ -194,11 +202,7 @@ pub(crate) fn prompt_means<'a>(
         let mut by_layer = std::collections::BTreeMap::new();
         for capture in &result.captures {
             let mean = mean_rows(&capture.rows, capture.columns).map_err(|error| {
-                anyhow::anyhow!(
-                    "intervention '{}': prompt {}: {error}",
-                    intervention.id,
-                    derived.inputs[index].id
-                )
+                anyhow::anyhow!("{label}: prompt {}: {error}", derived.inputs[index].id)
             })?;
             by_layer.insert(capture.layer, mean);
         }

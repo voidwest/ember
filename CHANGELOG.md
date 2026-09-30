@@ -26,6 +26,12 @@ publish this section as a released version until those are closed.
   standalone runs (tested on synthetic F32/Q8_0 models in reference and
   planned modes, and on the morphology example); `runtime.json` records the
   path each input took (`prefix_reuse`). See docs/experiments.md.
+- Experiments: probe bridge. A `[probe]` table trains a deterministic
+  closed-form ridge probe in the run (or pins a probe file), reports its
+  train/held-out accuracy, and measures the behavioural effect of ablating
+  and steering along its direction on held-out inputs (target-token logit and
+  probability change, generated-text change). Report, table and direction
+  are bundle artifacts checked by `verify`.
 - Experiments: attribution patching without autograd. An `[attribution]`
   table (clean/corrupted inputs, target/foil tokens) ranks every (site,
   layer, position) by a direct-path estimate (activation difference

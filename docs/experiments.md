@@ -361,6 +361,72 @@ verified, about 8 s), the top five candidates are the final-position
 residual stream at layers 11-15 (recovering 53-79% of the 16.3-logit gap),
 with Spearman 0.72 and Pearson 0.92 between estimate and measured effect.
 
+## Probe bridge: can the model use it?
+
+A probe that reads a feature says nothing about whether the model's answer
+path uses it (README: "the probe can read it. can the model use it?"). A
+`[probe]` table measures both in one run (see
+`examples/experiments/probe-bridge-sentiment.toml`):
+
+```toml
+[probe]
+site = "residual-post-mlp"      # per-layer site the probe reads and the interventions act at
+layer = 8
+tokens = { kind = "prompt-final" }            # rows per labelled prompt (mean if several)
+train = [{ text = "...", label = 1 }, ...]    # trained in the run when no `file`
+test = [{ text = "...", label = 0 }, ...]     # held-out labelled prompts
+ridge_lambda = 1.0              # default
+# file = { path = "probe.npy", sha256 = "<64 hex>" }   # a pinned direction instead
+ablate = true                   # default: remove the projection on the direction
+steer_alphas = [-8.0, 8.0]      # steer along it (default none)
+steer_normalize = "unit"        # default
+intervene_tokens = { kind = "prompt-final" }  # rows of the behavioural inputs
+target = " great"               # token whose logit/probability is measured
+```
+
+**Probe.** Trained probes are closed-form ridge regressions on +1/-1
+targets with an unpenalized intercept (centred data, dual form
+`w = Xc^T (Xc Xc^T + lambda I)^-1 yc`, Cholesky in f64): no seed, no
+iterations, the same weights every run. A pinned `file` (`.npy` or
+`.safetensors`, `[d]` or `[n_layers, d]`) replaces training; labelled
+`train` examples then only fit the threshold (midpoint of the class-mean
+projections). Accuracy is reported on `train` and `test`.
+
+**Causal effect.** The spec's `[[inputs]]` are the behavioural prompts; they
+must not appear among the probe's examples. The baseline and every variant
+(`ablate`, then `steer<alpha>` per alpha) run them with the spec's
+generation settings, intervening at the probe's site and layer on
+`intervene_tokens` along the probe direction (the `ablate-projection` and
+`steer` operations). For every variant and input the report records the
+target token's logit and probability at the final prompt position, their
+change from the baseline, the generated text, whether it changed, and the
+first divergent step; a summary gives the mean changes and how many texts
+changed per variant.
+
+**Outputs.** The bundle is the ordinary (unintervened) run of the inputs plus
+
+```text
+artifacts/probe/probe.json              ember.probe-bridge.v1: probe record, effects, summary
+artifacts/probe/effects.csv             effects as a table
+artifacts/probe/direction.safetensors   the direction used (F32 [d])
+```
+
+and `experiment run` prints the accuracy/effect summary. `verify` adds a
+`probe bridge report` check: the record describes the spec's probe (site,
+layer, source, file hash, example counts), the direction tensor matches its
+checksum, the effects cover the baseline and each variant for every input,
+the summary is what the effects give, and the CSV is the table. Probe specs
+declare no interventions and run standalone (not in a sweep or a
+`--variant` pass).
+
+On the pinned Llama-3.2-1B, a 12-example sentiment probe at layer 8 reads
+sentiment perfectly (train and held-out accuracy 100%), yet removing its
+projection barely moves the model (mean change in logit(" great") -0.16,
+one of three continuations changed: "really good" became "pretty good");
+steering along it by -8 turns all three continuations negative ("a
+disaster", "terrible"). The direction is readable and, pushed hard enough,
+usable; the model does not depend on its component along it.
+
 ## Determinism and identity
 
 Two equivalent runs on the same environment produce identical semantic

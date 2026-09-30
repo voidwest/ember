@@ -65,6 +65,11 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
    all 432 (site, layer, position) candidates, the top 48 verified with real
    patches; the bundle carries `artifacts/attribution/*`.
 
+7. `probe-bridge-sentiment.toml` — "the probe can read it; can the model use
+   it?": a ridge sentiment probe trained in the run at layer 8, its held-out
+   accuracy, and the effect of ablating and steering along it on three
+   held-out prompts; the bundle carries `artifacts/probe/*`.
+
 ## Commands
 
 ```bash

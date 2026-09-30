@@ -371,8 +371,9 @@ pub(crate) fn run_base_pass(
         .chain(variants.iter().copied())
     {
         anyhow::ensure!(
-            spec.attribution.is_none(),
-            "experiment '{}' declares an analysis workflow ([attribution]); run it on its own, \
+            spec.attribution.is_none() && spec.probe.is_none(),
+            "experiment '{}' declares an analysis workflow ([attribution] or [probe]); run it \
+             on its own, \
              not as part of a shared pass or sweep",
             spec.experiment.name
         );

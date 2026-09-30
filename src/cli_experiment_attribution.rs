@@ -75,6 +75,7 @@ pub(crate) fn derived_spec(
     spec.captures = captures;
     spec.interventions = Vec::new();
     spec.attribution = None;
+    spec.probe = None;
     spec.generation.max_new_tokens = 0;
     spec
 }
@@ -426,6 +427,13 @@ pub(crate) fn print_bundle_reports(bundle: &std::path::Path) -> anyhow::Result<(
         let report: AttributionReport = serde_json::from_slice(&std::fs::read(&path)?)?;
         print_attribution(&report, report.verified.max(10));
         println!("  report: {} (and candidates.csv)", path.display());
+    }
+    let path = bundle.join(ember::v05::probe::PROBE_JSON);
+    if path.is_file() {
+        let report: ember::v05::probe::ProbeReport =
+            serde_json::from_slice(&std::fs::read(&path)?)?;
+        crate::cli_experiment_probe::print_probe(&report);
+        println!("  report: {} (and effects.csv)", path.display());
     }
     Ok(())
 }

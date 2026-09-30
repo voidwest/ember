@@ -847,6 +847,53 @@ fn verify_and_load(
         );
     }
 
+    // probe bridge report: present when the spec asks for one and consistent
+    // with the spec, its direction tensor and its table.
+    let spec_probe = std::str::from_utf8(&files["experiment.toml"])
+        .ok()
+        .and_then(|text| crate::v05::spec::RawExperimentSpec::from_toml_str(text).ok())
+        .and_then(|raw| raw.resolve().ok())
+        .and_then(|spec| spec.probe);
+    let has_probe_files = listed_artifacts
+        .iter()
+        .any(|name| name.starts_with("artifacts/probe/"));
+    if spec_probe.is_some() || has_probe_files {
+        let input_ids: Vec<String> = semantic_manifest
+            .inputs
+            .iter()
+            .map(|input| input.id.clone())
+            .collect();
+        let mut errors = match &spec_probe {
+            Some(spec) => {
+                crate::v05::probe::verify_probe_artifacts(spec, &input_ids, &|relative| {
+                    files.get(relative).cloned()
+                })
+            }
+            None => vec!["probe artifacts without a [probe] spec".into()],
+        };
+        for name in &listed_artifacts {
+            if name.starts_with("artifacts/probe/")
+                && ![
+                    crate::v05::probe::PROBE_JSON,
+                    crate::v05::probe::PROBE_CSV,
+                    crate::v05::probe::PROBE_DIRECTION,
+                ]
+                .contains(&name.as_str())
+            {
+                errors.push(format!("unexpected probe artifact '{name}'"));
+            }
+        }
+        report.record(
+            "probe bridge report",
+            errors.is_empty(),
+            if errors.is_empty() {
+                "probe record, direction, effects, summary and table are consistent".to_string()
+            } else {
+                errors.join("; ")
+            },
+        );
+    }
+
     // execution-plan hash matches the stored plan
     let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&files["execution-plan.json"])
         .map_err(|error| format!("execution-plan.json is not valid JSON: {error}"))?;

@@ -17,6 +17,7 @@ pub mod intervention;
 pub mod lens;
 pub mod manifest;
 pub mod prefix;
+pub mod probe;
 pub mod run;
 pub mod runner;
 pub mod safetensors;

@@ -724,6 +724,7 @@ fn raw_spec(
         },
         sweep: None,
         attribution: None,
+        probe: None,
     }
 }
 

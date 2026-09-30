@@ -92,6 +92,16 @@ The inputs must exist and differ, sites must be per-layer and distinct,
 `verify_top_k >= 1`, and the spec must declare no interventions. Omitted
 fields are recorded as defaults. It cannot be combined with `[sweep]`.
 
+## Probe bridge
+
+An optional `[probe]` table (`site`, `layer`, `target`, and `train` or
+`file`; optional `tokens`, `test`, `ridge_lambda`, `ablate`, `steer_alphas`,
+`steer_normalize`, `intervene_tokens`) adds the probe-bridge workflow; see
+`docs/experiments.md#probe-bridge-can-the-model-use-it`. Labels are 0 or 1,
+training needs both labels, `ridge_lambda > 0`, at least one of `ablate` and
+`steer_alphas`, the behavioural inputs must not be probe examples, the site
+is per-layer, and the spec declares no interventions and no `[attribution]`.
+
 ## Operations and sources
 
 ```toml

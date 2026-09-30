@@ -650,6 +650,12 @@ fn execute_prepared_inner(
         timing.elapsed += started.elapsed();
         active.artifacts.extend(files);
     }
+    if let Some(probe) = &resolved.probe {
+        let started = std::time::Instant::now();
+        let files = crate::cli_experiment_probe::run_probe_bridge(prepared, resolved, probe)?;
+        timing.elapsed += started.elapsed();
+        active.artifacts.extend(files);
+    }
     let outcome = finish_bundle(
         prepared,
         &RunTarget {
@@ -1051,6 +1057,8 @@ pub(crate) fn run_validate_command(command: &ValidateArgs) -> anyhow::Result<()>
                 "captures": resolved.captures.len(),
                 "interventions": resolved.interventions.len(),
                 "direction_files_checked": direction_files,
+                "attribution": resolved.attribution.is_some(),
+                "probe": resolved.probe.is_some(),
                 "inputs": resolved.inputs.len(),
                 "defaults": resolved.defaults,
             }))?
@@ -1065,6 +1073,34 @@ pub(crate) fn run_validate_command(command: &ValidateArgs) -> anyhow::Result<()>
         println!("  interventions: {}", resolved.interventions.len());
         if direction_files > 0 {
             println!("  direction files: {direction_files} (hash and shape checked)");
+        }
+        if let Some(attribution) = &resolved.attribution {
+            println!(
+                "  attribution: {} -> {}, {} site(s), verify top {}",
+                attribution.clean,
+                attribution.corrupted,
+                attribution.sites.len(),
+                attribution.verify_top_k
+            );
+        }
+        if let Some(probe) = &resolved.probe {
+            println!(
+                "  probe bridge: {} layer {}, {} train / {} test examples, {} variant(s)",
+                probe.site,
+                probe.layer,
+                probe.train.len(),
+                probe.test.len(),
+                probe.variants().len()
+            );
+            if let Some(file) = &probe.file {
+                ember::v05::steering::read_direction_file(
+                    &file.path,
+                    &file.sha256,
+                    file.tensor.as_deref(),
+                )
+                .map_err(|error| anyhow::anyhow!("probe.file: {error}"))?;
+                println!("  probe file: hash and shape checked");
+            }
         }
         println!("  defaults applied: {}", resolved.defaults.len());
     }

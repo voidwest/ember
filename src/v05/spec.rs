@@ -204,6 +204,9 @@ pub struct ExperimentSpecV1 {
     /// Attribution patching workflow (`crate::v05::attribution`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<crate::v05::attribution::AttributionSpec>,
+    /// Probe bridge workflow (`crate::v05::probe`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<crate::v05::probe::ProbeSpec>,
 }
 
 /// The strict user-authored TOML form: every defaultable field is
@@ -232,6 +235,9 @@ pub struct RawExperimentSpec {
     /// Attribution patching (`crate::v05::attribution`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<RawDefinition<crate::v05::attribution::AttributionSpec>>,
+    /// Probe bridge (`crate::v05::probe`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<RawDefinition<crate::v05::probe::ProbeSpec>>,
 }
 
 /// A strictly validated definition retaining the fields actually supplied by
@@ -606,6 +612,10 @@ impl RawExperimentSpec {
             .attribution
             .map(|definition| definition.resolve("attribution", &mut defaults))
             .transpose()?;
+        let probe = self
+            .probe
+            .map(|definition| definition.resolve("probe", &mut defaults))
+            .transpose()?;
         let resolved = ExperimentSpecV1 {
             schema: EXPERIMENT_SCHEMA_V1.to_string(),
             experiment: ExperimentMetadata {
@@ -646,6 +656,7 @@ impl RawExperimentSpec {
             },
             defaults,
             attribution,
+            probe,
         };
         resolved.validate()?;
         Ok(resolved)
@@ -809,6 +820,29 @@ impl ExperimentSpecV1 {
                     "interventions",
                     "an [attribution] spec runs its own verification patches; declare no \
                      interventions",
+                ));
+            }
+        }
+        if let Some(probe) = &self.probe {
+            let texts: Vec<&str> = self
+                .inputs
+                .iter()
+                .map(|input| input.text.as_str())
+                .collect();
+            probe
+                .validate(&texts)
+                .map_err(|(path, message)| SpecError::at(path, message))?;
+            if !self.interventions.is_empty() {
+                return Err(SpecError::at(
+                    "interventions",
+                    "a [probe] spec runs its own interventions along the probe direction; \
+                     declare no interventions",
+                ));
+            }
+            if self.attribution.is_some() {
+                return Err(SpecError::at(
+                    "probe",
+                    "declare either [probe] or [attribution], not both",
                 ));
             }
         }

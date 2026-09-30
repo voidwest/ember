@@ -1,0 +1,127 @@
+# Probe bridge: the probe can read it. Can the model use it?
+#
+# A sentiment probe is trained in the run (closed-form ridge, no seed, no
+# iteration) on the residual stream leaving block 8 at the final token of
+# labelled sentences, and scored on held-out labelled sentences. The same
+# direction then drives interventions on the behavioural inputs below
+# (held out from both sets): removing the projection on it (ablate), and
+# steering along it at alpha = -8 and +8 (unit-normalized), at the same
+# site, layer and token. The report puts the probe's accuracy next to the
+# change in the target token's logit/probability and in the generated text.
+#
+#   ember experiment validate examples/experiments/probe-bridge-sentiment.toml
+#   ember experiment run examples/experiments/probe-bridge-sentiment.toml
+#   ember experiment verify runs/probe-bridge-sentiment
+#
+# The bundle carries artifacts/probe/probe.json, effects.csv and
+# direction.safetensors (hashed, and checked by `experiment verify`).
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "probe-bridge-sentiment"
+description = "Ridge sentiment probe at layer 8: accuracy versus causal effect of ablating/steering along it."
+seed = 42
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 8
+deterministic = true
+
+[generation]
+max_new_tokens = 12
+temperature = 0.0
+
+# Behavioural inputs (held out from the probe's examples).
+[[inputs]]
+id = "film"
+text = "I finally saw the film everyone was talking about. In one word, it was"
+
+[[inputs]]
+id = "restaurant"
+text = "We had dinner at the new place downtown. Honestly, the food was"
+
+[[inputs]]
+id = "trip"
+text = "After a week on the coast, I would describe the holiday as"
+
+[probe]
+site = "residual-post-mlp"
+layer = 8
+ridge_lambda = 1.0
+ablate = true
+steer_alphas = [-8.0, 8.0]
+steer_normalize = "unit"
+target = " great"
+
+[probe.tokens]
+kind = "prompt-final"
+
+[probe.intervene_tokens]
+kind = "prompt-final"
+
+[[probe.train]]
+text = "The concert was wonderful and I loved every minute."
+label = 1
+[[probe.train]]
+text = "This book is a delight; I could not put it down."
+label = 1
+[[probe.train]]
+text = "Our hotel room was spotless and the staff were lovely."
+label = 1
+[[probe.train]]
+text = "What a brilliant game, the best I have seen all year."
+label = 1
+[[probe.train]]
+text = "The new phone is fast, beautiful and a joy to use."
+label = 1
+[[probe.train]]
+text = "I am so happy with how the garden turned out."
+label = 1
+[[probe.train]]
+text = "The concert was dreadful and I hated every minute."
+label = 0
+[[probe.train]]
+text = "This book is a chore; I gave up after ten pages."
+label = 0
+[[probe.train]]
+text = "Our hotel room was filthy and the staff were rude."
+label = 0
+[[probe.train]]
+text = "What a miserable game, the worst I have seen all year."
+label = 0
+[[probe.train]]
+text = "The new phone is slow, ugly and a pain to use."
+label = 0
+[[probe.train]]
+text = "I am so upset with how the garden turned out."
+label = 0
+
+[[probe.test]]
+text = "The museum tour was fascinating and fun."
+label = 1
+[[probe.test]]
+text = "Breakfast was delicious and generous."
+label = 1
+[[probe.test]]
+text = "The service here is excellent."
+label = 1
+[[probe.test]]
+text = "The museum tour was boring and far too long."
+label = 0
+[[probe.test]]
+text = "Breakfast was cold and disgusting."
+label = 0
+[[probe.test]]
+text = "The service here is terrible."
+label = 0
+
+[output]
+directory = "runs/probe-bridge-sentiment"
+overwrite = false
