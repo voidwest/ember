@@ -2570,7 +2570,9 @@ pub(crate) fn matmul_q8_0_batch_legacy(
     if tile_rows == 1 {
         x.par_chunks(encoded_row_len)
             .zip(out.par_chunks_mut(w.out_features()))
-            .for_each(|(x_row, out_row)| matmul_q8_0_decode(x_row, w, out_row));
+            .for_each(|(x_row, out_row)| {
+                crate::decode_pool::without_team(|| matmul_q8_0_decode(x_row, w, out_row))
+            });
         return;
     }
 
@@ -2952,10 +2954,12 @@ impl<'a, 'o> Q8DecodeTask<'a, 'o> {
 /// Most matvecs one decode region can fuse (Q/K/V is the widest user).
 pub(crate) const MAX_DECODE_TASKS: usize = 4;
 
-/// Target weight bytes per scheduled chunk. Small enough that efficiency
-/// cores and preempted workers only delay the region by one short chunk,
-/// large enough that claiming a chunk stays negligible.
-const DECODE_CHUNK_BYTES: usize = 64 * 1024;
+/// Target weight bytes per scheduled chunk. Small enough that a preempted
+/// worker only delays the region by one short chunk, large enough that
+/// claiming a chunk stays negligible and each worker streams long runs
+/// (M1 Pro sweep: 16 KiB 62.7, 32 KiB 63.3, 64 KiB 65.2, 128 KiB 65.9,
+/// 256 KiB 66.2, 384 KiB 64.4 tok/s).
+const DECODE_CHUNK_BYTES: usize = 128 * 1024;
 
 fn decode_chunk_rows(weight: Q8DecodeWeight<'_>) -> usize {
     let row_bytes = (weight.in_features() / Q8_0_BLOCK_SIZE) * Q8_0_TYPE_SIZE;

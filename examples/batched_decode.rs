@@ -8,8 +8,9 @@
 //!
 //! For every batch size `N` it prefills `N` distinct prompts, checks that
 //! three batched greedy steps reproduce independent single-sequence decodes
-//! bit for bit (logits of every sequence), then times batched steps and
-//! prints JSON lines with aggregate and per-sequence tokens/s.
+//! bit for bit (logits of every sequence), then times batched steps and the
+//! same sequences decoded one at a time, and prints JSON lines with aggregate,
+//! per-sequence and sequential single-decode tokens/s.
 
 use ember::backend::CpuBackend;
 use ember::kv_cache::KVCache;
@@ -101,7 +102,7 @@ fn main() -> anyhow::Result<()> {
         .map(|size| size.parse().expect("batch size"))
         .collect();
     let steps: usize = args.get(3).map_or(Ok(32), |steps| steps.parse())?;
-    let capacity = 64 + steps + VERIFY_STEPS;
+    let capacity = 64 + 2 * steps + VERIFY_STEPS;
     let loader = load_gguf_with_k_strategy(path, KStrategy::Auto, false)?;
     let model = Llama::from_loader_with_max_seq_len(loader, Some(capacity))?;
     anyhow::ensure!(
@@ -143,10 +144,29 @@ fn main() -> anyhow::Result<()> {
         }
         let seconds = started.elapsed().as_secs_f64();
         let aggregate = (n * steps) as f64 / seconds;
+
+        // Baseline: the same sequences decoded one at a time on the
+        // single-sequence fast path.
+        let started = Instant::now();
+        for _ in 0..steps {
+            for index in 0..n {
+                let logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[single.tokens[index]],
+                    &mut single.caches[index],
+                    single.positions[index],
+                )?;
+                single.tokens[index] = argmax(logits.data());
+                single.positions[index] += 1;
+            }
+        }
+        let sequential = (n * steps) as f64 / started.elapsed().as_secs_f64();
         println!(
             "{{\"batch\":{n},\"steps\":{steps},\"bit_identical_steps\":{VERIFY_STEPS},\
              \"aggregate_tokens_per_second\":{aggregate:.2},\
-             \"per_sequence_tokens_per_second\":{:.2},\"step_ms\":{:.3}}}",
+             \"per_sequence_tokens_per_second\":{:.2},\"step_ms\":{:.3},\
+             \"sequential_single_tokens_per_second\":{sequential:.2}}}",
             aggregate / n as f64,
             seconds * 1000.0 / steps as f64
         );

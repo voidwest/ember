@@ -207,13 +207,102 @@ impl Drop for Team {
 
 static TEAM: Mutex<Option<Team>> = Mutex::new(None);
 
+/// Performance-core count on Apple silicon (`hw.perflevel0.logicalcpu`).
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn performance_cores() -> Option<usize> {
+    use std::ffi::{c_char, c_int, c_void};
+    unsafe extern "C" {
+        fn sysctlbyname(
+            name: *const c_char,
+            oldp: *mut c_void,
+            oldlenp: *mut usize,
+            newp: *mut c_void,
+            newlen: usize,
+        ) -> c_int;
+    }
+    let mut value: c_int = 0;
+    let mut len = std::mem::size_of::<c_int>();
+    // SAFETY: the name is NUL-terminated and `oldp`/`oldlenp` describe a
+    // writable `c_int`; no new value is set.
+    let status = unsafe {
+        sysctlbyname(
+            c"hw.perflevel0.logicalcpu".as_ptr(),
+            (&raw mut value).cast::<c_void>(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (status == 0 && len == std::mem::size_of::<c_int>() && value > 0).then_some(value as usize)
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+fn performance_cores() -> Option<usize> {
+    None
+}
+
+/// Team members for the current Rayon context:
+/// `rayon::current_num_threads()`, capped at the performance-core count on
+/// CPUs with efficiency cores.
+///
+/// Spinning members all wait for a region's slowest chunk, and decode is
+/// memory-bound, so efficiency cores only lengthen every region's tail. On
+/// M1 Pro (8P + 2E) with `RAYON_NUM_THREADS=10`: 59.8 tok/s uncapped versus
+/// 74.4 capped at 8.
+fn team_size() -> usize {
+    static CAP: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    let threads = rayon::current_num_threads();
+    CAP.get_or_init(performance_cores)
+        .map_or(threads, |cap| threads.min(cap))
+}
+
+thread_local! {
+    /// Set while this thread runs a CPU inference session
+    /// ([`crate::model::with_cpu_session`]): a sequential decode loop that may
+    /// use the team even though it executes on a Rayon worker.
+    static SESSION_ROOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set inside Rayon parallel work that issues decode regions per item.
+    static SUPPRESSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with `flag` set on this thread, restoring the previous value.
+fn with_flag<R>(
+    flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>,
+    f: impl FnOnce() -> R,
+) -> R {
+    struct Restore(&'static std::thread::LocalKey<std::cell::Cell<bool>>, bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            self.0.with(|cell| cell.set(self.1));
+        }
+    }
+    let _restore = Restore(flag, flag.with(|cell| cell.replace(true)));
+    f()
+}
+
+/// Mark the current thread as the root of a sequential inference session so
+/// its decode regions use the team even when it is a Rayon worker (the CLI
+/// runs every session on one; its sibling workers are idle during decode).
+pub(crate) fn session<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&SESSION_ROOT, f)
+}
+
+/// Keep decode regions issued by `f` off the team. Used for per-item decode
+/// calls inside Rayon parallel iterators, where sibling workers are busy.
+pub(crate) fn without_team<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&SUPPRESSED, f)
+}
+
 /// Whether a call from the current thread may use the decode team.
 ///
-/// Rayon workers are excluded: their siblings are already busy, and a nested
-/// team region would oversubscribe the cores.
+/// Rayon workers are excluded unless they are a session root: their
+/// siblings may be busy, and a nested team region would oversubscribe the
+/// cores. Work wrapped in [`without_team`] never uses it.
 #[inline]
 pub(crate) fn available() -> bool {
-    rayon::current_num_threads() > 1 && rayon::current_thread_index().is_none()
+    (rayon::current_thread_index().is_none() || SESSION_ROOT.with(std::cell::Cell::get))
+        && !SUPPRESSED.with(std::cell::Cell::get)
+        && team_size() > 1
 }
 
 /// Execute `job(0..chunks)` across the decode team (the caller participates).
@@ -221,8 +310,9 @@ pub(crate) fn available() -> bool {
 /// Returns `false` without running anything when the team is unavailable
 /// (called from a Rayon worker, single-threaded pool, or another thread is
 /// using the team); the caller must then run the chunks itself. The team has
-/// `rayon::current_num_threads()` members so `RAYON_NUM_THREADS` keeps
-/// controlling decode parallelism.
+/// `rayon::current_num_threads()` members (capped at the performance cores,
+/// see [`team_size`]) so `RAYON_NUM_THREADS` keeps controlling decode
+/// parallelism.
 pub(crate) fn run(chunks: usize, job: &(dyn Fn(usize) + Sync)) -> bool {
     if chunks == 0 {
         return true;
@@ -235,7 +325,7 @@ pub(crate) fn run(chunks: usize, job: &(dyn Fn(usize) + Sync)) -> bool {
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         Err(TryLockError::WouldBlock) => return false,
     };
-    let threads = rayon::current_num_threads();
+    let threads = team_size();
     if guard.as_ref().is_none_or(|team| team.threads != threads) {
         *guard = None;
         *guard = Team::new(threads);
@@ -321,6 +411,13 @@ mod tests {
         }
     }
 
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn apple_silicon_reports_performance_cores() {
+        let cores = performance_cores().expect("hw.perflevel0.logicalcpu");
+        assert!(cores >= 1 && cores <= std::thread::available_parallelism().unwrap().get());
+    }
+
     #[test]
     fn nested_calls_from_rayon_workers_decline() {
         let pool = rayon::ThreadPoolBuilder::new()
@@ -328,5 +425,30 @@ mod tests {
             .build()
             .unwrap();
         pool.install(|| assert!(!run(4, &|_| {})));
+        assert!(!without_team(|| run(4, &|_| {})));
+    }
+
+    #[test]
+    fn session_roots_on_rayon_workers_use_the_team() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(3)
+            .build()
+            .unwrap();
+        let expected = team_size() > 1;
+        pool.install(|| {
+            session(|| {
+                let hits = AtomicU32::new(0);
+                // The team may be held by a concurrently running test.
+                let ran = run(16, &|_| {
+                    hits.fetch_add(1, SeqCst);
+                });
+                if ran {
+                    assert_eq!(hits.load(SeqCst), 16);
+                }
+                assert!(available() == expected);
+                assert!(!without_team(available));
+            });
+            assert!(!available());
+        });
     }
 }
