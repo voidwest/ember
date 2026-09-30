@@ -14,6 +14,15 @@ use std::cell::RefCell;
 
 #[cfg(target_arch = "aarch64")]
 mod arm;
+#[cfg(target_arch = "aarch64")]
+mod arm_tiles;
+
+/// Four-row interleaved activation groups for the ARM prefill tiles; other
+/// targets never build them.
+#[cfg(target_arch = "aarch64")]
+type Packed4 = arm_tiles::Q8K4Block;
+#[cfg(not(target_arch = "aarch64"))]
+type Packed4 = ();
 
 /// Runtime feature gate for the recorded ARM K-quant tier.
 pub fn arm_k_supported() -> bool {
@@ -118,6 +127,9 @@ thread_local! {
     /// storage rather than overlapping a `RefCell` borrow. This cache is not
     /// part of the execution-plan arena.
     static Q8_K_INPUT: RefCell<Vec<Q8KBlock>> = const { RefCell::new(Vec::new()) };
+    /// Four-row repack of `Q8_K_INPUT` for multi-row ARM calls (same
+    /// ownership discipline).
+    static Q8_K_INPUT4: RefCell<Vec<Packed4>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Linear destination plus an owned interval of its strided columns.
@@ -218,6 +230,26 @@ fn quantize_q8_k_into_scalar(src: &[f32], dst: &mut Vec<Q8KBlock>) -> Result<(),
     let blocks = src.len() / QK_K;
     dst.resize_with(blocks, Q8KBlock::default);
 
+    // Blocks are independent: a prefill-sized input is encoded in parallel
+    // by the same per-block code. Validation fails if any block is
+    // non-finite, exactly as the serial loop does (the matmul destination
+    // has not been touched yet either way).
+    if blocks >= PARALLEL_Q8_K_QUANTIZE_MIN_BLOCKS && rayon::current_num_threads() > 1 {
+        use rayon::prelude::*;
+        return src
+            .par_chunks(PARALLEL_Q8_K_QUANTIZE_CHUNK_BLOCKS * QK_K)
+            .zip(dst.par_chunks_mut(PARALLEL_Q8_K_QUANTIZE_CHUNK_BLOCKS))
+            .try_for_each(|(values, encoded)| quantize_q8_k_blocks(values, encoded));
+    }
+    quantize_q8_k_blocks(src, dst)
+}
+
+/// Q8_K inputs with at least this many blocks quantize in parallel.
+const PARALLEL_Q8_K_QUANTIZE_MIN_BLOCKS: usize = 256;
+/// Blocks per parallel Q8_K quantization task.
+const PARALLEL_Q8_K_QUANTIZE_CHUNK_BLOCKS: usize = 32;
+
+fn quantize_q8_k_blocks(src: &[f32], dst: &mut [Q8KBlock]) -> Result<(), &'static str> {
     for (values, block) in src.chunks_exact(QK_K).zip(dst.iter_mut()) {
         let mut max = 0.0f32;
         let mut amax = 0.0f32;
@@ -1384,9 +1416,22 @@ fn validate(src: &[f32], rows: usize, w: &KQuantWeight, dst: &[f32]) -> Result<(
     Ok(())
 }
 
-fn serial_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f32]) {
+fn serial_body(
+    input: &[Q8KBlock],
+    packed4: &[Packed4],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) {
     let blocks_per_row = w.blocks_per_row();
     let out_features = w.out_features();
+    #[cfg(target_arch = "aarch64")]
+    if !packed4.is_empty() {
+        // SAFETY: packed groups exist only for a validated CompressedArm weight.
+        unsafe { arm_tiles::serial(packed4, rows, w, dst) };
+        return;
+    }
+    let _ = packed4;
     // Row-tile-major traversal: a four-row activation tile is loaded once and
     // reused across every output column, keeping it L1-resident. For multi-token
     // prefill the activation is the operand that would otherwise be re-read once
@@ -1419,11 +1464,25 @@ fn serial_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f32
     }
 }
 
-fn parallel_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f32]) {
+fn parallel_body(
+    input: &[Q8KBlock],
+    packed4: &[Packed4],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) {
     #[cfg(test)]
     if route_probe::is_target(w) {
         route_probe::PARALLEL_BODIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+    #[cfg(target_arch = "aarch64")]
+    if !packed4.is_empty() {
+        // Multi-row ARM prefill: 2-D (row group × column) tiles.
+        // SAFETY: packed groups exist only for a validated CompressedArm weight.
+        unsafe { arm_tiles::parallel(packed4, rows, w, dst) };
+        return;
+    }
+    let _ = packed4;
     // Split into ~two leaves per worker so work-stealing can smooth the tail
     // (low-column projections such as K/V otherwise leave most workers idle).
     // Floor at 128 columns per leaf: below that, per-leaf dispatch and
@@ -1582,14 +1641,24 @@ pub fn matmul_k_q8_into_with_dispatch(
         return Err(message.to_string());
     }
 
+    // Multi-row ARM calls repack the Q8_K rows into four-row groups for the
+    // prefill tiles (bit-identical to the per-column kernels).
+    let mut packed4 = Q8_K_INPUT4.with(|cache| std::mem::take(&mut *cache.borrow_mut()));
+    packed4.clear();
+    #[cfg(target_arch = "aarch64")]
+    if rows > 1 && matches!(w.execution(), KExecution::CompressedArm) {
+        arm_tiles::pack_rows(&input, rows, w.blocks_per_row(), &mut packed4);
+    }
+
     let dispatch = if should_use_parallel(rows, w, parallel) {
-        parallel_body(&input, rows, w, dst);
+        parallel_body(&input, &packed4, rows, w, dst);
         "column-parallel-rayon"
     } else {
-        serial_body(&input, rows, w, dst);
+        serial_body(&input, &packed4, rows, w, dst);
         "serial"
     };
     Q8_K_INPUT.with(|cache| *cache.borrow_mut() = input);
+    Q8_K_INPUT4.with(|cache| *cache.borrow_mut() = packed4);
     Ok(dispatch)
 }
 
@@ -1658,6 +1727,87 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// The four-row interleaved prefill tiles reproduce the per-column ARM
+    /// dots (and hence the scalar oracle) bit for bit: row counts off the
+    /// four-row groups, columns off the tile width, zero/extreme activations
+    /// and accumulation into a non-zero destination.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_prefill_tiles_match_per_column_dots_bitwise() {
+        if !arm_k_supported() {
+            return;
+        }
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            for (outputs, input) in [(1, QK_K), (5, 2 * QK_K), (19, 3 * QK_K), (300, QK_K)] {
+                let arm = weight(dtype, outputs, input, 0x77 + outputs as u64)
+                    .with_execution(KExecution::CompressedArm);
+                let blocks = input / QK_K;
+                for rows in [2usize, 3, 4, 5, 8, 9, 13] {
+                    let mut src = seeded_activations(rows * input, 0x99 + rows as u64);
+                    src[..QK_K].fill(0.0); // an all-zero Q8_K block
+                    src[input] = 1.0e30;
+                    let mut packed = Vec::new();
+                    quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
+                    let initial: Vec<f32> = (0..rows * outputs)
+                        .map(|index| (index % 7) as f32 * 0.25 - 0.75)
+                        .collect();
+                    let mut expected = initial.clone();
+                    for row in 0..rows {
+                        let packed_row = &packed[row * blocks..(row + 1) * blocks];
+                        for column in 0..outputs {
+                            expected[row * outputs + column] +=
+                                dot_column(&arm, column, packed_row);
+                        }
+                    }
+                    for parallel in [false, true] {
+                        let mut actual = initial.clone();
+                        matmul_k_q8_into(&src, rows, &arm, &mut actual, parallel).unwrap();
+                        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                        assert_eq!(
+                            bits(&actual),
+                            bits(&expected),
+                            "{dtype:?} rows={rows} out={outputs} in={input} parallel={parallel}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `cargo test --release --lib k_quant_matmul::tests::k_prefill_throughput -- --ignored --nocapture`
+    #[test]
+    #[ignore = "timing probe"]
+    fn k_prefill_throughput() {
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            for (rows, outputs, input) in [
+                (26, 2048, 2048),
+                (128, 2048, 2048),
+                (512, 2048, 2048),
+                (512, 8192, 2048),
+                (512, 2048, 8192),
+            ] {
+                let mut w = weight(dtype, outputs, input, 5);
+                if arm_k_supported() {
+                    w = w.with_execution(KExecution::CompressedArm);
+                }
+                let src = seeded_activations(rows * input, 9);
+                let mut out = vec![0.0f32; rows * outputs];
+                let mut best = f64::MAX;
+                for _ in 0..7 {
+                    let t = std::time::Instant::now();
+                    matmul_k_q8_into(&src, rows, &w, &mut out, true).unwrap();
+                    best = best.min(t.elapsed().as_secs_f64());
+                }
+                let ops = 2.0 * (rows * outputs * input) as f64;
+                println!(
+                    "{dtype:?} {rows}x{outputs}x{input}: {:.0} GOPS ({:.2} ms)",
+                    ops / best / 1e9,
+                    best * 1e3
+                );
             }
         }
     }

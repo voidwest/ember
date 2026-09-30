@@ -36,6 +36,7 @@ pub mod alloc_counter;
 pub mod artifact;
 #[doc(hidden)]
 pub mod atomic_file;
+mod attention_kernels;
 pub mod backend;
 pub mod cancel;
 pub mod compare;
@@ -72,6 +73,8 @@ pub mod plan;
 mod plan_build;
 #[doc(hidden)]
 pub mod planned_decode;
+#[cfg(target_arch = "aarch64")]
+mod q8_gemm;
 pub mod quant;
 #[doc(hidden)]
 pub mod quant_fault;

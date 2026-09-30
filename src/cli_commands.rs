@@ -1602,10 +1602,23 @@ where
             command.token_id
         );
     }
+    if command.prompt_tokens == 0 {
+        anyhow::bail!("--prompt-tokens must be greater than 0");
+    }
     let required_context = command
         .tokens
-        .checked_add(1)
+        .checked_add(command.prompt_tokens)
         .context("decode benchmark context length overflowed")?;
+    // Deterministic, varied prompt: token_id, then a fixed stride through
+    // the vocabulary so attention and embeddings see distinct rows.
+    let prompt: Vec<u32> = (0..command.prompt_tokens)
+        .map(|index| {
+            let offset = (index as u64 * 7919) % model_vocab_size as u64;
+            ((command.token_id as u64 + offset) % model_vocab_size as u64) as u32
+        })
+        .collect();
+    let mut prefill_logits_sha256 = String::new();
+    let mut prefill_trace_summary = None;
     let model_limit = model.max_seq_len(backend);
     let context_limit = command.max_seq_len.unwrap_or(model_limit).min(model_limit);
     if required_context > context_limit {
@@ -1642,17 +1655,32 @@ where
     // prefill and first-token costs are reported separately instead of being
     // folded into the decode median.
     let mut run_once = |profile_operators: bool,
-                        track_allocations: bool|
+                        track_allocations: bool,
+                        track_prefill_trace: bool|
      -> anyhow::Result<(u64, u64, u64)> {
         if profile_operators {
             ember::decode_profile::pause();
         }
         let mut cache = model.create_cache(backend, required_context);
+        let trace_prefill = command.profile_prefill && track_prefill_trace;
+        if trace_prefill {
+            ember::trace::enable_tracing("prefill", 0);
+        }
         let prefill_start = Instant::now();
-        let mut logits =
-            model.forward_last_logits_with_cache(backend, &[command.token_id], &mut cache, 0)?;
+        let mut logits = model.forward_last_logits_with_cache(backend, &prompt, &mut cache, 0)?;
         let prefill_ns = prefill_start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+        if trace_prefill {
+            prefill_trace_summary = ember::trace::disable_tracing().map(|report| report.summary());
+        }
         validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
+        {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            for value in backend.data(&logits) {
+                hasher.update(value.to_bits().to_le_bytes());
+            }
+            prefill_logits_sha256 = format!("{:x}", hasher.finalize());
+        }
         if profile_operators {
             ember::decode_profile::resume();
         }
@@ -1673,7 +1701,7 @@ where
                     backend,
                     &[command.token_id],
                     &mut cache,
-                    position + 1,
+                    position + command.prompt_tokens,
                     &mut logits,
                 )
             };
@@ -1712,7 +1740,7 @@ where
     };
 
     for _ in 0..command.warmups {
-        run_once(false, false)?;
+        run_once(false, false, false)?;
     }
     let mut profile_session = command
         .profile_operators
@@ -1722,7 +1750,7 @@ where
     let mut first_token_ns_samples = Vec::with_capacity(command.repetitions);
     for _ in 0..command.repetitions {
         let (decode_ns, prefill_ns, first_token_ns) =
-            run_once(command.profile_operators, command.allocations)?;
+            run_once(command.profile_operators, command.allocations, true)?;
         samples_ns.push(decode_ns);
         prefill_ns_samples.push(prefill_ns);
         first_token_ns_samples.push(first_token_ns);
@@ -1771,6 +1799,9 @@ where
         "threads": rayon_current_num_threads(),
         "timing_excludes": ["model_load", "prefill", "tokenization", "sampling"],
         "prefill_ns": prefill_ns,
+        "prompt_tokens": command.prompt_tokens,
+        "prefill_tokens_per_second": command.prompt_tokens as f64 * 1_000_000_000.0 / prefill_ns.max(1) as f64,
+        "prefill_logits_sha256": prefill_logits_sha256,
         "first_token_ns": first_token_ns,
         "load_report": load_report,
         "median_ns": median_ns,
@@ -1781,6 +1812,9 @@ where
         "allocation_report": allocation_report,
         "run_metadata": trace::collect_run_metadata(rayon_current_num_threads()),
     });
+    if let Some(summary) = prefill_trace_summary {
+        eprintln!("{summary}");
+    }
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
