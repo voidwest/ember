@@ -3286,6 +3286,22 @@ pub(crate) fn llama_embed_tokens<B: Backend>(
 }
 
 impl<B: Backend> Llama<B> {
+    /// Final RMS norm over residual-stream rows (`[rows, embed_dim]`).
+    ///
+    /// This is the exact operation the generic (reference / prefill) forward
+    /// path applies after the last block; the logit lens
+    /// (`ember::v05::lens`) calls it so its last-layer projection is the
+    /// model's own final-logits computation rather than a re-implementation.
+    pub fn final_norm(&self, backend: &B, hidden: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        backend.rms_norm(hidden, &self.norm, self.config.norm_eps)
+    }
+
+    /// LM head (untied `output.weight` or tied token embeddings) over
+    /// final-norm output rows. Shared with the generic forward path.
+    pub fn lm_head(&self, backend: &B, normed: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        self.head.forward(backend, normed)
+    }
+
     /// create a kv cache sized for this model's parameters.
     ///
     /// important difference from gpt-2: the cache allocates for
@@ -3543,7 +3559,7 @@ impl<B: Backend> Llama<B> {
             trace::bytes_from_shape(&[1, embed_dim]) + trace::bytes_from_shape(&[1, embed_dim]),
             trace::flops_rms_norm(1, embed_dim),
         );
-        let mut last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let mut last = self.final_norm(backend, &last)?;
         if let Some(s) = _span_final_norm {
             s.end(vec![1, embed_dim], trace::bytes_from_shape(&[1, embed_dim]));
         }
@@ -3558,7 +3574,7 @@ impl<B: Backend> Llama<B> {
             trace::bytes_matmul_input(1, embed_dim, self.head.weight_bytes(backend)),
             trace::flops_matmul(1, self.config.vocab_size, embed_dim),
         );
-        let mut result = self.head.forward(backend, &last)?;
+        let mut result = self.lm_head(backend, &last)?;
         let vocab_size = backend.shape(&result)[1];
         if let Some(s) = _span_head {
             s.end(

@@ -13,6 +13,7 @@ pub mod compare;
 pub mod hook;
 pub mod host_profile;
 pub mod intervention;
+pub mod lens;
 pub mod manifest;
 pub mod run;
 pub mod runner;

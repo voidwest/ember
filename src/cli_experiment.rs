@@ -1,5 +1,5 @@
 //! Ember v0.5 experiment CLI driver: validate, run, inspect, verify,
-//! compare, reproduce, tokenize.
+//! compare, reproduce, tokenize (and `lens`, in `cli_experiment_lens`).
 //!
 //! The run path loads the model and tokenizer, drives every input through
 //! the existing generation machinery with a v0.5 experiment attached, and
@@ -59,6 +59,9 @@ pub(crate) enum ExperimentSubcommand {
     Reproduce(ReproduceArgs),
     /// Inspect tokenization and span matching.
     Tokenize(TokenizeArgs),
+    /// Logit lens: project each captured residual-stream row through the
+    /// model's final norm and LM head.
+    Lens(crate::cli_experiment_lens::LensArgs),
 }
 
 #[derive(ClapArgs)]
@@ -178,7 +181,7 @@ pub(crate) struct AnchorArgs {
 }
 
 impl AnchorArgs {
-    fn is_anchored(&self) -> bool {
+    pub(crate) fn is_anchored(&self) -> bool {
         self.expect_semantic_hash.is_some() || self.trusted_key.is_some()
     }
 
@@ -1080,7 +1083,7 @@ fn evidence_anchor(
 }
 
 /// Load and verify a bundle with its anchors; fails on any failed check.
-fn load_anchored_bundle(
+pub(crate) fn load_anchored_bundle(
     bundle: &std::path::Path,
     anchor: &AnchorArgs,
 ) -> anyhow::Result<LoadedBundle> {

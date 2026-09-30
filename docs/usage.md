@@ -800,7 +800,15 @@ ember experiment compare <bundle-a> <bundle-b> [--json]
 ember experiment reproduce <bundle> --model <model.gguf> [--output <dir>] [--json]
 ember experiment tokenize --model <model.gguf> --arch <arch> --tokenizer <tokenizer.json>
                           --text "<text>" [--match-span "<span>"] [--json]
+ember experiment lens <bundle> --model <model.gguf> [--tokenizer <tokenizer.json>]
+                            [--top-k <n>] [--json] [--out <lens.json>]
 ```
+
+`experiment lens` projects every captured residual-stream row of a verified
+bundle through the model's own final norm and LM head (a logit lens) and
+reports per-layer top-k tokens, the rank and probability of the actual next
+token, entropy, and KL to the final layer; see "Logit lens" in
+`docs/experiments.md`.
 
 See `docs/experiments.md` (quick start), `docs/experiment-schema-v1.md`
 (specification), `docs/bundle-schema-v1.md` (bundle layout),
