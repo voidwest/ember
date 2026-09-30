@@ -813,23 +813,15 @@ fn rope_and_qk_norm_rows(
         let pos = spec.start_pos + s - block_start;
         let cos_row = &cos_data[pos * half..(pos + 1) * half];
         let sin_row = &sin_data[pos * half..(pos + 1) * half];
-
-        for h in 0..spec.n_heads {
-            let base = s * width + h * spec.head_dim;
-
-            for d in 0..half {
-                let (i0, i1) = match spec.rope_layout {
-                    RopeLayout::AdjacentPair => (base + 2 * d, base + 2 * d + 1),
-                    RopeLayout::SplitHalf => (base + d, base + d + half),
-                };
-
-                let x0 = data[i0];
-                let x1 = data[i1];
-                let c = cos_row[d];
-                let si = sin_row[d];
-
-                data[i0] = x0.mul_add(c, -(x1 * si));
-                data[i1] = x0.mul_add(si, x1 * c);
+        let row = &mut data[s * width..(s + 1) * width];
+        // Both kernels are bit-identical to the scalar
+        // `x0.mul_add(c, -(x1 * s))` / `x0.mul_add(s, x1 * c)` rotation.
+        match spec.rope_layout {
+            RopeLayout::AdjacentPair => {
+                crate::simd::rope_adjacent_pair(row, spec.n_heads, spec.head_dim, cos_row, sin_row)
+            }
+            RopeLayout::SplitHalf => {
+                crate::simd::rope_split_half(row, spec.n_heads, spec.head_dim, cos_row, sin_row)
             }
         }
     }
@@ -883,17 +875,7 @@ impl LlamaAttention<CpuBackend> {
                 crate::simd::rope_split_half(data, n_heads, self.head_dim, cos, sin);
             }
             RopeLayout::AdjacentPair => {
-                for head in 0..n_heads {
-                    let head_start = head * self.head_dim;
-                    for d in 0..half {
-                        let i0 = head_start + 2 * d;
-                        let i1 = i0 + 1;
-                        let x0 = data[i0];
-                        let x1 = data[i1];
-                        data[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
-                        data[i1] = x0.mul_add(sin[d], x1 * cos[d]);
-                    }
-                }
+                crate::simd::rope_adjacent_pair(data, n_heads, self.head_dim, cos, sin);
             }
         }
 
