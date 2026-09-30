@@ -411,23 +411,17 @@ pub(crate) fn execute_resolved(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let threads = pool_threads(resolved)?;
-
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .context("failed to build the experiment thread pool")?
-        .install(|| {
-            let mut prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
-            execute_prepared(
-                &mut prepared,
-                resolved,
-                spec_text,
-                output_directory,
-                retain_incomplete,
-                None,
-            )
-        })
+    in_session_pool(pool_threads(resolved)?, || {
+        let mut prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
+        execute_prepared(
+            &mut prepared,
+            resolved,
+            spec_text,
+            output_directory,
+            retain_incomplete,
+            None,
+        )
+    })
 }
 
 /// A fully loaded, reusable experiment session.
@@ -591,31 +585,36 @@ pub(crate) fn execute_prepared(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let threads = pool_threads(resolved)?;
-    if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
-        return execute_prepared_inner(
+    in_session_pool(pool_threads(resolved)?, move || {
+        execute_prepared_inner(
             prepared,
             resolved,
             spec_text,
             output_directory,
             retain_incomplete,
             cancel,
-        );
+        )
+    })
+}
+
+/// Run `f` as a CPU inference session on a pool of `threads` workers
+/// (directly when the caller already runs on one of that size).
+///
+/// The session mark (`ember::model::with_cpu_session`) lets the sequential
+/// decode loops inside `f` use the spin-waiting decode team although they run
+/// on a Rayon worker; without it every decode region fell back to Rayon.
+pub(crate) fn in_session_pool<T: Send>(
+    threads: usize,
+    f: impl FnOnce() -> anyhow::Result<T> + Send,
+) -> anyhow::Result<T> {
+    if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
+        return ember::model::with_cpu_session(f);
     }
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
-        .context("failed to build the prepared experiment thread pool")?
-        .install(move || {
-            execute_prepared_inner(
-                prepared,
-                resolved,
-                spec_text,
-                output_directory,
-                retain_incomplete,
-                cancel,
-            )
-        })
+        .context("failed to build the experiment thread pool")?
+        .install(move || ember::model::with_cpu_session(f))
 }
 
 fn execute_prepared_inner(

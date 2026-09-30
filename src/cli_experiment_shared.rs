@@ -22,7 +22,6 @@ use crate::cli_experiment::{
     run_input, ActiveSpec, PreparedRun, RunOutcome, RunTarget, RunTiming,
 };
 use crate::cli_generation::PrefixRole;
-use anyhow::Context;
 use ember::artifact::ActivationStage;
 use ember::cancel::CancelToken;
 use ember::experiments::{
@@ -345,14 +344,7 @@ fn in_pool<T: Send>(
     threads: usize,
     f: impl FnOnce(&mut PreparedRun) -> anyhow::Result<T> + Send,
 ) -> anyhow::Result<T> {
-    if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
-        return f(prepared);
-    }
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .context("failed to build the experiment thread pool")?
-        .install(move || f(prepared))
+    crate::cli_experiment::in_session_pool(threads, move || f(prepared))
 }
 
 /// Run the base experiment once, with every eligible co-baseline observing
