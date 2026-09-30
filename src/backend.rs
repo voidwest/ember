@@ -648,6 +648,13 @@ impl CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
             let mut timings = [std::time::Duration::ZERO; 2];
+            if !TIMED {
+                crate::simd::matmul_q8_0_decode_packed16_many(
+                    &input,
+                    &mut [(first, first_dst), (second, second_dst)],
+                );
+                return timings;
+            }
             timings[0] = Self::time_kernel::<TIMED>(|| {
                 crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst)
             });
@@ -717,6 +724,13 @@ impl CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
             let mut timings = [std::time::Duration::ZERO; 3];
+            if !TIMED {
+                crate::simd::matmul_q8_0_decode_packed16_many(
+                    &input,
+                    &mut [(first, first_dst), (second, second_dst), (third, third_dst)],
+                );
+                return timings;
+            }
             timings[0] = Self::time_kernel::<TIMED>(|| {
                 crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst)
             });
@@ -791,7 +805,10 @@ impl CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
             let mut timings = [std::time::Duration::ZERO; 2];
-            if rows == 1 {
+            if rows == 1 && !TIMED {
+                // One decode region for both projections.
+                crate::simd::matmul_q8_0_decode_rows(&input, &mut [(w_a, dst_a), (w_b, dst_b)]);
+            } else if rows == 1 {
                 timings[0] = Self::time_kernel::<TIMED>(|| {
                     crate::simd::matmul_q8_0_decode(&input, w_a, dst_a)
                 });
@@ -863,7 +880,13 @@ impl CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
             let mut timings = [std::time::Duration::ZERO; 3];
-            if rows == 1 {
+            if rows == 1 && !TIMED {
+                // One decode region for all three projections.
+                crate::simd::matmul_q8_0_decode_rows(
+                    &input,
+                    &mut [(w_q, dst_q), (w_k, dst_k), (w_v, dst_v)],
+                );
+            } else if rows == 1 {
                 timings[0] = Self::time_kernel::<TIMED>(|| {
                     crate::simd::matmul_q8_0_decode(&input, w_q, dst_q)
                 });
@@ -1130,8 +1153,10 @@ impl Backend for CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(x.data(), &mut input);
             if seq_len == 1 {
-                crate::simd::matmul_q8_0_decode(&input, first, &mut first_out);
-                crate::simd::matmul_q8_0_decode(&input, second, &mut second_out);
+                crate::simd::matmul_q8_0_decode_rows(
+                    &input,
+                    &mut [(first, &mut first_out), (second, &mut second_out)],
+                );
             } else {
                 crate::simd::matmul_q8_0_batch(&input, seq_len, first, &mut first_out);
                 crate::simd::matmul_q8_0_batch(&input, seq_len, second, &mut second_out);
@@ -1228,9 +1253,14 @@ impl Backend for CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(x.data(), &mut input);
             if seq_len == 1 {
-                crate::simd::matmul_q8_0_decode(&input, first, &mut first_out);
-                crate::simd::matmul_q8_0_decode(&input, second, &mut second_out);
-                crate::simd::matmul_q8_0_decode(&input, third, &mut third_out);
+                crate::simd::matmul_q8_0_decode_rows(
+                    &input,
+                    &mut [
+                        (first, &mut first_out),
+                        (second, &mut second_out),
+                        (third, &mut third_out),
+                    ],
+                );
             } else {
                 crate::simd::matmul_q8_0_batch(&input, seq_len, first, &mut first_out);
                 crate::simd::matmul_q8_0_batch(&input, seq_len, second, &mut second_out);

@@ -39,6 +39,7 @@ pub mod atomic_file;
 pub mod backend;
 pub mod cancel;
 pub mod compare;
+mod decode_pool;
 #[doc(hidden)]
 pub mod decode_profile;
 pub mod diff_corpus;
