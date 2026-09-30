@@ -527,8 +527,20 @@ impl CpuTensor {
 
     /// [`CpuTensor::silu`] applied in place (same per-element formula).
     pub(crate) fn silu_in_place(&mut self) {
-        for value in &mut self.data {
-            *value = silu_scalar(*value);
+        let silu_chunk = |chunk: &mut [f32]| {
+            for value in chunk {
+                *value = silu_scalar(*value);
+            }
+        };
+        // Elementwise, so splitting a prefill-sized tensor across the pool
+        // computes every element with the identical scalar formula.
+        if self.data.len() >= PARALLEL_ELEMENTWISE_MIN_VALUES && rayon::current_num_threads() > 1 {
+            use rayon::prelude::*;
+            self.data
+                .par_chunks_mut(PARALLEL_ELEMENTWISE_CHUNK)
+                .for_each(silu_chunk);
+        } else {
+            silu_chunk(&mut self.data);
         }
     }
 
@@ -536,8 +548,19 @@ impl CpuTensor {
     /// One IEEE multiply per element, exactly as in `elemul`.
     pub(crate) fn elemul_in_place(&mut self, other: &Self) {
         assert_eq!(self.shape, other.shape, "elemul: shapes must match");
-        for (value, &factor) in self.data.iter_mut().zip(&other.data) {
-            *value *= factor;
+        let elemul_chunk = |(chunk, factors): (&mut [f32], &[f32])| {
+            for (value, &factor) in chunk.iter_mut().zip(factors) {
+                *value *= factor;
+            }
+        };
+        if self.data.len() >= PARALLEL_ELEMENTWISE_MIN_VALUES && rayon::current_num_threads() > 1 {
+            use rayon::prelude::*;
+            self.data
+                .par_chunks_mut(PARALLEL_ELEMENTWISE_CHUNK)
+                .zip(other.data.par_chunks(PARALLEL_ELEMENTWISE_CHUNK))
+                .for_each(elemul_chunk);
+        } else {
+            elemul_chunk((&mut self.data, &other.data));
         }
     }
 
@@ -869,6 +892,12 @@ impl CpuTensor {
     }
 }
 
+/// Elementwise in-place ops at least this long (a multi-row prefill
+/// activation) are split across the Rayon pool.
+const PARALLEL_ELEMENTWISE_MIN_VALUES: usize = 1 << 16;
+/// Values per parallel elementwise task.
+const PARALLEL_ELEMENTWISE_CHUNK: usize = 1 << 14;
+
 /// `x * sigmoid(x)` = `x / (1 + exp(-x))`: the one SiLU formula shared by the
 /// allocating and in-place tensor paths.
 #[inline]
@@ -941,6 +970,24 @@ pub fn compute_rope_freqs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_silu_and_elemul_match_scalar_bits() {
+        let len = PARALLEL_ELEMENTWISE_MIN_VALUES + 3 * PARALLEL_ELEMENTWISE_CHUNK / 2 + 7;
+        let values: Vec<f32> = (0..len)
+            .map(|index| ((index as f32) * 0.013).sin() * 12.0)
+            .collect();
+        let factors: Vec<f32> = (0..len)
+            .map(|index| ((index as f32) * 0.007).cos() * 3.0)
+            .collect();
+        let mut tensor = CpuTensor::from_data(vec![len], values.clone());
+        tensor.silu_in_place();
+        let other = CpuTensor::from_data(vec![len], factors.clone());
+        tensor.elemul_in_place(&other);
+        for ((&x, &factor), &actual) in values.iter().zip(&factors).zip(tensor.data()) {
+            assert_eq!(actual.to_bits(), (silu_scalar(x) * factor).to_bits());
+        }
+    }
 
     #[test]
     fn consuming_reshape_reuses_data_and_updates_indexing() {

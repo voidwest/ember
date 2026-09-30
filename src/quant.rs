@@ -43,20 +43,36 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
         .expect("q8_0 encoded length overflow");
     dst.resize(encoded_len, 0);
 
-    for block in 0..n_blocks {
-        let src_start = block * Q8_0_BLOCK_SIZE;
-        let values = &src[src_start..src_start + Q8_0_BLOCK_SIZE];
+    // Blocks are independent, so a multi-row prefill input is split across
+    // the Rayon pool; every block is encoded by the same code either way.
+    if src.len() >= PARALLEL_Q8_0_QUANTIZE_MIN_VALUES && rayon::current_num_threads() > 1 {
+        src.par_chunks(PARALLEL_Q8_0_QUANTIZE_CHUNK_BLOCKS * Q8_0_BLOCK_SIZE)
+            .zip(dst.par_chunks_mut(PARALLEL_Q8_0_QUANTIZE_CHUNK_BLOCKS * Q8_0_TYPE_SIZE))
+            .for_each(|(values, encoded)| quantize_q8_0_blocks(values, encoded));
+    } else {
+        quantize_q8_0_blocks(src, dst);
+    }
+}
+
+/// Inputs at least this long (a few prefill rows) quantize in parallel.
+const PARALLEL_Q8_0_QUANTIZE_MIN_VALUES: usize = 1 << 16;
+/// Blocks per parallel quantization task.
+const PARALLEL_Q8_0_QUANTIZE_CHUNK_BLOCKS: usize = 256;
+
+fn quantize_q8_0_blocks(src: &[f32], dst: &mut [u8]) {
+    for (values, block) in src
+        .chunks_exact(Q8_0_BLOCK_SIZE)
+        .zip(dst.chunks_exact_mut(Q8_0_TYPE_SIZE))
+    {
         let amax = values
             .iter()
             .fold(0.0f32, |acc, value| acc.max(value.abs()));
         let scale = amax / 127.0;
         let inv_scale = if scale != 0.0 { scale.recip() } else { 0.0 };
-        let dst_start = block * Q8_0_TYPE_SIZE;
-        dst[dst_start..dst_start + 2]
-            .copy_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
+        block[..2].copy_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
         for (index, value) in values.iter().enumerate() {
             let quantized = (*value * inv_scale).round().clamp(-127.0, 127.0) as i8;
-            dst[dst_start + 2 + index] = quantized as u8;
+            block[2 + index] = quantized as u8;
         }
     }
 }
@@ -765,6 +781,26 @@ mod tests {
             let expected = (*value * scale).round() as i8;
             assert_eq!(encoded[2 + index] as i8, expected, "index {index}");
         }
+    }
+
+    #[test]
+    fn parallel_quantization_is_byte_identical_to_serial_blocks() {
+        // Above the parallel threshold, with a tail chunk shorter than the
+        // task size and blocks of zeros, tiny and huge magnitudes.
+        let len = PARALLEL_Q8_0_QUANTIZE_MIN_VALUES + 37 * Q8_0_BLOCK_SIZE;
+        let values = (0..len)
+            .map(|index| match (index / Q8_0_BLOCK_SIZE) % 5 {
+                0 => 0.0,
+                1 => (index as f32 * 0.37).sin() * 1.0e-6,
+                2 => (index as f32 * 0.11).cos() * 3.0e4,
+                _ => (index % 251) as f32 - 125.5,
+            })
+            .collect::<Vec<_>>();
+        let mut parallel = Vec::new();
+        quantize_q8_0_into(&values, &mut parallel);
+        let mut serial = vec![0u8; q8_0_encoded_len(len)];
+        quantize_q8_0_blocks(&values, &mut serial);
+        assert_eq!(parallel, serial);
     }
 
     #[test]
