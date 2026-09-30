@@ -36,6 +36,7 @@ pub mod alloc_counter;
 pub mod artifact;
 #[doc(hidden)]
 pub mod atomic_file;
+mod attention_kernels;
 pub mod backend;
 pub mod cancel;
 pub mod compare;
