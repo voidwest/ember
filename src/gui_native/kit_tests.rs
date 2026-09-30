@@ -882,3 +882,58 @@ async fn cancelling_a_run_stops_it_and_records_nothing(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn two_saved_runs_can_be_compared_and_old_records_say_they_cannot(cx: &mut TestAppContext) {
+    let (handle, console) = console_window(cx).await;
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // Seeded: the two newest runs (#7, #6) kept results, #5 did not.
+            console.store = super::seed_store();
+            console.goto(View::Runs, cx);
+        });
+        window.draw(cx).clear(cx);
+        assert!(window.try_find(SharedString::from("compare-bar")).is_none());
+        window.click(SharedString::from("run-select:7"), cx);
+        window.render_frame(cx);
+        assert_eq!(console.read(cx).compare_picks, [7]);
+        assert!(window.try_find(SharedString::from("compare-bar")).is_some());
+
+        // A record without a result is refused, with the reason.
+        window.click(SharedString::from("run-select:5"), cx);
+        window.render_frame(cx);
+        let blocker = console.read(cx).compare_blocker().expect("refused");
+        assert!(blocker.contains("Run #5") && blocker.contains("can't be compared"));
+        window.click(SharedString::from("runs-compare-open"), cx);
+        assert!(console.read(cx).comparing.is_none(), "refused");
+
+        // Deselect it and pick a comparable one instead.
+        window.click(SharedString::from("run-select:5"), cx);
+        window.render_frame(cx);
+        window.click(SharedString::from("run-select:6"), cx);
+        window.render_frame(cx);
+        assert_eq!(console.read(cx).compare_picks, [7, 6]);
+        assert!(console.read(cx).compare_blocker().is_none());
+        window.click(SharedString::from("runs-compare-open"), cx);
+        assert_eq!(console.read(cx).comparing, Some((7, 6)));
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("compare-metrics"))
+            .is_some());
+        assert!(window
+            .try_find(SharedString::from("compare-tokens"))
+            .is_some());
+
+        // Swap flips the sides; Back returns to the table with the picks kept.
+        window.click(SharedString::from("compare-swap"), cx);
+        assert_eq!(console.read(cx).comparing, Some((6, 7)));
+        window.render_frame(cx);
+        window.click(SharedString::from("compare-back"), cx);
+        window.render_frame(cx);
+        assert!(console.read(cx).comparing.is_none());
+        assert!(window
+            .try_find(SharedString::from("run-select:7"))
+            .is_some());
+    })
+    .unwrap();
+}

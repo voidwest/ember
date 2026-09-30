@@ -120,17 +120,7 @@ impl Console {
         };
         self.reference = Some(Reference {
             label: format!("Run #{number} \u{00b7} {}", change_summary(&values)),
-            layers: result
-                .layers
-                .iter()
-                .map(|layer| LayerMetric {
-                    layer: layer.layer,
-                    relative_l2_difference: layer.relative_l2,
-                    cosine_distance: layer.cosine,
-                    maximum_absolute_difference: None,
-                    exact: layer.relative_l2 == Some(0.0),
-                })
-                .collect(),
+            layers: super::history::record_series(&result),
             first_layer: result.first_layer_divergence,
             peak: result.peak_relative_l2.zip(result.peak_layer),
             text_equal: record.outputs_equal,

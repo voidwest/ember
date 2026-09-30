@@ -309,6 +309,40 @@ pub(super) fn open_store(
     }
 }
 
+/// A saved result's per-layer series, in the shape the chart draws.
+pub(super) fn record_series(result: &app_store::RecordResult) -> Arc<[crate::gui::LayerMetric]> {
+    result
+        .layers
+        .iter()
+        .map(|layer| crate::gui::LayerMetric {
+            layer: layer.layer,
+            relative_l2_difference: layer.relative_l2,
+            cosine_distance: layer.cosine,
+            maximum_absolute_difference: None,
+            exact: layer.relative_l2 == Some(0.0),
+        })
+        .collect()
+}
+
+/// A record's form configuration, when it kept one.
+pub(super) fn record_values(record: &RunRecord) -> Option<FormValues> {
+    let config = record.config.clone()?;
+    Some(FormValues {
+        model_path: config.model_path,
+        prompt: record.prompt.clone(),
+        max_tokens: config.max_tokens,
+        execution: config.execution,
+        site: config.site,
+        layer: config.layer,
+        op: config.op,
+        value: config.value,
+        source: config.source,
+        source_layer: config.source_layer,
+        token: config.token,
+        span: config.span,
+    })
+}
+
 /// What a finished run showed, in the shape History stores.
 pub(super) fn record_result(bundle: &crate::gui::RunBundle) -> app_store::RecordResult {
     let comparison = &bundle.comparison;

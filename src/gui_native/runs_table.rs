@@ -38,6 +38,8 @@ pub(super) struct RunsDelegate {
     /// The run whose Delete was clicked once and now asks for confirmation.
     /// Deleting is permanent, so it takes a second, deliberate click.
     confirm_delete: Option<u64>,
+    /// Runs selected for comparison, mirrored from the console on sync.
+    picks: Vec<u64>,
     colors: Colors,
     /// The owning console, so row actions can mutate the store they
     /// snapshot. Weak: the table must not keep the console alive.
@@ -111,6 +113,7 @@ impl RunsDelegate {
             order: Vec::new(),
             sort: None,
             confirm_delete: None,
+            picks: Vec::new(),
             colors,
             console: None,
         };
@@ -189,11 +192,15 @@ impl RunsDelegate {
     pub(super) fn sync(
         &mut self,
         store: &AppStore,
+        picks: &[u64],
         colors: Colors,
         console: WeakEntity<Console>,
         cx: &mut Context<TableState<Self>>,
     ) {
         self.refresh_rows(store);
+        if self.picks != picks {
+            self.picks = picks.to_vec();
+        }
         self.colors = colors;
         self.console = Some(console);
         cx.notify();
@@ -241,9 +248,9 @@ impl TableDelegate for RunsDelegate {
             4 => Column::new(run_col::RESULT, "Result").width(px(96.0)),
             5 => Column::new(run_col::DURATION, "Duration").width(px(96.0)),
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
-            // Wide enough for Reuse + Pin + Delete, the fullest lane a row
-            // can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(340.0)),
+            // Wide enough for Select + Open + Pin + Reuse + Star + Delete,
+            // the fullest lane a row can carry.
+            _ => Column::new(run_col::ACTIONS, "").width(px(440.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -326,6 +333,29 @@ impl TableDelegate for RunsDelegate {
             let reuse = run.can_reuse.then(|| self.console.clone());
             let console = self.console.clone();
             let mut lane = div().flex().flex_row().gap(px(Space::SM));
+            // Any row can be selected for comparison; one that kept no
+            // result is refused by the selection bar with the reason.
+            let picked = self.picks.contains(&number);
+            let select_console = self.console.clone();
+            lane = lane.child(
+                Button::new(SharedString::from(format!("run-select:{number}")))
+                    .ghost()
+                    .compact()
+                    .selected(picked)
+                    .label(if picked {
+                        "\u{2713} Selected"
+                    } else {
+                        "Select"
+                    })
+                    .tooltip("Select two runs to compare them side by side")
+                    .on_click(move |_, _, cx| {
+                        if let Some(console) = select_console.as_ref() {
+                            let _ = console.update(cx, |console, cx| {
+                                console.toggle_compare_pick(number, cx);
+                            });
+                        }
+                    }),
+            );
             // Open appears only where the run kept its result.
             if run.can_open {
                 let console = self.console.clone();
@@ -348,8 +378,8 @@ impl TableDelegate for RunsDelegate {
                     Button::new(SharedString::from(format!("run-compare:{number}")))
                         .ghost()
                         .compact()
-                        .label("Compare")
-                        .tooltip("Pin this run as the reference and go back to the workspace")
+                        .label("Pin")
+                        .tooltip("Pin this run as the reference for your next run, and go back to the workspace")
                         .on_click(move |_, _, cx| {
                             if let Some(console) = console.as_ref() {
                                 let _ = console.update(cx, |console, cx| {

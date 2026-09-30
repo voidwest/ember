@@ -719,7 +719,27 @@ impl Console {
     /// the delegate holds a snapshot, so a run finishing while Runs is on screen
     /// has to push new rows in rather than expect the table to notice. The
     /// sync is cheap: rows are rebuilt only when the store's generation moved.
-    fn runs_view(&mut self, colors: &Colors, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn runs_view(
+        &mut self,
+        colors: &Colors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if self.comparing.is_some() {
+            return div()
+                .id("compare-scroll")
+                .test_support()
+                .flex_1()
+                .min_w(px(0.0))
+                .h_full()
+                .overflow_y_scroll()
+                .overflow_x_hidden()
+                .px_5()
+                .pt_6()
+                .pb_6()
+                .child(self.compare_view(colors, cx))
+                .into_any_element();
+        }
         let row_count = self.store.runs.len();
         let store = &self.store;
         // Row actions mutate the store through the owning console, so the
@@ -728,8 +748,11 @@ impl Console {
         let table = match &self.runs_table {
             Some(state) => {
                 let console = console.clone();
+                let picks = &self.compare_picks;
                 state.update(cx, |state, cx| {
-                    state.delegate_mut().sync(store, *colors, console, cx);
+                    state
+                        .delegate_mut()
+                        .sync(store, picks, *colors, console, cx);
                 });
                 state.clone()
             }
@@ -805,14 +828,16 @@ impl Console {
                     if row_count == 1 { "" } else { "s" }
                 ),
             ))
+            .children(self.compare_bar(colors, cx))
             .child(body)
             .when(row_count > 0, |page| {
                 page.child(label(
-                    "Open shows a run's comparison, Reuse loads its settings, and Compare pins it as the reference for the next run. Star keeps a run at the top.",
+                    "Select two runs to compare them side by side. Open shows a run's result, Pin makes it the reference for your next run, and Reuse loads its settings. Star keeps a run at the top.",
                     Type::LABEL,
                     colors.text_faint,
                 ))
             })
+            .into_any_element()
     }
 
     /// One segment of the theme segmented control on the Settings page.
@@ -2645,7 +2670,7 @@ impl Render for Console {
         let content: AnyElement = match self.view {
             View::Home => self.home_view(&colors, cx).into_any_element(),
             View::Models => self.models_view(&colors, cx).into_any_element(),
-            View::Runs => self.runs_view(&colors, window, cx).into_any_element(),
+            View::Runs => self.runs_view(&colors, window, cx),
             View::Settings => self.settings_view(&colors, cx).into_any_element(),
             // The workspace: setup and results side by side. It is the only
             // page with two panes of its own, so it fills the content region.

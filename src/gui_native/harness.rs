@@ -167,21 +167,54 @@ pub(super) fn seed_store() -> AppStore {
             verified: row.verified,
             pinned: row.pinned,
             prompt: "\u{0627}\u{0643}\u{062a}\u{0628} \u{062c}\u{0645}\u{0644}\u{0629}".to_string(),
-            result: (index <= 1).then(|| app_store::RecordResult {
-                baseline_text: "Paris. The Eiffel Tower is located in Paris.".to_string(),
-                intervention_text: "covered in a thick layer of fog.".to_string(),
-                layers: (0..16)
-                    .map(|layer| app_store::RecordLayer {
-                        layer,
-                        relative_l2: Some(if layer < 7 { 0.0 } else { 1.1 }),
-                        cosine: Some(if layer < 7 { 0.0 } else { 0.9 }),
-                    })
-                    .collect(),
-                tokens: Vec::new(),
-                first_layer_divergence: Some(7),
-                peak_layer: Some(10),
-                peak_relative_l2: Some(1.187),
-                tokens_equal: false,
+            // The two newest runs kept their results, and differ from each
+            // other, so the comparison page has something to show.
+            result: (index <= 1).then(|| {
+                let baseline = " Paris. The Eiffel Tower is located in Paris.";
+                let intervention = if index == 0 {
+                    " covered in a thick layer of fog."
+                } else {
+                    " covered in a layer of morning mist."
+                };
+                let (start, height) = if index == 0 { (7, 1.1) } else { (4, 0.7) };
+                let pieces = |text: &str| -> Vec<String> {
+                    text.split_inclusive(' ')
+                        .filter(|piece| !piece.trim().is_empty())
+                        .map(|piece| format!(" {}", piece.trim()))
+                        .collect()
+                };
+                let (base, changed) = (pieces(baseline), pieces(intervention));
+                app_store::RecordResult {
+                    baseline_text: baseline.to_string(),
+                    intervention_text: intervention.to_string(),
+                    layers: (0..16)
+                        .map(|layer| {
+                            let value = if layer < start {
+                                0.0
+                            } else {
+                                height * (1.0 + 0.08 * (layer - start) as f64)
+                                    / (1.0 + 0.02 * ((layer as f64 - 10.0).powi(2)))
+                            };
+                            app_store::RecordLayer {
+                                layer,
+                                relative_l2: Some(value),
+                                cosine: Some(value * 0.8),
+                            }
+                        })
+                        .collect(),
+                    tokens: (0..base.len().max(changed.len()))
+                        .map(|position| app_store::RecordToken {
+                            position: position + 1,
+                            baseline: base.get(position).cloned(),
+                            intervention: changed.get(position).cloned(),
+                            differs: base.get(position) != changed.get(position),
+                        })
+                        .collect(),
+                    first_layer_divergence: Some(start),
+                    peak_layer: Some(10),
+                    peak_relative_l2: Some(if index == 0 { 1.187 } else { 0.812 }),
+                    tokens_equal: false,
+                }
             }),
             // Only recent rows carry a configuration: the Reuse action must
             // be shown and hidden in the same render.
@@ -836,6 +869,67 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                 context
                     .capture_screenshot(handle.into())?
                     .save(directory.join(format!("{name}-{appearance}-{file}.png")))?;
+            }
+            // Two saved runs side by side (only the seeded store has any).
+            if seed_runs_requested() {
+                let numbers: Vec<u64> = console.read_with(&context, |console, _| {
+                    console
+                        .store
+                        .runs
+                        .iter()
+                        .filter(|run| run.result.is_some())
+                        .map(|run| run.number)
+                        .collect()
+                });
+                if let [right, left, ..] = numbers[..] {
+                    for (file, comparing) in
+                        [("runs-select", None), ("runs-compare", Some((left, right)))]
+                    {
+                        context.update_window(handle.into(), |_, window, cx| {
+                            console.update(cx, |console, cx| {
+                                console.appearance = mode;
+                                console.view = View::Runs;
+                                console.compare_picks = vec![left, right];
+                                console.comparing = comparing;
+                                console.sync_kit_theme(cx);
+                                cx.notify();
+                            });
+                            window.draw(cx).clear(cx);
+                        })?;
+                        context.run_until_parked();
+                        context.update_window(handle.into(), |_, window, cx| {
+                            window.draw(cx).clear(cx);
+                        })?;
+                        context
+                            .capture_screenshot(handle.into())?
+                            .save(directory.join(format!("{name}-{appearance}-{file}.png")))?;
+                    }
+                    // The lower half of the comparison: the token diff and
+                    // the two curves on one chart.
+                    context.update_window(handle.into(), |_, window, cx| {
+                        use gpui_kit::test::TestWindowExt as _;
+                        window.scroll("compare-scroll", harness_scroll(-9.0), cx);
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.run_until_parked();
+                    context.update_window(handle.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.capture_screenshot(handle.into())?.save(
+                        directory.join(format!("{name}-{appearance}-runs-compare-lower.png")),
+                    )?;
+                    context.update_window(handle.into(), |_, window, cx| {
+                        use gpui_kit::test::TestWindowExt as _;
+                        window.scroll("compare-scroll", harness_scroll(9.0), cx);
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.update_window(handle.into(), |_, _, cx| {
+                        console.update(cx, |console, _| {
+                            console.compare_picks.clear();
+                            console.comparing = None;
+                        });
+                    })?;
+                }
             }
             // The command palette overlays every page; capture it once per
             // theme so the dim backdrop and the floating panel are reviewed

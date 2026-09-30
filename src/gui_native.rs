@@ -53,6 +53,7 @@ gpui_kit::actions!(
 const REPOSITORY_URL: &str = "https://github.com/voidwest/ember";
 
 mod chart;
+mod compare;
 mod components;
 mod form;
 mod harness;
@@ -539,6 +540,10 @@ struct Console {
     run_cancel: Option<ember::cancel::CancelToken>,
     /// The last run was cancelled: shown as a notice until the next one.
     cancelled: bool,
+    /// Runs selected on the Runs page for comparison, in selection order.
+    compare_picks: Vec<u64>,
+    /// The two runs the comparison page is showing, when it is open.
+    comparing: Option<(u64, u64)>,
 }
 
 impl Console {
@@ -795,6 +800,8 @@ impl Console {
             last_metrics: None,
             run_cancel: None,
             cancelled: false,
+            compare_picks: Vec::new(),
+            comparing: None,
         }
     }
 
