@@ -631,7 +631,7 @@ fn execute_prepared_inner(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let active = activate_spec(prepared, resolved)?;
+    let mut active = activate_spec(prepared, resolved)?;
     let mut results = Vec::new();
     let mut timing = RunTiming::default();
     for index in 0..resolved.inputs.len() {
@@ -640,6 +640,15 @@ fn execute_prepared_inner(
         let result = run_input(prepared, resolved, &active, &experiment, None, None, cancel)?;
         timing.add(started.elapsed(), &result);
         results.push(result);
+    }
+    // Analysis workflows run after the inputs, with their own capture and
+    // patch passes; their reports become bundle artifacts.
+    if let Some(attribution) = &resolved.attribution {
+        let started = std::time::Instant::now();
+        let files =
+            crate::cli_experiment_attribution::run_attribution(prepared, resolved, attribution)?;
+        timing.elapsed += started.elapsed();
+        active.artifacts.extend(files);
     }
     let outcome = finish_bundle(
         prepared,
@@ -690,6 +699,9 @@ pub(crate) struct ActiveSpec {
     /// Directions of `vector-file`/`contrastive` sources, resolved before
     /// execution and written into the bundle as artifacts.
     pub directions: Vec<ember::v05::steering::ResolvedDirection>,
+    /// Analysis artifacts (attribution, probe bridge) produced after the
+    /// inputs ran, written under `artifacts/`.
+    pub artifacts: std::collections::BTreeMap<String, Vec<u8>>,
     pub threads: usize,
 }
 
@@ -774,6 +786,7 @@ pub(crate) fn activate_spec(
         plan,
         bundle_sources,
         directions,
+        artifacts: std::collections::BTreeMap::new(),
         threads,
     })
 }
@@ -940,9 +953,10 @@ pub(crate) fn finish_bundle(
     };
     let mut resolved_with_output = (*resolved).clone();
     resolved_with_output.output.directory = target.output_directory.to_path_buf();
-    let artifacts =
+    let mut artifacts =
         ember::v05::steering::direction_artifact_files(&active.directions, &resolved.interventions)
             .map_err(anyhow::Error::msg)?;
+    artifacts.extend(active.artifacts.clone());
     let materials = BundleMaterials {
         spec_text: target.spec_text.to_string(),
         resolved: resolved_with_output,
@@ -1099,6 +1113,9 @@ pub(crate) fn run_experiment_command(
             "bundle self-verification failed: {} check(s) failed",
             report.checks.iter().filter(|check| !check.ok).count()
         );
+    }
+    if !command.json {
+        crate::cli_experiment_attribution::print_bundle_reports(&path)?;
     }
     let sign_key = resolve_sign_key(command);
     let evidence = match &sign_key {

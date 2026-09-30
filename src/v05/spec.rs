@@ -201,6 +201,9 @@ pub struct ExperimentSpecV1 {
     pub output: OutputSpec,
     /// Every default applied during resolution, in field order.
     pub defaults: Vec<DefaultRecord>,
+    /// Attribution patching workflow (`crate::v05::attribution`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<crate::v05::attribution::AttributionSpec>,
 }
 
 /// The strict user-authored TOML form: every defaultable field is
@@ -226,6 +229,9 @@ pub struct RawExperimentSpec {
     /// resolve as a single experiment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sweep: Option<crate::v05::sweep::RawSweepSpec>,
+    /// Attribution patching (`crate::v05::attribution`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<RawDefinition<crate::v05::attribution::AttributionSpec>>,
 }
 
 /// A strictly validated definition retaining the fields actually supplied by
@@ -596,6 +602,10 @@ impl RawExperimentSpec {
         let captures = resolve_definitions(self.captures, "captures", &mut defaults)?;
         let interventions =
             resolve_definitions(self.interventions, "interventions", &mut defaults)?;
+        let attribution = self
+            .attribution
+            .map(|definition| definition.resolve("attribution", &mut defaults))
+            .transpose()?;
         let resolved = ExperimentSpecV1 {
             schema: EXPERIMENT_SCHEMA_V1.to_string(),
             experiment: ExperimentMetadata {
@@ -635,6 +645,7 @@ impl RawExperimentSpec {
                 overwrite,
             },
             defaults,
+            attribution,
         };
         resolved.validate()?;
         Ok(resolved)
@@ -788,6 +799,19 @@ impl ExperimentSpecV1 {
             }
         }
 
+        if let Some(attribution) = &self.attribution {
+            let ids: Vec<&str> = self.inputs.iter().map(|input| input.id.as_str()).collect();
+            attribution
+                .validate(&ids)
+                .map_err(|(path, message)| SpecError::at(path, message))?;
+            if !self.interventions.is_empty() {
+                return Err(SpecError::at(
+                    "interventions",
+                    "an [attribution] spec runs its own verification patches; declare no \
+                     interventions",
+                ));
+            }
+        }
         if self.output.directory.as_os_str().is_empty() {
             return Err(SpecError::at(
                 "output.directory",

@@ -7,6 +7,7 @@
 //! Rust. The CLI/schema contract is the compatibility anchor; Rust helpers
 //! remain pre-1.0 unless explicitly promoted (see docs/api-stability.md).
 
+pub mod attribution;
 pub mod bundle;
 pub mod capture;
 pub mod compare;

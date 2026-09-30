@@ -1,0 +1,62 @@
+# Attribution patching (gradient-free): which (site, layer, position) carries
+# "France" versus "Italy" into the answer?
+#
+# Metric: logit(" Paris") - logit(" Rome") at the final prompt position.
+# Every candidate is scored by the direct-path estimate
+# (a_clean - a_corrupted) . r, where r is the exact gradient of the metric
+# through the final RMS norm at the corrupted run's final residual; positions
+# other than the last have no direct path and score 0 (see
+# docs/experiments.md#attribution-patching). The top `verify_top_k`
+# candidates are then patched for real (clean row -> corrupted run) and the
+# report gives the rank correlation between estimate and measured effect.
+#
+#   ember experiment validate examples/experiments/attribution-capital.toml
+#   ember experiment run examples/experiments/attribution-capital.toml
+#   ember experiment verify runs/attribution-capital
+#
+# The bundle carries artifacts/attribution/attribution.json and
+# candidates.csv (hashed, and checked by `experiment verify`).
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "attribution-capital"
+description = "Direct-path attribution patching of France vs Italy, verified by real patches."
+seed = 42
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 8
+deterministic = true
+
+[generation]
+max_new_tokens = 4
+temperature = 0.0
+
+[[inputs]]
+id = "clean"
+text = "The capital of France is the city of"
+
+[[inputs]]
+id = "corrupted"
+text = "The capital of Italy is the city of"
+
+[attribution]
+clean = "clean"
+corrupted = "corrupted"
+target = " Paris"
+foil = " Rome"
+sites = ["residual-pre-attention", "attention-output", "mlp-output"]
+layers = "all"
+positions = "all"
+verify_top_k = 48
+
+[output]
+directory = "runs/attribution-capital"
+overwrite = false

@@ -366,6 +366,17 @@ pub(crate) fn run_base_pass(
     cancel: Option<&CancelToken>,
 ) -> anyhow::Result<BasePass> {
     ensure_same_session(prepared, base.resolved)?;
+    for spec in std::iter::once(base.resolved)
+        .chain(co.iter().map(|target| target.resolved))
+        .chain(variants.iter().copied())
+    {
+        anyhow::ensure!(
+            spec.attribution.is_none(),
+            "experiment '{}' declares an analysis workflow ([attribution]); run it on its own, \
+             not as part of a shared pass or sweep",
+            spec.experiment.name
+        );
+    }
     for target in co {
         ensure_same_session(prepared, target.resolved)?;
     }

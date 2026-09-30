@@ -60,6 +60,11 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
    The alpha-0 point is bit-identical to the baseline; every point bundle
    carries the direction as `artifacts/directions/*`.
 
+6. `attribution-capital.toml` — attribution patching of "France" versus
+   "Italy" (`logit(" Paris") - logit(" Rome")`): a direct-path estimate for
+   all 432 (site, layer, position) candidates, the top 48 verified with real
+   patches; the bundle carries `artifacts/attribution/*`.
+
 ## Commands
 
 ```bash

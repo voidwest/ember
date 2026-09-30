@@ -790,6 +790,63 @@ fn verify_and_load(
         );
     }
 
+    // attribution report: present when the spec asks for one, internally
+    // consistent, and its CSV is its table.
+    let spec_attribution = std::str::from_utf8(&files["experiment.toml"])
+        .ok()
+        .and_then(|text| crate::v05::spec::RawExperimentSpec::from_toml_str(text).ok())
+        .and_then(|raw| raw.resolve().ok())
+        .and_then(|spec| spec.attribution);
+    let spec_has_attribution = spec_attribution.is_some();
+    let has_attribution_files = listed_artifacts
+        .iter()
+        .any(|name| name.starts_with("artifacts/attribution/"));
+    if spec_has_attribution || has_attribution_files {
+        let input_ids: Vec<String> = semantic_manifest
+            .inputs
+            .iter()
+            .map(|input| input.id.clone())
+            .collect();
+        let mut errors =
+            crate::v05::attribution::verify_attribution_artifacts(&input_ids, &|relative| {
+                files.get(relative).cloned()
+            });
+        match &spec_attribution {
+            None => errors.push("attribution artifacts without an [attribution] spec".into()),
+            Some(spec) => {
+                let recorded = files
+                    .get(crate::v05::attribution::ATTRIBUTION_JSON)
+                    .and_then(|bytes| {
+                        serde_json::from_slice::<crate::v05::attribution::AttributionReport>(bytes)
+                            .ok()
+                    });
+                if let Some(recorded) = recorded
+                    && (recorded.clean_input != spec.clean
+                        || recorded.corrupted_input != spec.corrupted)
+                {
+                    errors.push("the report's inputs differ from the spec's".into());
+                }
+            }
+        }
+        for name in &listed_artifacts {
+            if name.starts_with("artifacts/attribution/")
+                && name != crate::v05::attribution::ATTRIBUTION_JSON
+                && name != crate::v05::attribution::ATTRIBUTION_CSV
+            {
+                errors.push(format!("unexpected attribution artifact '{name}'"));
+            }
+        }
+        report.record(
+            "attribution report",
+            errors.is_empty(),
+            if errors.is_empty() {
+                "ranking, correlation summary and table are consistent".to_string()
+            } else {
+                errors.join("; ")
+            },
+        );
+    }
+
     // execution-plan hash matches the stored plan
     let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&files["execution-plan.json"])
         .map_err(|error| format!("execution-plan.json is not valid JSON: {error}"))?;

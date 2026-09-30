@@ -26,6 +26,13 @@ publish this section as a released version until those are closed.
   standalone runs (tested on synthetic F32/Q8_0 models in reference and
   planned modes, and on the morphology example); `runtime.json` records the
   path each input took (`prefix_reuse`). See docs/experiments.md.
+- Experiments: attribution patching without autograd. An `[attribution]`
+  table (clean/corrupted inputs, target/foil tokens) ranks every (site,
+  layer, position) by a direct-path estimate (activation difference
+  projected on the exact final-norm gradient of the logit difference), then
+  verifies the top candidates with real `replace` patches and reports the
+  rank correlation. The report and CSV are bundle artifacts checked by
+  `verify`. See docs/experiments.md#attribution-patching.
 - Experiments: steering vectors. `steer { alpha, normalize }` adds
   `alpha * d` (optionally unit-normalized or scaled to the row's norm) and
   `ablate-projection` removes the component along `d`. Directions come from

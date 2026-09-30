@@ -54,6 +54,42 @@ impl<'a> ModelLens<'a> {
     pub fn new(model: &'a Llama<CpuBackend>) -> ModelLens<'a> {
         ModelLens { model }
     }
+
+    /// The final RMS norm's weight `g` and epsilon.
+    pub fn final_norm_weight(&self) -> (Vec<f32>, f32) {
+        (self.model.norm.data().to_vec(), self.model.config.norm_eps)
+    }
+
+    /// Row `token` of the unembedding (the LM head's weight for that
+    /// logit), dequantized to f32: `logit[token] = row . final_norm(x)`.
+    pub fn unembedding_row(&self, token: u32) -> Result<Vec<f32>, String> {
+        use crate::model::WeightKindView;
+        let token = token as usize;
+        let embed_dim = self.embed_dim();
+        let vocab = self.vocab_size();
+        if token >= vocab {
+            return Err(format!(
+                "token {token} is outside the {vocab}-token vocabulary"
+            ));
+        }
+        let mut row = vec![0.0f32; embed_dim];
+        match self.model.head.weight_kind() {
+            // F32 linear weights are stored [in_features, out_features].
+            WeightKindView::F32(tensor) => {
+                let data = tensor.data();
+                let out_features = tensor.shape().get(1).copied().unwrap_or(0);
+                if out_features != vocab || data.len() != embed_dim * vocab {
+                    return Err("unexpected LM head shape".into());
+                }
+                for (index, value) in row.iter_mut().enumerate() {
+                    *value = data[index * vocab + token];
+                }
+            }
+            WeightKindView::Q8_0(weight) => weight.dequantize_row(token, &mut row),
+            WeightKindView::KQuant(weight) => weight.dequantize_row(token, &mut row),
+        }
+        Ok(row)
+    }
 }
 
 impl LensHead for ModelLens<'_> {

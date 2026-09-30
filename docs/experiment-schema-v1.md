@@ -83,6 +83,15 @@ sweep (`layers`, optional `positions`, optional `alphas`, optional
 `docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
 spec with `[sweep]` is only accepted as a sweep.
 
+## Attribution
+
+An optional `[attribution]` table (`clean`, `corrupted`, `target`, `foil`,
+optional `sites`, `layers`, `positions`, `verify_top_k`) adds the
+attribution-patching workflow; see `docs/experiments.md#attribution-patching`.
+The inputs must exist and differ, sites must be per-layer and distinct,
+`verify_top_k >= 1`, and the spec must declare no interventions. Omitted
+fields are recorded as defaults. It cannot be combined with `[sweep]`.
+
 ## Operations and sources
 
 ```toml

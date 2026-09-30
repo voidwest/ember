@@ -131,6 +131,12 @@ impl SweepDefinition {
         let template_text = toml::to_string(&document).map_err(|e| toml_error("<toml>", e))?;
         let template = RawExperimentSpec::from_toml_str(&template_text)?.resolve()?;
 
+        if template.attribution.is_some() {
+            return Err(SpecError::at(
+                "sweep",
+                "an [attribution] workflow cannot be swept; run it on its own",
+            ));
+        }
         if template.interventions.is_empty() {
             return Err(SpecError::at(
                 "sweep",

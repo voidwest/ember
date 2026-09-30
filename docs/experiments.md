@@ -277,6 +277,90 @@ Llama-3.2-1B (Apple M1 Pro, 8 threads) the example sweep takes about 13 s
 derived specs as separate `experiment run`s takes about 86 s, with
 hash-identical bundles.
 
+## Attribution patching
+
+"Which (layer, site, position) carries the difference between two prompts
+into the answer?" without autograd and without patching everything. Add an
+`[attribution]` table to a spec with a clean and a corrupted input of equal
+token length (see `examples/experiments/attribution-capital.toml`):
+
+```toml
+[attribution]
+clean = "clean"                 # input ids
+corrupted = "corrupted"
+target = " Paris"               # token text (exactly one token) or a token id
+foil = " Rome"
+sites = ["residual-pre-attention", "attention-output", "mlp-output"]  # default
+layers = "all"                  # default
+positions = "all"               # default; or "final", or [3, 7]
+verify_top_k = 10               # default: real patches for the top 10
+```
+
+**Metric.** `m = logit(target) - logit(foil)` at the final prompt position.
+
+**Approximation (direct-path attribution patching).** One capture pass
+records every candidate site in full for both prompts, the corrupted run's
+residual `x` entering the final norm, and both final logit rows. With
+`u = W_U[target] - W_U[foil]` (dequantized LM-head rows) and the final RMS
+norm `y = g * x / s`, `s = sqrt(mean(x^2) + eps)`, the exact gradient of `m`
+with respect to `x` is
+
+```text
+r = (g*u)/s - x * sum(g*u*x) / (d * s^3)
+```
+
+and every candidate is scored
+
+```text
+estimate = (a_clean - a_corrupted) . r     at the final position
+estimate = 0                                at every other position
+```
+
+A patched difference at `attention-output`/`mlp-output` is added to the
+residual stream and at `residual-pre-attention` it replaces it; either way
+its *direct* contribution to `x` is the difference itself, so this is
+attribution patching (gradient x activation difference) with every path
+through later blocks removed. It needs two forward passes for all
+candidates and no backward pass.
+
+**Limits, stated plainly.** Indirect effects are ignored: a difference that
+later blocks transform or amplify is scored only by its direct projection
+(early residual candidates are underestimated: in the example, the layer-10
+residual scores 1.8 against a measured 8.4). Positions other than the last
+reach the logits only through attention, so they score exactly zero; the
+corrupted token's own position, often where the largest real effect is, is
+not ranked by the estimate. Within tied (zero) estimates, candidates are
+ordered by `|a_clean - a_corrupted|`. The estimate is first-order exact only
+for the last block's projection outputs (up to the final norm's curvature).
+This is why the workflow always verifies.
+
+**Verification.** The `verify_top_k` best-ranked candidates are patched for
+real: the corrupted prompt runs with the clean row written at that site,
+layer and position (`replace`), and `actual = m(patched) - m(corrupted)` and
+`recovered_fraction = actual / (m(clean) - m(corrupted))` are recorded.
+The report gives the Spearman and Pearson correlations and the sign
+agreement between `estimate` and `actual` over the verified candidates.
+
+**Outputs.** The bundle is the ordinary run of the spec's inputs (captures
+allowed; interventions are refused, the workflow runs its own patches) plus
+
+```text
+artifacts/attribution/attribution.json   ember.attribution.v1: tokens, metrics, every candidate in rank order
+artifacts/attribution/candidates.csv     the same as a table
+```
+
+and `experiment run` prints the ranked table. Both files are hashed payloads;
+`verify` adds an `attribution report` check (candidates in rank order, the
+correlation summary equals what the recorded values give, verified
+candidates are exactly the top ranks, the CSV is the report's table, the
+inputs are the spec's). Re-running the spec reproduces the report bit for
+bit. Attribution specs run standalone: not in a sweep or a `--variant` pass.
+
+On the pinned Llama-3.2-1B (France vs Italy, 9 tokens, 432 candidates, 48
+verified, about 8 s), the top five candidates are the final-position
+residual stream at layers 11-15 (recovering 53-79% of the 16.3-logit gap),
+with Spearman 0.72 and Pearson 0.92 between estimate and measured effect.
+
 ## Determinism and identity
 
 Two equivalent runs on the same environment produce identical semantic
