@@ -45,6 +45,7 @@ gpui_kit::actions!(
         OpenSampleResult,
         ShowShortcuts,
         OpenRepository,
+        CancelRun,
     ]
 );
 
@@ -52,7 +53,9 @@ gpui_kit::actions!(
 const REPOSITORY_URL: &str = "https://github.com/voidwest/ember";
 
 mod chart;
+mod compare;
 mod components;
+mod export;
 mod form;
 mod harness;
 mod history;
@@ -76,7 +79,7 @@ use harness::seed_comparison;
 #[cfg(all(target_os = "macos", feature = "gui-tests"))]
 use harness::{probe_examples, render_live_flow, render_test_artifacts};
 use harness::{seed_runs_requested, seed_store};
-use history::{open_store, record_result};
+use history::{open_store, record_bundles, record_result};
 use input::{InputEvent, InputId, InputKind, TextInput};
 use menu::{app_menus, register_menu_actions};
 use palette::Command;
@@ -248,6 +251,9 @@ enum Status {
     Preparing,
     Running,
     Restoring,
+    /// Cancel was pressed; waiting for the worker to reach its next check
+    /// point (a decode step) and confirm nothing was kept.
+    Cancelling,
 }
 
 #[derive(Debug, Clone)]
@@ -531,6 +537,20 @@ struct Console {
     restore: Option<RestoreView>,
     last_config: Option<String>,
     last_metrics: Option<(String, f64, Option<f64>)>,
+    /// The token of the run or restore in flight; firing it cancels.
+    run_cancel: Option<ember::cancel::CancelToken>,
+    /// The last run was cancelled: shown as a notice until the next one.
+    cancelled: bool,
+    /// Runs selected on the Runs page for comparison, in selection order.
+    compare_picks: Vec<u64>,
+    /// The two runs the comparison page is showing, when it is open.
+    comparing: Option<(u64, u64)>,
+    /// The history row whose export strip is open.
+    export_run: Option<u64>,
+    /// A history run being re-run to write its bundle again.
+    rebundle: Option<u64>,
+    /// The outcome of the last export action, shown in the strip.
+    export_note: Option<String>,
 }
 
 impl Console {
@@ -785,6 +805,13 @@ impl Console {
             restore: None,
             last_config: None,
             last_metrics: None,
+            run_cancel: None,
+            cancelled: false,
+            compare_picks: Vec::new(),
+            comparing: None,
+            export_run: None,
+            rebundle: None,
+            export_note: None,
         }
     }
 
@@ -894,13 +921,77 @@ impl Console {
         self.step = WorkspaceStep::Review;
         self.pending_context = Some(self.form_values());
         self.error = None;
-        let _ = self.worker_tx.send(WorkerMsg::Run(cfg));
+        self.cancelled = false;
+        let token = ember::cancel::CancelToken::new();
+        self.run_cancel = Some(token.clone());
+        let _ = self.worker_tx.send(WorkerMsg::Run(cfg, token));
     }
 
     fn send_restore(&mut self, cfg: RunConfig) {
         self.status = Status::Restoring;
         self.error = None;
-        let _ = self.worker_tx.send(WorkerMsg::Restore(cfg));
+        self.cancelled = false;
+        let token = ember::cancel::CancelToken::new();
+        self.run_cancel = Some(token.clone());
+        let _ = self.worker_tx.send(WorkerMsg::Restore(cfg, token));
+    }
+
+    /// Whether Cancel has something to stop: a run or restore in flight, or
+    /// a model load that a run is waiting on.
+    fn can_cancel(&self) -> bool {
+        match self.status {
+            Status::Running | Status::Restoring => true,
+            Status::Preparing => self.pending_run || self.pending_sweep,
+            Status::Idle | Status::Cancelling => false,
+        }
+    }
+
+    /// Stop the run in flight. Shared by the button, Esc, the palette and
+    /// the menu.
+    ///
+    /// The token is checked at every decode step, so the worker stops within
+    /// one token; the console waits in `Cancelling` for it to confirm, then
+    /// returns to idle with nothing recorded. A model load cannot be
+    /// interrupted, but a run waiting on one is dropped and the model is kept
+    /// for next time. A running sweep stops too; its finished points stay.
+    fn cancel_run(&mut self, cx: &mut Context<Self>) {
+        if !self.can_cancel() {
+            return;
+        }
+        if let Some(sweep) = self.sweep.as_mut() {
+            sweep.stop = true;
+        }
+        if self.status == Status::Preparing {
+            self.pending_run = false;
+            self.pending_sweep = false;
+            self.pending_context = None;
+            self.cancelled = true;
+        } else {
+            if let Some(token) = &self.run_cancel {
+                token.cancel();
+            }
+            self.status = Status::Cancelling;
+        }
+        cx.notify();
+    }
+
+    /// The worker confirmed a cancellation: back to idle, nothing kept.
+    fn run_cancelled(&mut self, cx: &mut Context<Self>) {
+        if let Some(number) = self.rebundle.take() {
+            self.export_note = Some(format!(
+                "Re-run of run #{number} cancelled; its record is unchanged."
+            ));
+        }
+        self.run_cancel = None;
+        self.pending_context = None;
+        self.pending_run = false;
+        self.error = None;
+        self.cancelled = true;
+        self.status = Status::Idle;
+        if self.sweep_running() {
+            self.stop_sweep(cx);
+            self.advance_sweep(cx);
+        }
     }
 
     /// Drain the worker reply channel; returns true when anything changed.
@@ -927,8 +1018,30 @@ impl Console {
             return false;
         }
         for reply in replies {
+            // A reply for a run the user already cancelled is discarded: it
+            // finished before the worker reached a check point, and it must
+            // not land in history or on screen.
+            if self.status == Status::Cancelling {
+                match reply {
+                    WorkerReply::RunDone(result) => {
+                        if let Ok(bundle) = result.as_ref() {
+                            worker::discard_run_bundles(bundle);
+                        }
+                        self.run_cancelled(cx);
+                        continue;
+                    }
+                    WorkerReply::RestoreDone(_) | WorkerReply::Cancelled => {
+                        self.run_cancelled(cx);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             match reply {
+                WorkerReply::Cancelled => self.run_cancelled(cx),
                 WorkerReply::Failed(error) => {
+                    self.run_cancel = None;
+                    self.rebundle = None;
                     self.pending_run = false;
                     self.pending_context = None;
                     self.session = None;
@@ -983,7 +1096,25 @@ impl Console {
                     }
                 },
                 WorkerReply::RunDone(result) => match *result {
+                    // A re-run for History's export: its bundles go to the
+                    // record it re-ran, and nothing on screen changes.
+                    Ok(bundle) if self.rebundle.is_some() => {
+                        self.run_cancel = None;
+                        self.status = Status::Idle;
+                        if let Some(number) = self.rebundle.take() {
+                            self.rebundle_done(number, &bundle);
+                        }
+                    }
+                    Err(error) if self.rebundle.is_some() => {
+                        self.run_cancel = None;
+                        self.status = Status::Idle;
+                        if let Some(number) = self.rebundle.take() {
+                            self.export_note =
+                                Some(format!("Re-run of run #{number} failed: {error}"));
+                        }
+                    }
                     Ok(bundle) => {
+                        self.run_cancel = None;
                         self.sample = false;
                         self.saved_run = None;
                         self.opened_note = None;
@@ -1052,6 +1183,7 @@ impl Console {
                                 prompt: sent.prompt.clone(),
                                 config: Some(sent.record_config()),
                                 result: Some(record_result(&bundle)),
+                                bundles: Some(record_bundles(&bundle)),
                             });
                             self.store.touch_model(&sent.model_path, now);
                             // The state that produced this run is the resume point.
@@ -1064,6 +1196,7 @@ impl Console {
                         }
                     }
                     Err(error) => {
+                        self.run_cancel = None;
                         self.pending_context = None;
                         self.error = Some(error);
                         self.status = Status::Idle;
@@ -1075,6 +1208,7 @@ impl Console {
                 },
                 WorkerReply::RestoreDone(result) => match *result {
                     Ok(bundle) => {
+                        self.run_cancel = None;
                         self.restore = Some(RestoreView {
                             matches: bundle.matches_baseline,
                             comparable: bundle.baseline_comparable,
@@ -1125,6 +1259,7 @@ impl Console {
                     self.pending_run = true;
                     self.status = Status::Preparing;
                     self.error = None;
+                    self.cancelled = false;
                     let _ = self
                         .worker_tx
                         .send(WorkerMsg::Prepare(self.model_path.trim().to_string()));
@@ -1246,66 +1381,21 @@ impl Console {
             self.comparison.as_ref()?,
             self.result_context.as_ref()?,
         );
-        let mut out = String::new();
-        out.push_str("# Ember experiment\n\n");
-        if let Some(number) = self.saved_run {
-            out.push_str(&format!("> Run #{number}, reopened from history.\n\n"));
+        let note = if let Some(number) = self.saved_run {
+            Some(format!("Run #{number}, reopened from history."))
         } else if self.sample {
-            out.push_str("> Sample result: illustrative data, not a measurement.\n\n");
-        }
-        out.push_str(&format!(
-            "- **Model:** {}\n",
-            model_display_name(&context.model_path)
-        ));
-        out.push_str(&format!("- **Prompt:** {}\n", context.prompt.trim()));
-        out.push_str(&format!(
-            "- **Change:** {} at layer {} ({}), affecting {}\n",
-            operation_label(&context.op),
-            context.layer,
-            site_label(&context.site),
-            token_label(&context.token),
-        ));
-        out.push_str(&format!(
-            "- **Generation:** up to {} tokens, seed 0\n\n",
-            context.max_tokens
-        ));
-        out.push_str("## Result\n\n");
-        out.push_str(&format!(
-            "- **Text output:** {}\n",
-            if comparison.generated_text_equal {
-                "unchanged"
-            } else {
-                "changed"
-            }
-        ));
-        if let Some(layer) = comparison.landmarks.first_layer_divergence {
-            out.push_str(&format!("- **First internal divergence:** layer {layer}\n"));
-        }
-        if let (Some(value), Some(layer)) = (
-            comparison.landmarks.peak_relative_l2,
-            comparison.landmarks.peak_layer,
-        ) {
-            out.push_str(&format!(
-                "- **Peak divergence:** {value:.3} (relative L2) at layer {layer}\n"
-            ));
-        }
-        out.push_str(&format!("\n**Baseline:** {}\n\n", baseline.text.trim()));
-        out.push_str(&format!("**Intervention:** {}\n", intervention.text.trim()));
-        if !self.layer_series.is_empty() {
-            out.push_str("\n## Divergence by layer\n\n| layer | relative L2 | cosine distance |\n|---|---|---|\n");
-            for metric in self.layer_series.iter() {
-                let cell = |value: Option<f64>| {
-                    value.map_or_else(|| "n/a".to_string(), |value| format!("{value:.4}"))
-                };
-                out.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    metric.layer,
-                    cell(metric.relative_l2_difference),
-                    cell(metric.cosine_distance)
-                ));
-            }
-        }
-        Some(out)
+            Some("Sample result: illustrative data, not a measurement.".to_string())
+        } else {
+            None
+        };
+        Some(export::experiment_markdown(
+            note.as_deref(),
+            baseline,
+            intervention,
+            comparison,
+            context,
+            &self.layer_series,
+        ))
     }
 
     /// Open Review on the built-in sample: a finished comparison a newcomer
@@ -1448,6 +1538,7 @@ impl Console {
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTheme => self.cycle_appearance(cx),
             Command::TogglePresentation => self.toggle_presentation(cx),
+            Command::CancelRun => self.cancel_run(cx),
         }
         cx.notify();
     }
@@ -1714,6 +1805,12 @@ impl Console {
                 "enter" | "return" if !cmd => self.palette_execute(cx),
                 _ => {}
             }
+            return;
+        }
+        // Esc stops a run in flight. Only then: elsewhere it is left to the
+        // focused control (closing a picker, say).
+        if key == "escape" && self.can_cancel() {
+            self.cancel_run(cx);
             return;
         }
 

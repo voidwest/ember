@@ -67,6 +67,10 @@ pub(crate) struct GuiSession {
     load_error: Option<String>,
     last_baseline: Option<BaselineRecord>,
     run_counter: u64,
+    /// Cooperative cancellation for the run in flight (native console only;
+    /// the web console never sets it). Checked at every decode step of each
+    /// leg, between the legs, and before a bundle is written.
+    cancel: Option<ember::cancel::CancelToken>,
 }
 
 /// The baseline text a later restore run can be compared against. The
@@ -193,7 +197,20 @@ impl GuiSession {
             load_error: None,
             last_baseline: None,
             run_counter: 0,
+            cancel: None,
         }
+    }
+
+    /// Attach (or clear) the cancel token the next runs honour.
+    #[cfg(feature = "gui")]
+    pub(crate) fn set_cancel(&mut self, token: Option<ember::cancel::CancelToken>) {
+        self.cancel = token;
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(ember::cancel::CancelToken::is_cancelled)
     }
 
     /// Load (or reuse) the model for `model_path`.
@@ -244,8 +261,25 @@ impl GuiSession {
         let (baseline, _baseline_report) = run_one(self, cfg, RunKind::Baseline)
             .map_err(|error| format!("baseline run failed: {error}"))?;
         let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
-        let (intervention, intervention_report) = run_one(self, cfg, RunKind::Intervention)
-            .map_err(|error| format!("intervention run failed: {error}"))?;
+        // A cancelled pair leaves nothing behind, like a cancelled CLI run:
+        // the finished baseline bundle is half an experiment, so it goes too.
+        let discard_baseline = || {
+            let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+        };
+        if self.cancelled() {
+            discard_baseline();
+            return Err("cancelled".to_string());
+        }
+        let (intervention, intervention_report) = match run_one(self, cfg, RunKind::Intervention) {
+            Ok(done) => done,
+            Err(error) => {
+                if self.cancelled() {
+                    discard_baseline();
+                    return Err("cancelled".to_string());
+                }
+                return Err(format!("intervention run failed: {error}"));
+            }
+        };
         let raw_comparison = ember::v05::compare::compare_bundles(
             Path::new(&baseline.bundle_dir),
             Path::new(&intervention.bundle_dir),
@@ -950,6 +984,7 @@ fn run_one(
             RunKind::Restore => "restore",
         },
     );
+    let cancel = session.cancel.clone();
     let prepared = session
         .prepared
         .as_mut()
@@ -961,6 +996,7 @@ fn run_one(
         &spec_text,
         Path::new(&output_dir),
         false,
+        cancel.as_ref(),
     )
     .map_err(|error| format!("{error:#}"))?;
     let result: &InputResult = results

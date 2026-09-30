@@ -717,3 +717,437 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(_)));
         }).unwrap();
 }
+
+/// A fake loaded model, so a run goes straight to the worker.
+fn fake_session() -> crate::gui::SessionInfo {
+    crate::gui::SessionInfo {
+        model_path: "fixture.gguf".into(),
+        model_name: "fixture".into(),
+        architecture: "llama".into(),
+        n_layers: 16,
+        embed_dim: 64,
+        vocab_size: 128,
+        model_sha: String::new(),
+        tokenizer_sha: String::new(),
+        load_ms: 0.0,
+    }
+}
+
+/// A verified-looking pair, for replies the tests inject.
+fn fake_bundle() -> crate::gui::RunBundle {
+    let (baseline, intervention, comparison, _) = super::sample_result();
+    crate::gui::RunBundle {
+        baseline,
+        intervention,
+        comparison,
+        verification: ember::v05::verify::VerificationReport {
+            bundle_schema: String::new(),
+            ok: true,
+            semantic_hash: String::new(),
+            payload_hash: String::new(),
+            checks: Vec::new(),
+            warnings: Vec::new(),
+            timestamp: String::new(),
+        },
+        elapsed_ms_total: 1.0,
+        elapsed_ms_baseline: 1.0,
+        baseline_key: String::new(),
+    }
+}
+
+type WorkerEnds = (
+    gpui_kit::AnyWindowHandle,
+    gpui_kit::Entity<Console>,
+    mpsc::Receiver<super::WorkerMsg>,
+    mpsc::Sender<super::WorkerReply>,
+);
+
+/// A console whose worker channel the test holds, with a model "loaded".
+async fn console_with_worker(cx: &mut TestAppContext) -> WorkerEnds {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(FONT_SANS),
+                Cow::Borrowed(FONT_MONO),
+                Cow::Borrowed(FONT_ARABIC),
+            ])
+            .unwrap();
+    });
+    let (tx, worker_rx) = mpsc::channel();
+    let (reply_tx, reply_rx) = mpsc::channel();
+    let mut view = None;
+    let handle = cx.add_window(|window, cx| {
+        let console =
+            cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+        console.update(cx, |console, cx| {
+            console.model_path = "fixture.gguf".into();
+            console
+                .inputs
+                .model
+                .update(cx, |input, cx| input.set_value("fixture.gguf", cx));
+            console.session = Some(fake_session());
+            console.view = View::Experiment;
+        });
+        view = Some(console.clone());
+        Root::new(console, window, cx)
+    });
+    (handle.into(), view.unwrap(), worker_rx, reply_tx)
+}
+
+#[gpui_kit::test]
+async fn cancelling_a_run_stops_it_and_records_nothing(cx: &mut TestAppContext) {
+    let (handle, console, worker_rx, reply_tx) = console_with_worker(cx).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(
+            window
+                .try_find(SharedString::from("setup-cancel"))
+                .is_none(),
+            "nothing to cancel while idle"
+        );
+        window.click(SharedString::from("setup-run"), cx);
+        assert_eq!(console.read(cx).status, super::Status::Running);
+        let Ok(super::WorkerMsg::Run(_, token)) = worker_rx.try_recv() else {
+            panic!("the run went to the worker with a cancel token");
+        };
+        assert!(!token.is_cancelled());
+        window.render_frame(cx);
+
+        // The button cancels: the token fires at once, and the console waits
+        // for the worker to confirm rather than claiming it stopped.
+        window.click(SharedString::from("setup-cancel"), cx);
+        assert!(token.is_cancelled(), "Cancel fires the run's token");
+        assert_eq!(console.read(cx).status, super::Status::Cancelling);
+        assert!(
+            !console.read(cx).action_enabled(),
+            "no new run until it stops"
+        );
+        reply_tx.send(super::WorkerReply::Cancelled).unwrap();
+        console.update(cx, |console, cx| {
+            console.drain_replies(cx);
+        });
+        window.render_frame(cx);
+        {
+            let console = console.read(cx);
+            assert_eq!(console.status, super::Status::Idle);
+            assert!(console.cancelled, "the page says it was cancelled");
+            assert!(console.error.is_none(), "a cancel is not an error");
+            assert!(console.store.runs.is_empty(), "nothing recorded");
+            assert!(console.session.is_some(), "the model stays loaded");
+            assert!(console.baseline.is_none());
+        }
+        assert!(window
+            .try_find(SharedString::from("run-cancelled"))
+            .is_some());
+
+        // Esc does the same, and a result that raced the cancel is dropped.
+        window.click(SharedString::from("setup-run"), cx);
+        let Ok(super::WorkerMsg::Run(_, token)) = worker_rx.try_recv() else {
+            panic!("second run");
+        };
+        assert!(!console.read(cx).cancelled, "a new run clears the notice");
+        window.press("escape", cx);
+        assert!(token.is_cancelled(), "Esc cancels the run in flight");
+        reply_tx
+            .send(super::WorkerReply::RunDone(Box::new(Ok(fake_bundle()))))
+            .unwrap();
+        console.update(cx, |console, cx| {
+            console.drain_replies(cx);
+        });
+        let console = console.read(cx);
+        assert_eq!(console.status, super::Status::Idle);
+        assert!(console.store.runs.is_empty(), "a raced result is not kept");
+        assert!(console.baseline.is_none(), "nor shown");
+    })
+    .unwrap();
+
+    // The palette command reaches the same path.
+    cx.update_window(handle, |_, _, cx| {
+        console.update(cx, |console, cx| {
+            console.run();
+            let Ok(super::WorkerMsg::Run(_, token)) = worker_rx.try_recv() else {
+                panic!("third run");
+            };
+            console.palette_open = true;
+            console.palette_query = "cancel".into();
+            console.palette_index = 0;
+            assert_eq!(
+                console.palette_candidates().first(),
+                Some(&super::palette::Command::CancelRun)
+            );
+            console.palette_execute(cx);
+            assert!(token.is_cancelled());
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn two_saved_runs_can_be_compared_and_old_records_say_they_cannot(cx: &mut TestAppContext) {
+    let (handle, console) = console_window(cx).await;
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // Seeded: the two newest runs (#7, #6) kept results, #5 did not.
+            console.store = super::seed_store();
+            console.goto(View::Runs, cx);
+        });
+        window.draw(cx).clear(cx);
+        assert!(window.try_find(SharedString::from("compare-bar")).is_none());
+        window.click(SharedString::from("run-select:7"), cx);
+        window.render_frame(cx);
+        assert_eq!(console.read(cx).compare_picks, [7]);
+        assert!(window.try_find(SharedString::from("compare-bar")).is_some());
+
+        // A record without a result is refused, with the reason.
+        window.click(SharedString::from("run-select:5"), cx);
+        window.render_frame(cx);
+        let blocker = console.read(cx).compare_blocker().expect("refused");
+        assert!(blocker.contains("Run #5") && blocker.contains("can't be compared"));
+        window.click(SharedString::from("runs-compare-open"), cx);
+        assert!(console.read(cx).comparing.is_none(), "refused");
+
+        // Deselect it and pick a comparable one instead.
+        window.click(SharedString::from("run-select:5"), cx);
+        window.render_frame(cx);
+        window.click(SharedString::from("run-select:6"), cx);
+        window.render_frame(cx);
+        assert_eq!(console.read(cx).compare_picks, [7, 6]);
+        assert!(console.read(cx).compare_blocker().is_none());
+        window.click(SharedString::from("runs-compare-open"), cx);
+        assert_eq!(console.read(cx).comparing, Some((7, 6)));
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("compare-metrics"))
+            .is_some());
+        assert!(window
+            .try_find(SharedString::from("compare-tokens"))
+            .is_some());
+
+        // Swap flips the sides; Back returns to the table with the picks kept.
+        window.click(SharedString::from("compare-swap"), cx);
+        assert_eq!(console.read(cx).comparing, Some((6, 7)));
+        window.render_frame(cx);
+        window.click(SharedString::from("compare-back"), cx);
+        window.render_frame(cx);
+        assert!(console.read(cx).comparing.is_none());
+        assert!(window
+            .try_find(SharedString::from("run-select:7"))
+            .is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn any_history_row_exports_markdown_and_its_bundle(cx: &mut TestAppContext) {
+    let (handle, console, worker_rx, reply_tx) = console_with_worker(cx).await;
+    let root = std::env::temp_dir().join(format!("ember-kit-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (kept_base, kept_int) = (root.join("kept-base"), root.join("kept-int"));
+    std::fs::create_dir_all(&kept_base).unwrap();
+    std::fs::create_dir_all(&kept_int).unwrap();
+    let bundles = |base: &std::path::Path, int: &std::path::Path| super::app_store::RecordBundles {
+        baseline: base.display().to_string(),
+        intervention: int.display().to_string(),
+    };
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // Seeded: #7 kept result and config, #6 a result only, #5 neither.
+            console.store = super::seed_store();
+            let seven = console
+                .store
+                .runs
+                .iter_mut()
+                .find(|r| r.number == 7)
+                .unwrap();
+            seven.bundles = Some(bundles(&kept_base, &kept_int));
+            let six = console
+                .store
+                .runs
+                .iter_mut()
+                .find(|r| r.number == 6)
+                .unwrap();
+            six.bundles = Some(bundles(&root.join("gone-a"), &root.join("gone-b")));
+            console.goto(View::Runs, cx);
+        });
+        window.draw(cx).clear(cx);
+
+        // A run whose bundle is on disk: Markdown, reveal, verify command.
+        window.click(SharedString::from("run-export:7"), cx);
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_some());
+        assert!(window
+            .try_find(SharedString::from("export-rebundle"))
+            .is_none());
+        window.click(SharedString::from("export-markdown"), cx);
+    })
+    .unwrap();
+    let copied = cx.read_from_clipboard().and_then(|i| i.text()).unwrap();
+    assert!(copied.starts_with("# Ember experiment"));
+    assert!(copied.contains("Run #7, from history"));
+    assert!(copied.contains("## Divergence by layer"));
+    assert!(copied.contains(&format!(
+        "ember experiment verify '{}'",
+        kept_base.display()
+    )));
+    cx.update_window(handle, |_, window, cx| {
+        window.click(SharedString::from("export-verify"), cx);
+    })
+    .unwrap();
+    let command = cx.read_from_clipboard().and_then(|i| i.text()).unwrap();
+    assert!(command.contains(&kept_int.display().to_string()));
+
+    cx.update_window(handle, |_, window, cx| {
+        // An old record with neither result nor configuration: it still
+        // exports Markdown, and says it cannot be re-run.
+        window.click(SharedString::from("run-export:5"), cx);
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-rebundle"))
+            .is_none());
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_none());
+        window.click(SharedString::from("export-markdown"), cx);
+    })
+    .unwrap();
+    let copied = cx.read_from_clipboard().and_then(|i| i.text()).unwrap();
+    assert!(copied.contains("Run #5, from history"));
+
+    // #7's bundle goes missing; it kept its configuration, so it re-runs.
+    std::fs::remove_dir_all(&kept_int).unwrap();
+    let before = cx.update(|cx| console.read(cx).store.runs.len());
+    cx.update_window(handle, |_, window, cx| {
+        window.click(SharedString::from("run-export:7"), cx);
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_none());
+        window.click(SharedString::from("export-rebundle"), cx);
+        assert_eq!(console.read(cx).status, super::Status::Running);
+        assert_eq!(console.read(cx).rebundle, Some(7));
+        let Ok(super::WorkerMsg::Run(config, _)) = worker_rx.try_recv() else {
+            panic!("the stored configuration went to the worker");
+        };
+        assert_eq!(config.model_path, "/models/Llama-3.2-1B-Instruct-Q8_0.gguf");
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-rebundle-cancel"))
+            .is_some());
+    })
+    .unwrap();
+    let (fresh_base, fresh_int) = (root.join("fresh-base"), root.join("fresh-int"));
+    std::fs::create_dir_all(&fresh_base).unwrap();
+    std::fs::create_dir_all(&fresh_int).unwrap();
+    let mut bundle = fake_bundle();
+    bundle.baseline.bundle_dir = fresh_base.display().to_string();
+    bundle.intervention.bundle_dir = fresh_int.display().to_string();
+    reply_tx
+        .send(super::WorkerReply::RunDone(Box::new(Ok(bundle))))
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            console.drain_replies(cx);
+        });
+        window.render_frame(cx);
+        let console = console.read(cx);
+        assert_eq!(console.status, super::Status::Idle);
+        assert_eq!(console.store.runs.len(), before, "no new history row");
+        assert!(console.baseline.is_none(), "nothing changes on screen");
+        let seven = console.store.runs.iter().find(|r| r.number == 7).unwrap();
+        let kept = seven.bundles.as_ref().unwrap();
+        assert!(kept.exist(), "the record points at the new bundles");
+        assert!(kept.intervention.ends_with("fresh-int"));
+        assert!(console
+            .export_note
+            .as_deref()
+            .is_some_and(|note| note.contains("wrote a verified bundle")));
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_some());
+    })
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[gpui_kit::test]
+async fn a_full_history_builds_only_the_rows_on_screen(cx: &mut TestAppContext) {
+    use gpui_kit::component::table::ColumnSort;
+    let (handle, console) = console_window(cx).await;
+    cx.simulate_window_resize(
+        handle,
+        gpui_kit::size(gpui_kit::px(2200.0), gpui_kit::px(720.0)),
+    );
+    cx.run_until_parked();
+    let rows_built = |cx: &mut gpui_kit::App| {
+        let table = console.read(cx).runs_table.clone().expect("Runs was drawn");
+        table.update(cx, |table, _| {
+            std::mem::take(&mut table.delegate_mut().rows_built)
+        })
+    };
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // The store's cap: 500 runs, each with a result and configuration.
+            let template = super::seed_store()
+                .runs
+                .into_iter()
+                .find(|run| run.number == 7)
+                .unwrap();
+            for number in 1..=super::app_store::MAX_RUNS as u64 {
+                let mut run = template.clone();
+                run.number = number;
+                run.finished_at = number as i64;
+                console.store.push_run(run);
+            }
+            assert_eq!(console.store.runs.len(), 500);
+            console.goto(View::Runs, cx);
+        });
+        window.draw(cx).clear(cx);
+        rows_built(cx);
+        console.update(cx, |_, cx| cx.notify());
+        window.render_frame(cx);
+        let built = rows_built(cx);
+        assert!(
+            built > 0 && built <= 40,
+            "a frame built {built} of 500 rows; only the visible ones should be"
+        );
+
+        // Row actions still work on what is on screen: newest first.
+        window.click(SharedString::from("run-pin:500"), cx);
+        window.render_frame(cx);
+        assert!(console
+            .read(cx)
+            .store
+            .runs
+            .iter()
+            .any(|run| run.number == 500 && run.pinned));
+        window.click(SharedString::from("run-delete:499"), cx);
+        window.render_frame(cx);
+        window.click(SharedString::from("run-delete-confirm:499"), cx);
+        window.render_frame(cx);
+        assert_eq!(console.read(cx).store.runs.len(), 499);
+        window.click(SharedString::from("run-select:498"), cx);
+        window.click(SharedString::from("run-select:497"), cx);
+        window.render_frame(cx);
+        window.click(SharedString::from("runs-compare-open"), cx);
+        assert_eq!(console.read(cx).comparing, Some((498, 497)));
+        console.update(cx, |console, cx| console.close_comparison(cx));
+        window.render_frame(cx);
+
+        // Sorting reorders all 500, and the frame still builds a screenful.
+        let table = console.read(cx).runs_table.clone().unwrap();
+        table.update(cx, |table, _| {
+            table.delegate_mut().set_sort(0, ColumnSort::Ascending)
+        });
+        assert_eq!(table.read(cx).delegate().row(0).unwrap().number, 1);
+        rows_built(cx);
+        window.render_frame(cx);
+        let built = rows_built(cx);
+        assert!(built <= 40, "sorted, a frame built {built} rows");
+        window.click(SharedString::from("run-open:1"), cx);
+        assert_eq!(console.read(cx).saved_run, Some(1));
+    })
+    .unwrap();
+}

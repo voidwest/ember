@@ -7,83 +7,14 @@ impl Console {
     /// Reopen a run from History. Only records that kept their result can be
     /// opened; the Runs table shows Open on exactly those.
     pub(super) fn open_run(&mut self, number: u64, cx: &mut Context<Self>) {
-        let Some(record) = self
+        let Some((baseline, intervention, comparison, values)) = self
             .store
             .runs
             .iter()
             .find(|run| run.number == number)
-            .cloned()
+            .and_then(record_view)
         else {
             return;
-        };
-        let (Some(result), Some(config)) = (record.result.clone(), record.config.clone()) else {
-            return;
-        };
-        let output = |text: String, tokens: Option<u32>| RunOutput {
-            text,
-            generated_token_ids: (1..=tokens.unwrap_or(0)).collect(),
-            generated_token_texts: Vec::new(),
-            prompt_tokens: 0,
-            generated_tokens: tokens.unwrap_or(0) as usize,
-            bundle_dir: "history".to_string(),
-            semantic_hash: "0000000000000000".to_string(),
-            payload_hash: "00000000".to_string(),
-            // History keeps one total for the pair, not per-side timings, so
-            // none is shown rather than a made-up split (see output_panel).
-            wall_ms: 0.0,
-            decode_tps: None,
-            events: Vec::new(),
-        };
-        let baseline = output(result.baseline_text.clone(), record.baseline_tokens);
-        let intervention = output(result.intervention_text.clone(), record.intervention_tokens);
-        let comparison = ExperimentComparison {
-            layers: result
-                .layers
-                .iter()
-                .map(|layer| crate::gui::LayerMetric {
-                    layer: layer.layer,
-                    relative_l2_difference: layer.relative_l2,
-                    cosine_distance: layer.cosine,
-                    maximum_absolute_difference: None,
-                    exact: layer.relative_l2 == Some(0.0),
-                })
-                .collect(),
-            tokens: result
-                .tokens
-                .iter()
-                .map(|token| crate::gui::TokenMetric {
-                    position: token.position,
-                    baseline_token_id: None,
-                    intervention_token_id: None,
-                    baseline_text: token.baseline.clone(),
-                    intervention_text: token.intervention.clone(),
-                    differs: token.differs,
-                })
-                .collect(),
-            first_token_divergence: record.diverged_at_step.map(|step| step as usize),
-            generated_tokens_equal: result.tokens_equal,
-            generated_text_equal: record.outputs_equal,
-            landmarks: crate::gui::DivergenceLandmarks {
-                first_layer_divergence: result.first_layer_divergence,
-                peak_layer: result.peak_layer,
-                peak_relative_l2: result.peak_relative_l2,
-                stable_token_tail_step: None,
-            },
-            layer_token_grid: None,
-        };
-        let values = FormValues {
-            model_path: config.model_path,
-            prompt: record.prompt,
-            max_tokens: config.max_tokens,
-            execution: config.execution,
-            site: config.site,
-            layer: config.layer,
-            op: config.op,
-            value: config.value,
-            source: config.source,
-            source_layer: config.source_layer,
-            token: config.token,
-            span: config.span,
         };
         self.show_result(baseline, intervention, comparison, values, Some(number), cx);
     }
@@ -307,6 +238,124 @@ pub(super) fn open_store(
             None,
         ),
     }
+}
+
+/// A saved run as the Review page shows it: the two outputs, the comparison
+/// and the form that produced it. Only records that kept their result and
+/// configuration have one.
+pub(super) fn record_view(
+    record: &RunRecord,
+) -> Option<(RunOutput, RunOutput, ExperimentComparison, FormValues)> {
+    let result = record.result.clone()?;
+    let values = record_values(record)?;
+    // The bundle directories, when the record kept them and they are still
+    // there; otherwise a placeholder that nothing mistakes for a directory.
+    let (baseline_dir, intervention_dir) = match &record.bundles {
+        Some(bundles) if bundles.exist() => {
+            (bundles.baseline.clone(), bundles.intervention.clone())
+        }
+        _ => ("history".to_string(), "history".to_string()),
+    };
+    let output = |text: String, tokens: Option<u32>, bundle_dir: String| RunOutput {
+        text,
+        generated_token_ids: (1..=tokens.unwrap_or(0)).collect(),
+        generated_token_texts: Vec::new(),
+        prompt_tokens: 0,
+        generated_tokens: tokens.unwrap_or(0) as usize,
+        bundle_dir,
+        semantic_hash: "0000000000000000".to_string(),
+        payload_hash: "00000000".to_string(),
+        // History keeps one total for the pair, not per-side timings, so
+        // none is shown rather than a made-up split (see output_panel).
+        wall_ms: 0.0,
+        decode_tps: None,
+        events: Vec::new(),
+    };
+    let baseline = output(
+        result.baseline_text.clone(),
+        record.baseline_tokens,
+        baseline_dir,
+    );
+    let intervention = output(
+        result.intervention_text.clone(),
+        record.intervention_tokens,
+        intervention_dir,
+    );
+    let comparison = ExperimentComparison {
+        layers: record_series(&result).to_vec(),
+        tokens: result
+            .tokens
+            .iter()
+            .map(|token| crate::gui::TokenMetric {
+                position: token.position,
+                baseline_token_id: None,
+                intervention_token_id: None,
+                baseline_text: token.baseline.clone(),
+                intervention_text: token.intervention.clone(),
+                differs: token.differs,
+            })
+            .collect(),
+        first_token_divergence: record.diverged_at_step.map(|step| step as usize),
+        generated_tokens_equal: result.tokens_equal,
+        generated_text_equal: record.outputs_equal,
+        landmarks: crate::gui::DivergenceLandmarks {
+            first_layer_divergence: result.first_layer_divergence,
+            peak_layer: result.peak_layer,
+            peak_relative_l2: result.peak_relative_l2,
+            stable_token_tail_step: None,
+        },
+        layer_token_grid: None,
+    };
+    Some((baseline, intervention, comparison, values))
+}
+
+/// Where a finished pair's bundles are, as absolute paths: the console writes
+/// them relative to its working directory, which a later session may not
+/// share.
+pub(super) fn record_bundles(bundle: &crate::gui::RunBundle) -> app_store::RecordBundles {
+    let absolute = |dir: &str| {
+        std::fs::canonicalize(dir)
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| dir.to_string())
+    };
+    app_store::RecordBundles {
+        baseline: absolute(&bundle.baseline.bundle_dir),
+        intervention: absolute(&bundle.intervention.bundle_dir),
+    }
+}
+
+/// A saved result's per-layer series, in the shape the chart draws.
+pub(super) fn record_series(result: &app_store::RecordResult) -> Arc<[crate::gui::LayerMetric]> {
+    result
+        .layers
+        .iter()
+        .map(|layer| crate::gui::LayerMetric {
+            layer: layer.layer,
+            relative_l2_difference: layer.relative_l2,
+            cosine_distance: layer.cosine,
+            maximum_absolute_difference: None,
+            exact: layer.relative_l2 == Some(0.0),
+        })
+        .collect()
+}
+
+/// A record's form configuration, when it kept one.
+pub(super) fn record_values(record: &RunRecord) -> Option<FormValues> {
+    let config = record.config.clone()?;
+    Some(FormValues {
+        model_path: config.model_path,
+        prompt: record.prompt.clone(),
+        max_tokens: config.max_tokens,
+        execution: config.execution,
+        site: config.site,
+        layer: config.layer,
+        op: config.op,
+        value: config.value,
+        source: config.source,
+        source_layer: config.source_layer,
+        token: config.token,
+        span: config.span,
+    })
 }
 
 /// What a finished run showed, in the shape History stores.

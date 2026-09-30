@@ -411,14 +411,64 @@ that is not earlier than the target, say) are skipped, and **Stop** ends a sweep
 after the run in flight. Sweep runs are kept on the sweep, not written to
 history: sixteen near-identical rows would bury the runs you chose to make.
 
+### Cancelling a run
+
+**Cancel run** (under Run while a run is in flight), **Esc**, the palette's
+**Cancel run** and Experiment > Cancel Run all stop the run in flight. The
+worker checks the run's cancel token before prefill, at every decode step of
+both legs, between the legs and before each bundle is written, so it stops
+within a token (a prefill in progress finishes first). The console waits in
+*Cancelling* until the worker confirms, then returns to idle with a **Run
+cancelled** notice. Nothing is recorded in history and no bundle is kept -- a
+baseline bundle already written is removed, as half a pair is not an
+experiment -- and the model stays loaded. A run waiting on a model load is
+dropped; the load itself finishes. See `docs/cancellation.md`.
+
+### Comparing two runs
+
+On Runs, **Select** two rows and press **Compare runs** in the bar above the
+table. The comparison replaces the table: a metrics table (change, model,
+prompt, text output, tokens, where the words and the layers first diverged,
+peak divergence, duration, verification) with the delta of each, both runs'
+outputs side by side, a token diff of the two interventions, and both
+layer-divergence series on one chart (the first selected dashed). **Swap**
+flips the sides; **Back to runs** returns to the table. Runs recorded before
+results were kept can be selected, but the bar says they can't be compared.
+(**Pin** on a row is the older, different action: it makes that run the
+reference for your next run in the workspace.)
+
+### Exporting runs
+
+**Export** on any Runs row opens an export strip for it:
+
+- **Copy as Markdown** -- the same document as the result page's **Copy
+  summary** (settings, outcome, both outputs, the per-layer table), headed
+  "Run #N, from history". Older records without a saved result export what
+  they recorded.
+- **The bundle.** Each run records where its two verified bundles were
+  written (absolute paths; history schema minor 3). If they are still on
+  disk, **Reveal bundle** shows them in the file manager and **Copy verify
+  command** copies `ember experiment verify <baseline> && ember experiment
+  verify <intervention>`. If they are gone and the record kept its
+  configuration, **Re-run to bundle** runs the stored configuration again
+  through the same path as `ember experiment run` (`execute_prepared` ->
+  `write_bundle`, self-verified) and points the record at the new bundles.
+  No history row is added, and the strip says if the re-run's output differs
+  from the stored one. It can be cancelled like any run. A record with neither
+  a bundle nor a configuration says it cannot be re-run.
+
+The result page offers **Reveal bundle** for a live result, or for a reopened
+run whose bundle is still on disk, and its Markdown names the bundles with the
+verify command.
+
 ### What changed from the wizard
 
 The contextual inspector is gone (it restated the setup). Its advanced controls
 -- execution engine, exact token limit, raw model path, hook ids -- are under
 **Advanced** in the setup pane, and the selected layer's values are in the
 chart's readout. The Model section collapses to one line once a model is loaded.
-On Runs, **Star** (was Pin) keeps a run at the top, **Compare** pins a saved run
-as the reference and returns to the workspace, **Open** shows its comparison and
+On Runs, **Star** (was Pin) keeps a run at the top, **Pin** (was Compare) pins a
+saved run as the reference and returns to the workspace, **Open** shows its comparison and
 **Reuse** loads its settings. A returning user (with history or an unfinished
 experiment) launches straight into the workspace with their setup restored;
 Home is for a first launch.

@@ -12,6 +12,7 @@ pub(super) enum Command {
     NewExperiment,
     LoadModel,
     RunExperiment,
+    CancelRun,
     DuplicateExperiment,
     RerunExperiment,
     GoHome,
@@ -28,10 +29,11 @@ impl Command {
     /// Catalog order: creation first, then navigation, then view toggles,
     /// then the experiment flow -- the order a new user discovers in and a
     /// regular user stops reading.
-    pub(super) const ALL: [Command; 13] = [
+    pub(super) const ALL: [Command; 14] = [
         Command::NewExperiment,
         Command::LoadModel,
         Command::RunExperiment,
+        Command::CancelRun,
         Command::DuplicateExperiment,
         Command::RerunExperiment,
         Command::GoHome,
@@ -49,6 +51,7 @@ impl Command {
             Command::NewExperiment => "New experiment",
             Command::LoadModel => "Load model",
             Command::RunExperiment => "Run experiment",
+            Command::CancelRun => "Cancel run",
             Command::DuplicateExperiment => "Duplicate experiment",
             Command::RerunExperiment => "Rerun experiment",
             Command::GoHome => "Go to Home",
@@ -68,6 +71,7 @@ impl Command {
             Command::NewExperiment => "Start a fresh experiment",
             Command::LoadModel => "Load the selected model into memory",
             Command::RunExperiment => "Run the configured baseline + intervention pair",
+            Command::CancelRun => "Stop the run in flight; nothing is recorded",
             Command::DuplicateExperiment => "Branch from the last run to change one thing",
             Command::RerunExperiment => "Replay the last run exactly",
             Command::GoHome => "Recent runs and starting points",
