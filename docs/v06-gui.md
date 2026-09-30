@@ -402,8 +402,12 @@ run again -- and a second run on an already-loaded model takes about a second.
 
 For a change that acts on one layer, **Sweep all N layers** (under Run) runs the
 same experiment at every layer in turn and plots the peak divergence each run
-reached, by the layer that was changed. A second run on a loaded model takes
-about a second, so a 16-layer model sweeps in roughly twenty. The **Sweep** tab
+reached, by the layer that was changed. The layers' baselines differ only in
+which layer they capture, so the first point runs one generation that writes
+every layer's baseline bundle and records the prompt prefix; each layer's
+intervention run then starts its prefill at that layer from the recorded state
+(bit-identical bundles; see `docs/experiments.md`). A 16-layer sweep of the
+1B model takes about 12 s instead of about 20 s for a pair per layer. The **Sweep** tab
 has the curve, a sentence saying at how many layers the words changed and where
 the effect was largest, and one row per layer whose **Open** shows that run in
 full. **Copy CSV** exports the curve. Layers the form rejects (a source layer

@@ -6,6 +6,9 @@ use super::*;
 pub(super) enum WorkerMsg {
     Prepare(String),
     Run(RunConfig),
+    /// One point of a layer sweep, with the layers the sweep still plans
+    /// (this one first); answered with `RunDone` like `Run`.
+    SweepPoint(RunConfig, Vec<usize>),
     Restore(RunConfig),
 }
 
@@ -35,6 +38,11 @@ fn handle_worker_msg(session: &mut crate::gui::GuiSession, msg: WorkerMsg) -> Wo
             session
                 .ensure_prepared(&cfg.model_path)
                 .and_then(|_| session.run_baseline_intervention(&cfg)),
+        )),
+        WorkerMsg::SweepPoint(cfg, planned) => WorkerReply::RunDone(Box::new(
+            session
+                .ensure_prepared(&cfg.model_path)
+                .and_then(|_| session.run_sweep_point(&cfg, &planned)),
         )),
         WorkerMsg::Restore(cfg) => WorkerReply::RestoreDone(Box::new(
             session

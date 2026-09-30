@@ -116,7 +116,11 @@ prefill there instead of recomputing it:
   tokens, cache capacity) fails. Specs naming a different model file,
   tokenizer or architecture are rejected outright.
 
-The GUI runs every baseline/intervention pair this way.
+The GUI runs every baseline/intervention pair this way, and its layer sweep
+runs one shared pass for all layers: every layer's baseline observes a single
+generation (co-baselines: non-intervening specs with the same inputs,
+settings and generated-step sites) and each layer's intervention resumes at
+its own layer.
 
 ## Layer sweeps
 

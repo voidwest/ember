@@ -14,7 +14,7 @@
 //! one loaded model instead of reloading per run.
 
 use crate::cli_experiment::{execute_prepared, prepare_run, PreparedRun, RunOutcome, RunTarget};
-use crate::cli_experiment_shared::{run_base_pass, run_variant, BasePass};
+use crate::cli_experiment_shared::{run_base_pass, run_variant, BasePass, SharedPrefix};
 use anyhow::Context;
 use clap::Args as ClapArgs;
 use ember::plan::ExecutionMode;
@@ -68,6 +68,31 @@ pub(crate) struct GuiSession {
     load_error: Option<String>,
     last_baseline: Option<BaselineRecord>,
     run_counter: u64,
+    /// Where run bundles go (`runs/gui`; tests point it elsewhere).
+    output_root: String,
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    /// The shared pass of the layer sweep in progress (see
+    /// `run_sweep_point`).
+    sweep_cache: Option<SweepCache>,
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+/// One layer sweep's shared pass: every layer's baseline bundle (the
+/// baselines differ only in which layer their source capture records, so
+/// one generation serves them all) and the recorded prompt prefix each
+/// layer's intervention run resumes from. Points are taken out as they run.
+struct SweepCache {
+    key: String,
+    model_path: String,
+    baselines: std::collections::BTreeMap<usize, (RunOutput, String)>,
+    prefix: SharedPrefix,
+    /// layer -> (variant index in the pass, spec text, spec, output dir)
+    variants: std::collections::BTreeMap<
+        usize,
+        (usize, String, ember::v05::spec::ExperimentSpecV1, String),
+    >,
+    /// Time the pass took, charged to the first point's baseline.
+    pass_ms: f64,
 }
 
 /// The baseline text a later restore run can be compared against. The
@@ -194,6 +219,8 @@ impl GuiSession {
             load_error: None,
             last_baseline: None,
             run_counter: 0,
+            output_root: "runs/gui".to_string(),
+            sweep_cache: None,
         }
     }
 
@@ -213,6 +240,8 @@ impl GuiSession {
         self.load_ms = started.elapsed().as_secs_f64() * 1000.0;
         self.load_error = None;
         self.prepared = Some(prepared);
+        // A recorded prefix belongs to the model that computed it.
+        self.sweep_cache = None;
         Ok(())
     }
 
@@ -314,6 +343,197 @@ impl GuiSession {
         })
     }
 
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    /// Run one point of a layer sweep: the same baseline/intervention pair
+    /// `run_baseline_intervention` produces for `cfg` (bit-identical
+    /// bundles), but the first point of a sweep runs one shared pass for
+    /// every layer in `planned`: one generation writes every layer's
+    /// baseline bundle and records the prompt prefix, and each point's
+    /// intervention run then resumes from it at its own layer.
+    pub(crate) fn run_sweep_point(
+        &mut self,
+        cfg: &RunConfig,
+        planned: &[usize],
+    ) -> Result<RunBundle, String> {
+        let started = std::time::Instant::now();
+        self.ensure_prepared(&cfg.model_path)?;
+        let layer = cfg
+            .layer
+            .ok_or_else(|| "a sweep point needs a layer".to_string())?;
+        let key = cfg.sweep_key();
+        let reusable = self.sweep_cache.as_ref().is_some_and(|cache| {
+            cache.key == key
+                && cache.model_path == cfg.model_path
+                && cache.variants.contains_key(&layer)
+        });
+        if !reusable {
+            self.sweep_cache = None;
+            let mut layers: Vec<usize> = planned.to_vec();
+            if !layers.contains(&layer) {
+                layers.insert(0, layer);
+            }
+            self.sweep_cache = Some(self.build_sweep_cache(cfg, layer, &layers)?);
+        }
+        let mut cache = self
+            .sweep_cache
+            .take()
+            .ok_or_else(|| "the sweep pass is missing".to_string())?;
+        let pass_ms = std::mem::take(&mut cache.pass_ms);
+        let result = self.finish_sweep_point(cfg, layer, &mut cache, started, pass_ms);
+        if !cache.variants.is_empty() && result.is_ok() {
+            self.sweep_cache = Some(cache);
+        }
+        result
+    }
+
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    fn build_sweep_cache(
+        &mut self,
+        cfg: &RunConfig,
+        first: usize,
+        layers: &[usize],
+    ) -> Result<SweepCache, String> {
+        let started = std::time::Instant::now();
+        // Specs for every layer the form accepts; a layer whose spec does
+        // not build is left out (the console skips it too), except the one
+        // being run now, whose error is the point's error.
+        let mut built = Vec::new();
+        for &layer in layers {
+            let mut point = cfg.clone();
+            point.layer = Some(layer);
+            let baseline_dir = next_output_dir(self, "baseline");
+            let intervention_dir = next_output_dir(self, "intervention");
+            let specs = build_and_resolve_spec(&point, RunKind::Baseline, &baseline_dir).and_then(
+                |baseline| {
+                    build_and_resolve_spec(&point, RunKind::Intervention, &intervention_dir)
+                        .map(|intervention| (baseline, intervention))
+                },
+            );
+            match specs {
+                Ok((baseline, intervention)) => built.push((
+                    layer,
+                    point.comparison_key(),
+                    baseline,
+                    baseline_dir,
+                    intervention,
+                    intervention_dir,
+                )),
+                Err(error) if layer == first => return Err(error),
+                Err(_) => {}
+            }
+        }
+        // The point being run first is the pass's base.
+        let first_index = built
+            .iter()
+            .position(|entry| entry.0 == first)
+            .ok_or_else(|| "the sweep has no runnable layer".to_string())?;
+        built.swap(0, first_index);
+        let prepared = self
+            .prepared
+            .as_mut()
+            .ok_or_else(|| "model session is not prepared".to_string())?;
+        let target = |spec: &(String, ember::v05::spec::ExperimentSpecV1), dir: &str| {
+            (spec.1.clone(), spec.0.clone(), dir.to_string())
+        };
+        let baselines: Vec<_> = built
+            .iter()
+            .map(|entry| target(&entry.2, &entry.3))
+            .collect();
+        let interventions: Vec<_> = built
+            .iter()
+            .map(|entry| target(&entry.4, &entry.5))
+            .collect();
+        let co: Vec<RunTarget<'_>> = baselines.iter().skip(1).map(run_target).collect();
+        let variant_specs: Vec<&ember::v05::spec::ExperimentSpecV1> =
+            interventions.iter().map(|(spec, _, _)| spec).collect();
+        let BasePass { base, co, prefix } =
+            run_base_pass(prepared, run_target(&baselines[0]), &co, &variant_specs)
+                .map_err(|error| format!("baseline run failed: {error:#}"))?;
+        let mut outputs = std::collections::BTreeMap::new();
+        for (entry, outcome) in built.iter().zip(std::iter::once(base).chain(co)) {
+            let (output, _) = run_output(prepared, outcome)?;
+            outputs.insert(entry.0, (output, entry.1.clone()));
+        }
+        let variants = built
+            .iter()
+            .zip(interventions)
+            .enumerate()
+            .map(|(index, (entry, (spec, text, dir)))| (entry.0, (index, text, spec, dir)))
+            .collect();
+        Ok(SweepCache {
+            key: cfg.sweep_key(),
+            model_path: cfg.model_path.clone(),
+            baselines: outputs,
+            prefix,
+            variants,
+            pass_ms: started.elapsed().as_secs_f64() * 1000.0,
+        })
+    }
+
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    fn finish_sweep_point(
+        &mut self,
+        cfg: &RunConfig,
+        layer: usize,
+        cache: &mut SweepCache,
+        started: std::time::Instant,
+        pass_ms: f64,
+    ) -> Result<RunBundle, String> {
+        let (baseline, baseline_key) = cache
+            .baselines
+            .get(&layer)
+            .cloned()
+            .ok_or_else(|| format!("the sweep pass has no baseline for layer {layer}"))?;
+        let (index, text, spec, dir) = cache
+            .variants
+            .remove(&layer)
+            .ok_or_else(|| format!("layer {layer} has already run in this sweep"))?;
+        let elapsed_ms_baseline = if pass_ms > 0.0 { pass_ms } else { 0.0 };
+        let prepared = self
+            .prepared
+            .as_mut()
+            .ok_or_else(|| "model session is not prepared".to_string())?;
+        let outcome = run_variant(
+            prepared,
+            &mut cache.prefix,
+            index,
+            RunTarget {
+                resolved: &spec,
+                spec_text: &text,
+                output_directory: Path::new(&dir),
+                retain_incomplete: false,
+            },
+        )
+        .map_err(|error| format!("intervention run failed: {error:#}"))?;
+        let (intervention, intervention_report) = run_output(prepared, outcome)?;
+        let raw_comparison = ember::v05::compare::compare_bundles(
+            Path::new(&baseline.bundle_dir),
+            Path::new(&intervention.bundle_dir),
+        )
+        .map_err(|error| format!("baseline/intervention comparison failed: {error}"))?;
+        let comparison = derive_experiment_comparison(
+            &raw_comparison,
+            &baseline.generated_token_ids,
+            &baseline.generated_token_texts,
+            &intervention.generated_token_ids,
+            &intervention.generated_token_texts,
+        );
+        debug_assert_eq!(baseline_key, cfg.comparison_key());
+        self.last_baseline = Some(BaselineRecord {
+            text: baseline.text.clone(),
+            config_key: baseline_key.clone(),
+        });
+        Ok(RunBundle {
+            baseline,
+            intervention,
+            comparison,
+            verification: intervention_report,
+            elapsed_ms_total: started.elapsed().as_secs_f64() * 1000.0,
+            elapsed_ms_baseline,
+            baseline_key,
+        })
+    }
+
     /// Run the restore-original leg for one configuration and compare its
     /// generated text against the stored baseline (only when the shared
     /// configuration is unchanged since the last baseline run).
@@ -334,6 +554,19 @@ impl GuiSession {
             baseline_comparable: comparable,
             baseline_text: baseline.map(|record| record.text),
         })
+    }
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+/// A GUI run's (spec, text, output directory) as a shared-pass target.
+fn run_target(
+    (spec, text, dir): &(ember::v05::spec::ExperimentSpecV1, String, String),
+) -> RunTarget<'_> {
+    RunTarget {
+        resolved: spec,
+        spec_text: text,
+        output_directory: Path::new(dir.as_str()),
+        retain_incomplete: false,
     }
 }
 
@@ -694,6 +927,26 @@ pub(crate) struct RunConfig {
 }
 
 impl RunConfig {
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    /// Key over everything but the layer: the points of one layer sweep.
+    fn sweep_key(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{:?}|{:?}|{}|{}|{:?}|{:?}|{:?}|{}",
+            self.model_path,
+            self.prompt,
+            self.max_new_tokens,
+            self.execution.name(),
+            self.site,
+            self.operation,
+            self.factor.to_bits(),
+            self.alpha.to_bits(),
+            self.source,
+            self.source_layer,
+            self.token,
+            self.span_text,
+        )
+    }
+
     /// Canonical key over the *shared* configuration (model, prompt, site,
     /// layer, token selection, generation limits). Used to decide whether a
     /// restore run is comparable to the stored baseline: the restore leg
@@ -963,7 +1216,8 @@ fn build_and_resolve_spec(
 fn next_output_dir(session: &mut GuiSession, kind: &str) -> String {
     session.run_counter += 1;
     format!(
-        "runs/gui/{kind}-{}-{:02}",
+        "{}/{kind}-{}-{:02}",
+        session.output_root,
         unix_timestamp_seconds(),
         session.run_counter % 100
     )
@@ -1744,6 +1998,145 @@ mod tests {
 
     fn cfg_of(req: &RunRequest) -> RunConfig {
         parse_run_request(req).expect("request parses")
+    }
+
+    /// Two bundles with equal computed content (their spec texts name
+    /// different output directories, so their hashes differ).
+    fn assert_same_content(a: &str, b: &str) {
+        let result = ember::v05::compare::compare_bundles(Path::new(a), Path::new(b)).unwrap();
+        assert!(result
+            .outputs
+            .iter()
+            .all(|output| output.generated_tokens_equal && output.final_top1_equal));
+        assert!(!result.captures.is_empty());
+        assert!(result.captures.iter().all(|capture| capture
+            .metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.exact)));
+    }
+
+    /// Sweep points (one shared pass, then a resumed intervention per
+    /// layer) produce exactly what separate pairs produce, on a synthetic
+    /// model sized for the repository tokenizer.
+    #[test]
+    fn sweep_points_equal_separate_pairs() {
+        let model =
+            crate::experiment_testutil::tiny_model_with_vocab("gui-sweep", 4, 64, true, 128_256);
+        let mut req = base_request();
+        req.model_path = model.model.display().to_string();
+        req.prompt = "The capital of France is".to_string();
+        req.max_new_tokens = 3;
+        req.site = "after-mlp".to_string();
+        req.operation = "scale".to_string();
+        req.factor = Some(-2.0);
+        let mut session = GuiSession::new(KStrategy::Auto, false);
+        session.output_root = model.dir.join("runs").display().to_string();
+        let layers = [0usize, 1, 2, 3];
+        for (index, &layer) in layers.iter().enumerate() {
+            req.layer = Some(layer);
+            let cfg = cfg_of(&req);
+            let point = session.run_sweep_point(&cfg, &layers[index..]).unwrap();
+            assert!(point.verification.ok);
+            // After the first point the pass is cached for the rest.
+            assert_eq!(
+                session.sweep_cache.is_some(),
+                index + 1 < layers.len(),
+                "layer {layer}"
+            );
+            let pair = session.run_baseline_intervention(&cfg).unwrap();
+            assert_same_content(&point.baseline.bundle_dir, &pair.baseline.bundle_dir);
+            assert_same_content(
+                &point.intervention.bundle_dir,
+                &pair.intervention.bundle_dir,
+            );
+            assert_eq!(point.comparison, pair.comparison, "layer {layer}");
+            assert_eq!(point.baseline_key, pair.baseline_key);
+            let runtime: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(Path::new(&point.intervention.bundle_dir).join("runtime.json"))
+                    .unwrap(),
+            )
+            .unwrap();
+            let path = &runtime["prefix_reuse"]["inputs"][0]["path"];
+            assert_eq!(
+                path,
+                if layer == 0 {
+                    "full-recompute"
+                } else {
+                    "resumed"
+                },
+                "layer {layer}"
+            );
+        }
+        // A sweep the cache does not cover rebuilds the pass.
+        req.layer = Some(2);
+        req.factor = Some(0.5);
+        let other = session.run_sweep_point(&cfg_of(&req), &[2, 3]).unwrap();
+        assert!(other.verification.ok);
+    }
+
+    /// The native console's 16-layer sweep, as the worker runs it: one pair
+    /// per layer (the previous path) versus sweep points. Needs a real
+    /// model: `EMBER_TIMING_MODEL=model.gguf cargo test --release --bin
+    /// ember gui_sweep_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing harness; needs EMBER_TIMING_MODEL"]
+    fn gui_sweep_timing() {
+        let Ok(model) = std::env::var("EMBER_TIMING_MODEL") else {
+            return;
+        };
+        let mut req = base_request();
+        req.model_path = model;
+        req.prompt = "The capital of France is".to_string();
+        req.max_new_tokens = 24;
+        req.site = "after-layer".to_string();
+        req.operation = "scale".to_string();
+        req.factor = Some(0.0);
+        let mut session = GuiSession::new(KStrategy::Auto, false);
+        session.ensure_prepared(&req.model_path).unwrap();
+        let layers: Vec<usize> = (0..session.prepared.as_ref().unwrap().n_layers).collect();
+        let mut pairs = Vec::new();
+        let started = std::time::Instant::now();
+        for &layer in &layers {
+            req.layer = Some(layer);
+            pairs.push(session.run_baseline_intervention(&cfg_of(&req)).unwrap());
+        }
+        let pairs_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let started = std::time::Instant::now();
+        let mut points = Vec::new();
+        for (index, &layer) in layers.iter().enumerate() {
+            req.layer = Some(layer);
+            points.push(
+                session
+                    .run_sweep_point(&cfg_of(&req), &layers[index..])
+                    .unwrap(),
+            );
+        }
+        let points_ms = started.elapsed().as_secs_f64() * 1000.0;
+        for (pair, point) in pairs.iter().zip(&points) {
+            eprintln!(
+                "  pair {:.0} ms (baseline gen {:.0}, intervention gen {:.0}) | point {:.0} ms \
+                 (intervention gen {:.0})",
+                pair.elapsed_ms_total,
+                pair.baseline.wall_ms,
+                pair.intervention.wall_ms,
+                point.elapsed_ms_total,
+                point.intervention.wall_ms
+            );
+            assert_same_content(&pair.baseline.bundle_dir, &point.baseline.bundle_dir);
+            assert_same_content(
+                &pair.intervention.bundle_dir,
+                &point.intervention.bundle_dir,
+            );
+            assert_eq!(pair.comparison, point.comparison);
+        }
+        eprintln!(
+            "gui sweep ({} layers, 24 tokens, after-layer scale 0): one pair per layer {:.1} s, \
+             sweep points {:.1} s (first point {:.1} s)",
+            layers.len(),
+            pairs_ms / 1000.0,
+            points_ms / 1000.0,
+            points[0].elapsed_ms_total / 1000.0
+        );
     }
 
     /// Wall-time of a GUI-style baseline+intervention pair, computed as two

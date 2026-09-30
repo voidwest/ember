@@ -897,6 +897,19 @@ impl Console {
         let _ = self.worker_tx.send(WorkerMsg::Run(cfg));
     }
 
+    /// `send_run` for one point of a sweep: `planned` is this layer and the
+    /// layers still queued, so the worker can compute them in one pass.
+    fn send_sweep_point(&mut self, cfg: RunConfig, planned: Vec<usize>) {
+        self.sample = false;
+        self.saved_run = None;
+        self.opened_note = None;
+        self.status = Status::Running;
+        self.step = WorkspaceStep::Review;
+        self.pending_context = Some(self.form_values());
+        self.error = None;
+        let _ = self.worker_tx.send(WorkerMsg::SweepPoint(cfg, planned));
+    }
+
     fn send_restore(&mut self, cfg: RunConfig) {
         self.status = Status::Restoring;
         self.error = None;

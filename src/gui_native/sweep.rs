@@ -95,6 +95,14 @@ impl Console {
         ));
     }
 
+    /// Stop the sweep with nothing in flight (a point could not be sent).
+    fn stop_sweep_now(&mut self) {
+        if let Some(sweep) = self.sweep.as_mut() {
+            sweep.stop = true;
+            sweep.queue.clear();
+        }
+    }
+
     /// Ask the running sweep to stop after the run in flight.
     pub(super) fn stop_sweep(&mut self, cx: &mut Context<Self>) {
         if let Some(sweep) = self.sweep.as_mut() {
@@ -113,6 +121,11 @@ impl Console {
                 return self.finish_sweep(cx);
             }
             let layer = sweep.queue.remove(0);
+            // This layer and every one still queued: the first point runs
+            // one shared pass for all of them (`GuiSession::run_sweep_point`).
+            let planned: Vec<usize> = std::iter::once(layer)
+                .chain(sweep.queue.iter().copied())
+                .collect();
             self.layer = layer.to_string();
             let input = self.inputs.layer.clone();
             self.set_input_value(input, layer.to_string(), cx);
@@ -124,8 +137,25 @@ impl Console {
                 }
                 continue;
             }
-            self.run();
+            self.run_sweep_point(planned);
             return;
+        }
+    }
+
+    /// Send the form's configuration as one point of the running sweep.
+    fn run_sweep_point(&mut self, planned: Vec<usize>) {
+        if self.busy() {
+            return;
+        }
+        match self
+            .build_run_request()
+            .and_then(|req| crate::gui::parse_run_request(&req))
+        {
+            Ok(cfg) => self.send_sweep_point(cfg, planned),
+            Err(error) => {
+                self.error = Some(error);
+                self.stop_sweep_now();
+            }
         }
     }
 

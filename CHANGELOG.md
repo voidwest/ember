@@ -34,6 +34,11 @@ publish this section as a released version until those are closed.
   `verify` (recomputes derivations, metrics and the hash), `compare` and
   `inspect` accept sweeps. Points share the baseline prefix; the example
   16-layer sweep takes ~13 s instead of ~86 s for separate runs.
+- GUI: the layer sweep runs one shared pass on its first point (one
+  generation writes every layer's baseline bundle and records the prompt
+  prefix) and resumes each layer's intervention from it; points still arrive
+  one at a time with the same bundles. A 16-layer sweep of the 1B model takes
+  ~12 s instead of ~20 s.
 - Bundle verification: `experiment verify` no longer writes
   `verification.json` into the bundle (use `--write-report <path>`); an old
   one is ignored. Every parsed bundle file is read once and the verified bytes

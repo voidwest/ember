@@ -95,6 +95,18 @@ fn q8_bytes(values: &[f32]) -> Vec<u8> {
 /// Write a tiny Llama GGUF + word-level tokenizer into a fresh directory.
 /// `embed` must be a multiple of 64 for Q8_0 (two heads of `embed / 4`).
 pub(crate) fn tiny_model(tag: &str, n_layers: usize, embed: usize, q8: bool) -> TinyModel {
+    tiny_model_with_vocab(tag, n_layers, embed, q8, VOCAB)
+}
+
+/// `tiny_model` with a chosen vocabulary size; with the Llama-3 vocabulary
+/// (128256) the repository's `tokenizer.json` fits it, as the GUI assumes.
+pub(crate) fn tiny_model_with_vocab(
+    tag: &str,
+    n_layers: usize,
+    embed: usize,
+    q8: bool,
+    vocab: usize,
+) -> TinyModel {
     let dir = temp_dir(tag);
     let heads = 4usize;
     let kv_heads = 2usize;
@@ -118,7 +130,7 @@ pub(crate) fn tiny_model(tag: &str, n_layers: usize, embed: usize, q8: bool) -> 
         &mut rng,
         "token_embd.weight".into(),
         embed,
-        VOCAB,
+        vocab,
         false,
     )];
     for layer in 0..n_layers {
@@ -147,7 +159,7 @@ pub(crate) fn tiny_model(tag: &str, n_layers: usize, embed: usize, q8: bool) -> 
         dims: vec![embed as u64],
         payload: Payload::F32(rng.fill(embed, 0.1, 1.0)),
     });
-    tensors.push(weight(&mut rng, "output.weight".into(), embed, VOCAB, q8));
+    tensors.push(weight(&mut rng, "output.weight".into(), embed, vocab, q8));
 
     let mut kvs: Vec<(&str, u32, Vec<u8>)> = Vec::new();
     let mut text = Vec::new();
@@ -160,7 +172,7 @@ pub(crate) fn tiny_model(tag: &str, n_layers: usize, embed: usize, q8: bool) -> 
         ("llama.embedding_length", embed as u32),
         ("llama.feed_forward_length", inter as u32),
         ("llama.context_length", 64),
-        ("llama.vocab_size", VOCAB as u32),
+        ("llama.vocab_size", vocab as u32),
     ] {
         kvs.push((key, T_UINT32, value.to_le_bytes().to_vec()));
     }
