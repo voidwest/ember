@@ -110,6 +110,9 @@ harness = false
 # --all-targets --all-features -- -D warnings` on GitHub Actions.
 [lints.clippy]
 all = "warn"
+# Every `unsafe` block and `unsafe impl` carries a `// SAFETY:` comment (the
+# unsafe-hygiene contract in src/lib.rs); CI's `-D warnings` enforces it.
+undocumented_unsafe_blocks = "warn"
 
 [dev-dependencies]
 # Compress historical metadata without changing the frozen bundle bytes.

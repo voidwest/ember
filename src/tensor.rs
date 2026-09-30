@@ -271,11 +271,11 @@ impl CpuTensor {
             .for_each(|(ci, c_chunk)| {
                 let row_start = ci * chunk_rows;
                 let rows = c_chunk.len() / n;
-                // Safety: `c_chunk` is a disjoint row block of `out` with exactly
+                let a_slice = &self.data[row_start * k1..(row_start + rows) * k1];
+                // SAFETY: `c_chunk` is a disjoint row block of `out` with exactly
                 // `rows * n` elements; `a_slice` borrows a disjoint row block of
                 // `self.data` with `rows * k1` elements; both are distinct from
                 // `other.data`. Row-major unit strides match sgemm's expectations.
-                let a_slice = &self.data[row_start * k1..(row_start + rows) * k1];
                 unsafe {
                     matrixmultiply::sgemm(
                         rows,

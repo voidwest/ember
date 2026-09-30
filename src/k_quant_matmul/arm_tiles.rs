@@ -75,6 +75,8 @@ pub(super) fn pack_rows(
 #[target_feature(enable = "neon,dotprod")]
 unsafe fn sdot_lane<const I: i32>(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
     let mut result = acc;
+    // SAFETY: the caller guarantees dotprod; indexed `sdot` works on the
+    // three registers only and touches no memory.
     unsafe {
         std::arch::asm!(
             "sdot {acc:v}.4s, {a:v}.16b, {b:v}.4b[{i}]",
@@ -92,6 +94,8 @@ unsafe fn sdot_lane<const I: i32>(acc: int32x4_t, a: int8x16_t, b: int8x16_t) ->
 #[inline]
 #[target_feature(enable = "neon,dotprod")]
 unsafe fn dot16(acc: int32x4_t, x: *const i8, w: int8x16_t) -> int32x4_t {
+    // SAFETY: the caller guarantees dotprod and 64 readable bytes at `x`
+    // (16 quants of each of the four interleaved rows).
     unsafe {
         let mut acc = sdot_lane::<0>(acc, vld1q_s8(x), w);
         acc = sdot_lane::<1>(acc, vld1q_s8(x.add(16)), w);
@@ -124,6 +128,12 @@ pub(super) unsafe fn q4_tile<const C: usize>(
     let weights = &data[column * row_bytes..(column + C) * row_bytes];
     assert_eq!(group.len(), blocks);
     let mut sums = [vdupq_n_f32(0.0); C];
+    // SAFETY: the caller guarantees dotprod. `weights` is a bounds-checked
+    // slice of `C` whole rows and `b < blocks`, so each 16-byte weight load at
+    // `16 + g * 32 + j` stays inside super-block `b` of column `c`. `x` points
+    // at the 1024 interleaved quants of a `Q8K4Block`; `dot16` reads 64 bytes
+    // from at most offset `4 * 240`. The `d` and `pair_sums` loads read whole
+    // four-element arrays.
     unsafe {
         for (b, activation) in group.iter().enumerate() {
             let x = activation.qs.as_ptr();
@@ -199,6 +209,12 @@ pub(super) unsafe fn q6_tile<const C: usize>(
     let weights = &data[column * row_bytes..(column + C) * row_bytes];
     assert_eq!(group.len(), blocks);
     let mut sums = [vdupq_n_f32(0.0); C];
+    // SAFETY: the caller guarantees dotprod. `weights` is a bounds-checked
+    // slice of `C` whole rows and `b < blocks`, so `block` points at a whole
+    // 210-byte Q6_K super-block: the low-bit loads end at or before byte 128,
+    // the high-bit loads at or before byte 192, and the scale bytes read are
+    // 192..208. `x` points at the 1024 interleaved quants of a `Q8K4Block`;
+    // `dot16` reads 64 bytes from at most offset `4 * 240`.
     unsafe {
         let mask = vdupq_n_u8(15);
         let high_mask = vdupq_n_u8(48);
@@ -342,6 +358,7 @@ pub(super) unsafe fn serial(packed: &[Q8K4Block], rows: usize, w: &KQuantWeight,
 struct DstPtr(*mut f32);
 // SAFETY: every task writes a distinct (row group, column range) rectangle.
 unsafe impl Send for DstPtr {}
+// SAFETY: as for `Send`; shared access never aliases a written element.
 unsafe impl Sync for DstPtr {}
 
 impl DstPtr {
