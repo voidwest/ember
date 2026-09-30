@@ -1579,6 +1579,52 @@ mod x86_64 {
         }
     }
 
+    /// AVX2+FMA adjacent-pair RoPE (Llama layout: pairs `(2d, 2d+1)`).
+    ///
+    /// Works on the interleaved layout directly: each 8-lane vector holds four
+    /// pairs, `vs` is the same vector with every pair swapped and `cc`/`ss`
+    /// repeat each cos/sin value twice. Even lanes take
+    /// `fma(x0, c, -(x1*s))`, odd lanes `fma(x0, s, x1*c)` — exactly the
+    /// scalar `mul_add` expressions, one rounding for each product and one
+    /// for each fused op, so the result is bit-identical to the scalar loop.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2` and `fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
+    #[target_feature(enable = "avx2,fma")]
+    pub(crate) unsafe fn rope_adjacent_pair_avx2(
+        x: &mut [f32],
+        n_heads: usize,
+        head_dim: usize,
+        cos: &[f32],
+        sin: &[f32],
+    ) {
+        unsafe {
+            let half = head_dim / 2;
+            for h in 0..n_heads {
+                let off = h * head_dim;
+                let mut d = 0;
+                while d + 4 <= half {
+                    let ptr = x.as_mut_ptr().add(off + 2 * d);
+                    // [x0_0, x1_0, x0_1, x1_1, ...] and its pair-swapped copy
+                    let v = _mm256_loadu_ps(ptr);
+                    let vs = _mm256_permute_ps::<0b1011_0001>(v);
+                    let c4 = _mm_loadu_ps(cos.as_ptr().add(d));
+                    let s4 = _mm_loadu_ps(sin.as_ptr().add(d));
+                    let cc = _mm256_set_m128(_mm_unpackhi_ps(c4, c4), _mm_unpacklo_ps(c4, c4));
+                    let ss = _mm256_set_m128(_mm_unpackhi_ps(s4, s4), _mm_unpacklo_ps(s4, s4));
+                    // even lanes: x0*c - x1*s (x1*s rounded, then fused)
+                    let even = _mm256_fmsub_ps(v, cc, _mm256_mul_ps(vs, ss));
+                    // odd lanes: x0*s + x1*c (x1*c rounded, then fused)
+                    let odd = _mm256_fmadd_ps(vs, ss, _mm256_mul_ps(v, cc));
+                    _mm256_storeu_ps(ptr, _mm256_blend_ps::<0b1010_1010>(even, odd));
+                    d += 4;
+                }
+                rope_adjacent_pair_scalar_head(&mut x[off..off + head_dim], d, cos, sin);
+            }
+        }
+    }
+
     /// AVX2+FMA fast exp: n = round(x·log2e), r = x − n·ln2 (split hi/lo),
     /// AVX2+FMA fast exp core over raw pointers (shared by the into and
     /// in-place wrappers): n = round(x·log2e), r = x − n·ln2 (split
@@ -2048,6 +2094,63 @@ mod aarch64 {
             while i < n {
                 out[i] = x[i] * scale * weight[i];
                 i += 1;
+            }
+        }
+    }
+
+    /// NEON adjacent-pair RoPE (Llama layout: pairs `(2d, 2d+1)`).
+    ///
+    /// `vld2q_f32` de-interleaves four pairs into `x0`/`x1` lanes and
+    /// `vst2q_f32` re-interleaves the results. `vfmaq_f32(a, b, c)` is the
+    /// fused `a + b*c`, so `x0' = fma(x0, c, -(x1*s))` and
+    /// `x1' = fma(x0, s, x1*c)` round exactly like the scalar `mul_add`
+    /// loop: bit-identical.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
+    #[target_feature(enable = "neon")]
+    pub(crate) unsafe fn rope_adjacent_pair_neon(
+        x: &mut [f32],
+        n_heads: usize,
+        head_dim: usize,
+        cos: &[f32],
+        sin: &[f32],
+    ) {
+        unsafe {
+            let half = head_dim / 2;
+            for h in 0..n_heads {
+                let off = h * head_dim;
+                let mut d = 0;
+                while d + 8 <= half {
+                    // Two independent 4-pair groups per iteration for ILP.
+                    let ptr = x.as_mut_ptr().add(off + 2 * d);
+                    let a = vld2q_f32(ptr);
+                    let b = vld2q_f32(ptr.add(8));
+                    let ca = vld1q_f32(cos.as_ptr().add(d));
+                    let sa = vld1q_f32(sin.as_ptr().add(d));
+                    let cb = vld1q_f32(cos.as_ptr().add(d + 4));
+                    let sb = vld1q_f32(sin.as_ptr().add(d + 4));
+                    let a0 = vfmaq_f32(vnegq_f32(vmulq_f32(a.1, sa)), a.0, ca);
+                    let a1 = vfmaq_f32(vmulq_f32(a.1, ca), a.0, sa);
+                    let b0 = vfmaq_f32(vnegq_f32(vmulq_f32(b.1, sb)), b.0, cb);
+                    let b1 = vfmaq_f32(vmulq_f32(b.1, cb), b.0, sb);
+                    vst2q_f32(ptr, float32x4x2_t(a0, a1));
+                    vst2q_f32(ptr.add(8), float32x4x2_t(b0, b1));
+                    d += 8;
+                }
+                while d + 4 <= half {
+                    let ptr = x.as_mut_ptr().add(off + 2 * d);
+                    let pairs = vld2q_f32(ptr);
+                    let (x0, x1) = (pairs.0, pairs.1);
+                    let c = vld1q_f32(cos.as_ptr().add(d));
+                    let s = vld1q_f32(sin.as_ptr().add(d));
+                    let out0 = vfmaq_f32(vnegq_f32(vmulq_f32(x1, s)), x0, c);
+                    let out1 = vfmaq_f32(vmulq_f32(x1, c), x0, s);
+                    vst2q_f32(ptr, float32x4x2_t(out0, out1));
+                    d += 4;
+                }
+                rope_adjacent_pair_scalar_head(&mut x[off..off + head_dim], d, cos, sin);
             }
         }
     }
@@ -2875,6 +2978,77 @@ pub(crate) fn rope_split_half(
     }
 }
 
+/// SIMD adjacent-pair RoPE (Llama layout): for each head and pair `d`,
+/// `x[2d] = x[2d]*c - x[2d+1]*s; x[2d+1] = x[2d]*s + x[2d+1]*c` with the
+/// products and fused adds of [`rope_adjacent_pair_scalar`]. Every SIMD path
+/// is bit-identical to that scalar loop (same `mul_add` rounding per lane),
+/// which the tests below pin including odd tails.
+#[inline]
+pub(crate) fn rope_adjacent_pair(
+    x: &mut [f32],
+    n_heads: usize,
+    head_dim: usize,
+    cos: &[f32],
+    sin: &[f32],
+) {
+    let half = head_dim / 2;
+    assert!(
+        head_dim > 0 && head_dim.is_multiple_of(2),
+        "RoPE head dimension must be positive and even"
+    );
+    let expected_x = n_heads
+        .checked_mul(head_dim)
+        .expect("RoPE input length overflow");
+    assert_eq!(x.len(), expected_x, "RoPE input length mismatch");
+    assert_eq!(cos.len(), half, "RoPE cosine length mismatch");
+    assert_eq!(sin.len(), half, "RoPE sine length mismatch");
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted above.
+            unsafe {
+                return x86_64::rope_adjacent_pair_avx2(x, n_heads, head_dim, cos, sin);
+            }
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; lengths asserted above.
+            unsafe {
+                return aarch64::rope_adjacent_pair_neon(x, n_heads, head_dim, cos, sin);
+            }
+        }
+    }
+    rope_adjacent_pair_scalar(x, n_heads, head_dim, cos, sin);
+}
+
+/// Scalar adjacent-pair RoPE: the reference the SIMD kernels must match.
+pub(crate) fn rope_adjacent_pair_scalar(
+    x: &mut [f32],
+    n_heads: usize,
+    head_dim: usize,
+    cos: &[f32],
+    sin: &[f32],
+) {
+    for h in 0..n_heads {
+        let off = h * head_dim;
+        rope_adjacent_pair_scalar_head(&mut x[off..off + head_dim], 0, cos, sin);
+    }
+}
+
+/// Scalar adjacent-pair RoPE over one head, pairs `start..head_dim/2`
+/// (the SIMD kernels' tail).
+#[inline]
+fn rope_adjacent_pair_scalar_head(head: &mut [f32], start: usize, cos: &[f32], sin: &[f32]) {
+    for d in start..head.len() / 2 {
+        let x0 = head[2 * d];
+        let x1 = head[2 * d + 1];
+        head[2 * d] = x0.mul_add(cos[d], -(x1 * sin[d]));
+        head[2 * d + 1] = x0.mul_add(sin[d], x1 * cos[d]);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
@@ -3692,6 +3866,102 @@ mod tests {
             .install(|| matmul_q8_0_batch(&packed, rows, &w, &mut got));
 
         assert_close("tiled q8 batch", &got, &expected, 1e-5, 1e-5);
+    }
+
+    /// Deterministic values spanning signs, magnitudes and subnormal-ish
+    /// ranges, so FMA-vs-separate rounding differences would show.
+    fn rope_test_values(len: usize, seed: u32) -> Vec<f32> {
+        let mut state = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+        (0..len)
+            .map(|i| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                let unit = (state >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+                let scale = [1.0e-3, 0.37, 1.0, 17.5, 3.0e4][i % 5];
+                unit * scale
+            })
+            .collect()
+    }
+
+    fn rope_tables(half: usize, position: usize) -> (Vec<f32>, Vec<f32>) {
+        (0..half)
+            .map(|d| {
+                let freq = 10_000f32.powf(-(2.0 * d as f32) / (2 * half) as f32);
+                let angle = position as f32 * freq;
+                (angle.cos(), angle.sin())
+            })
+            .unzip()
+    }
+
+    /// The dispatched adjacent-pair RoPE (NEON / AVX2+FMA / scalar) must be
+    /// bit-identical to the scalar reference loop, including heads whose pair
+    /// count leaves a tail shorter than one SIMD vector.
+    #[test]
+    fn rope_adjacent_pair_simd_is_bit_identical_to_scalar() {
+        for head_dim in [2usize, 4, 6, 8, 10, 14, 30, 64, 66, 128, 130] {
+            for n_heads in [1usize, 3, 8] {
+                for position in [0usize, 1, 7, 513] {
+                    let (cos, sin) = rope_tables(head_dim / 2, position);
+                    let input =
+                        rope_test_values(n_heads * head_dim, (head_dim * 31 + n_heads) as u32);
+                    let mut expected = input.clone();
+                    for h in 0..n_heads {
+                        for d in 0..head_dim / 2 {
+                            let i0 = h * head_dim + 2 * d;
+                            let (x0, x1) = (expected[i0], expected[i0 + 1]);
+                            expected[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
+                            expected[i0 + 1] = x0.mul_add(sin[d], x1 * cos[d]);
+                        }
+                    }
+                    let mut simd = input.clone();
+                    super::rope_adjacent_pair(&mut simd, n_heads, head_dim, &cos, &sin);
+                    let mut scalar = input;
+                    super::rope_adjacent_pair_scalar(&mut scalar, n_heads, head_dim, &cos, &sin);
+                    for (i, ((got, reference), want)) in
+                        simd.iter().zip(&scalar).zip(&expected).enumerate()
+                    {
+                        assert_eq!(
+                            got.to_bits(),
+                            want.to_bits(),
+                            "dispatched head_dim={head_dim} n_heads={n_heads} pos={position} i={i}"
+                        );
+                        assert_eq!(
+                            reference.to_bits(),
+                            want.to_bits(),
+                            "scalar head_dim={head_dim} n_heads={n_heads} pos={position} i={i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Split-half RoPE dispatch stays bit-identical to its scalar loop too
+    /// (the eager prefill now routes both layouts through `simd`).
+    #[test]
+    fn rope_split_half_simd_is_bit_identical_to_scalar() {
+        for head_dim in [2usize, 6, 16, 18, 64, 128, 130] {
+            for n_heads in [1usize, 3] {
+                let (cos, sin) = rope_tables(head_dim / 2, 11);
+                let input = rope_test_values(n_heads * head_dim, head_dim as u32);
+                let half = head_dim / 2;
+                let mut expected = input.clone();
+                for h in 0..n_heads {
+                    for d in 0..half {
+                        let (i0, i1) = (h * head_dim + d, h * head_dim + d + half);
+                        let (x0, x1) = (expected[i0], expected[i1]);
+                        expected[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
+                        expected[i1] = x0.mul_add(sin[d], x1 * cos[d]);
+                    }
+                }
+                let mut got = input;
+                super::rope_split_half(&mut got, n_heads, head_dim, &cos, &sin);
+                let got_bits: Vec<u32> = got.iter().map(|v| v.to_bits()).collect();
+                let want_bits: Vec<u32> = expected.iter().map(|v| v.to_bits()).collect();
+                assert_eq!(got_bits, want_bits, "head_dim={head_dim} n_heads={n_heads}");
+            }
+        }
     }
 
     #[test]

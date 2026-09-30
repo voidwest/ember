@@ -410,6 +410,27 @@ impl<B: Backend> LlamaMlp<B> {
 
 impl<B: Backend> Module<B> for LlamaMlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let mut gate = backend.zeroes(&[0, 0])?;
+        let mut up = backend.zeroes(&[0, 0])?;
+        let mut out = backend.zeroes(&[0, 0])?;
+        self.forward_reusing(backend, x, &mut gate, &mut up, &mut out)?;
+        Ok(out)
+    }
+}
+
+impl<B: Backend> LlamaMlp<B> {
+    /// SwiGLU forward writing into caller-owned buffers: `gate` and `up`
+    /// hold the intermediates (SiLU and the gating multiply run in place on
+    /// `gate`), `out` receives the down projection. Bit-identical to the
+    /// allocating [`Module::forward`], which delegates here.
+    fn forward_reusing(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        gate: &mut B::Tensor,
+        up: &mut B::Tensor,
+        out: &mut B::Tensor,
+    ) -> Result<(), B::Error> {
         use crate::trace::{self, OpKind};
         use std::time::Instant;
 
@@ -419,11 +440,11 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 
         // -- gate projection --
         let t0 = tracing.then(Instant::now);
-        let gate = self.gate_proj.forward(backend, x)?;
-        let inter_dim = backend.shape(&gate)[1];
+        self.gate_proj.forward_reusing(backend, x, gate)?;
+        let inter_dim = backend.shape(gate)[1];
         if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
-                Some(trace::compute_tensor_values(backend.data(&gate)))
+                Some(trace::compute_tensor_values(backend.data(gate)))
             } else {
                 None
             };
@@ -443,10 +464,10 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 
         // -- silu --
         let t0 = tracing.then(Instant::now);
-        let gate = backend.silu(&gate)?;
+        backend.silu_in_place(gate)?;
         if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
-                Some(trace::compute_tensor_values(backend.data(&gate)))
+                Some(trace::compute_tensor_values(backend.data(gate)))
             } else {
                 None
             };
@@ -466,10 +487,10 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 
         // -- up projection --
         let t0 = tracing.then(Instant::now);
-        let up = self.up_proj.forward(backend, x)?;
+        self.up_proj.forward_reusing(backend, x, up)?;
         if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
-                Some(trace::compute_tensor_values(backend.data(&up)))
+                Some(trace::compute_tensor_values(backend.data(up)))
             } else {
                 None
             };
@@ -489,10 +510,10 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 
         // -- elemul (gating) --
         let t0 = tracing.then(Instant::now);
-        let gated = backend.elemul(&gate, &up)?;
+        backend.elemul_in_place(gate, up)?;
         if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
-                Some(trace::compute_tensor_values(backend.data(&gated)))
+                Some(trace::compute_tensor_values(backend.data(gate)))
             } else {
                 None
             };
@@ -512,10 +533,10 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 
         // -- down projection --
         let t0 = tracing.then(Instant::now);
-        let result = self.down_proj.forward(backend, &gated)?;
+        self.down_proj.forward_reusing(backend, gate, out)?;
         if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
-                Some(trace::compute_tensor_values(backend.data(&result)))
+                Some(trace::compute_tensor_values(backend.data(out)))
             } else {
                 None
             };
@@ -533,7 +554,7 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
             );
         }
 
-        Ok(result)
+        Ok(())
     }
 }
 
@@ -707,29 +728,75 @@ fn apply_headwise_rms_norm(
 
 fn apply_rope_and_qk_norm<B: Backend>(
     backend: &B,
-    x: B::Tensor,
+    mut x: B::Tensor,
     rope_cos: &B::Tensor,
     rope_sin: &B::Tensor,
     spec: RopeQkNormSpec,
     norm: Option<&B::Tensor>,
     block_boundaries: Option<&[usize]>,
 ) -> Result<B::Tensor, B::Error> {
-    let seq_len = backend.shape(&x)[0];
-    let width = spec.n_heads * spec.head_dim;
-    let half = spec.head_dim / 2;
+    apply_rope_and_qk_norm_in_place(
+        backend,
+        &mut x,
+        rope_cos,
+        rope_sin,
+        spec,
+        norm,
+        block_boundaries,
+    )?;
+    Ok(x)
+}
+
+/// RoPE plus optional Q/K RMSNorm over a `[seq_len, n_heads * head_dim]`
+/// tensor, mutating its storage in place (no reallocation on the CPU
+/// backend).
+fn apply_rope_and_qk_norm_in_place<B: Backend>(
+    backend: &B,
+    x: &mut B::Tensor,
+    rope_cos: &B::Tensor,
+    rope_sin: &B::Tensor,
+    spec: RopeQkNormSpec,
+    norm: Option<&B::Tensor>,
+    block_boundaries: Option<&[usize]>,
+) -> Result<(), B::Error> {
+    let seq_len = backend.shape(x)[0];
     let cos_data = backend.data(rope_cos);
     let sin_data = backend.data(rope_sin);
-    let mut data = backend.into_cpu_data(x);
+    let norm_data = norm.map(|norm| backend.data(norm));
+    backend.update_in_place(x, |data| {
+        rope_and_qk_norm_rows(
+            data,
+            seq_len,
+            cos_data,
+            sin_data,
+            spec,
+            norm_data,
+            block_boundaries,
+        );
+    })
+}
+
+fn rope_and_qk_norm_rows(
+    data: &mut [f32],
+    seq_len: usize,
+    cos_data: &[f32],
+    sin_data: &[f32],
+    spec: RopeQkNormSpec,
+    norm_data: Option<&[f32]>,
+    block_boundaries: Option<&[usize]>,
+) {
+    let width = spec.n_heads * spec.head_dim;
+    let half = spec.head_dim / 2;
 
     if spec.qk_norm_order == QkNormOrder::BeforeRope
-        && let Some(norm) = norm
+        && let Some(norm_data) = norm_data
     {
         apply_headwise_rms_norm(
-            &mut data,
+            data,
             seq_len,
             spec.n_heads,
             spec.head_dim,
-            backend.data(norm),
+            norm_data,
             spec.qk_norm_eps,
         );
     }
@@ -746,41 +813,31 @@ fn apply_rope_and_qk_norm<B: Backend>(
         let pos = spec.start_pos + s - block_start;
         let cos_row = &cos_data[pos * half..(pos + 1) * half];
         let sin_row = &sin_data[pos * half..(pos + 1) * half];
-
-        for h in 0..spec.n_heads {
-            let base = s * width + h * spec.head_dim;
-
-            for d in 0..half {
-                let (i0, i1) = match spec.rope_layout {
-                    RopeLayout::AdjacentPair => (base + 2 * d, base + 2 * d + 1),
-                    RopeLayout::SplitHalf => (base + d, base + d + half),
-                };
-
-                let x0 = data[i0];
-                let x1 = data[i1];
-                let c = cos_row[d];
-                let si = sin_row[d];
-
-                data[i0] = x0.mul_add(c, -(x1 * si));
-                data[i1] = x0.mul_add(si, x1 * c);
+        let row = &mut data[s * width..(s + 1) * width];
+        // Both kernels are bit-identical to the scalar
+        // `x0.mul_add(c, -(x1 * s))` / `x0.mul_add(s, x1 * c)` rotation.
+        match spec.rope_layout {
+            RopeLayout::AdjacentPair => {
+                crate::simd::rope_adjacent_pair(row, spec.n_heads, spec.head_dim, cos_row, sin_row)
+            }
+            RopeLayout::SplitHalf => {
+                crate::simd::rope_split_half(row, spec.n_heads, spec.head_dim, cos_row, sin_row)
             }
         }
     }
 
     if spec.qk_norm_order == QkNormOrder::AfterRope
-        && let Some(norm) = norm
+        && let Some(norm_data) = norm_data
     {
         apply_headwise_rms_norm(
-            &mut data,
+            data,
             seq_len,
             spec.n_heads,
             spec.head_dim,
-            backend.data(norm),
+            norm_data,
             spec.qk_norm_eps,
         );
     }
-
-    backend.load_from_cpu(data, &[seq_len, width])
 }
 
 impl LlamaAttention<CpuBackend> {
@@ -818,17 +875,7 @@ impl LlamaAttention<CpuBackend> {
                 crate::simd::rope_split_half(data, n_heads, self.head_dim, cos, sin);
             }
             RopeLayout::AdjacentPair => {
-                for head in 0..n_heads {
-                    let head_start = head * self.head_dim;
-                    for d in 0..half {
-                        let i0 = head_start + 2 * d;
-                        let i1 = i0 + 1;
-                        let x0 = data[i0];
-                        let x1 = data[i1];
-                        data[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
-                        data[i1] = x0.mul_add(sin[d], x1 * cos[d]);
-                    }
-                }
+                crate::simd::rope_adjacent_pair(data, n_heads, self.head_dim, cos, sin);
             }
         }
 
@@ -980,8 +1027,42 @@ impl<B: Backend> LlamaAttention<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        let mut scratch = LlamaAttentionScratch::new(backend)?;
+        let mut out = backend.zeroes(&[0, 0])?;
+        self.forward_with_cache_reusing(
+            backend,
+            x,
+            cache,
+            layer,
+            start_pos,
+            &mut scratch,
+            &mut out,
+        )?;
+        Ok(out)
+    }
+
+    /// [`LlamaAttention::forward_with_cache`] writing the projected
+    /// attention output into `out` and every intermediate into `scratch`,
+    /// so a prefill reuses one set of buffers across all layers.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_with_cache_reusing(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        layer: usize,
+        start_pos: usize,
+        scratch: &mut LlamaAttentionScratch<B::Tensor>,
+        out: &mut B::Tensor,
+    ) -> Result<(), B::Error> {
         use crate::trace::{self, OpKind};
 
+        let LlamaAttentionScratch {
+            q,
+            k,
+            v,
+            attention: attention_out,
+        } = scratch;
         let seq_len_in = backend.shape(x)[0];
         let embed_dim = backend.shape(x)[1];
 
@@ -994,8 +1075,8 @@ impl<B: Backend> LlamaAttention<B> {
             trace::bytes_matmul_input(seq_len_in, embed_dim, self.q_proj.weight_bytes(backend)),
             trace::flops_matmul(seq_len_in, self.n_heads * self.head_dim, embed_dim),
         );
-        let q = self.q_proj.forward(backend, x)?;
-        let q_dim = backend.shape(&q)[1];
+        self.q_proj.forward_reusing(backend, x, q)?;
+        let q_dim = backend.shape(q)[1];
         if let Some(s) = _span_q {
             s.end(
                 vec![seq_len_in, q_dim],
@@ -1013,7 +1094,7 @@ impl<B: Backend> LlamaAttention<B> {
             trace::bytes_matmul_input(seq_len_in, embed_dim, self.k_proj.weight_bytes(backend)),
             trace::flops_matmul(seq_len_in, kv_dim, embed_dim),
         );
-        let k = self.k_proj.forward(backend, x)?;
+        self.k_proj.forward_reusing(backend, x, k)?;
         if let Some(s) = _span_k {
             s.end(
                 vec![seq_len_in, kv_dim],
@@ -1030,7 +1111,7 @@ impl<B: Backend> LlamaAttention<B> {
             trace::bytes_matmul_input(seq_len_in, embed_dim, self.v_proj.weight_bytes(backend)),
             trace::flops_matmul(seq_len_in, kv_dim, embed_dim),
         );
-        let v = self.v_proj.forward(backend, x)?;
+        self.v_proj.forward_reusing(backend, x, v)?;
         if let Some(s) = _span_v {
             s.end(
                 vec![seq_len_in, kv_dim],
@@ -1038,7 +1119,7 @@ impl<B: Backend> LlamaAttention<B> {
             );
         }
 
-        let seq_len = backend.shape(&q)[0];
+        let seq_len = backend.shape(q)[0];
         let head_dim = self.head_dim;
 
         // -- RoPE Q --
@@ -1051,7 +1132,7 @@ impl<B: Backend> LlamaAttention<B> {
             trace::bytes_from_shape(&[seq_len, q_width]),
             trace::flops_rope(seq_len, q_width),
         );
-        let q = apply_rope_and_qk_norm(
+        apply_rope_and_qk_norm_in_place(
             backend,
             q,
             &self.rope_cos,
@@ -1084,7 +1165,7 @@ impl<B: Backend> LlamaAttention<B> {
             trace::bytes_from_shape(&[seq_len, k_width]),
             trace::flops_rope(seq_len, k_width),
         );
-        let k = apply_rope_and_qk_norm(
+        apply_rope_and_qk_norm_in_place(
             backend,
             k,
             &self.rope_cos,
@@ -1107,8 +1188,8 @@ impl<B: Backend> LlamaAttention<B> {
             );
         }
 
-        let k_data = backend.data(&k);
-        let v_data = backend.data(&v);
+        let k_data = backend.data(k);
+        let v_data = backend.data(v);
 
         // -- KV cache store --
         let _span_kv_store = llama_trace_span!(
@@ -1146,8 +1227,8 @@ impl<B: Backend> LlamaAttention<B> {
             trace::flops_attention(seq_len, self.n_heads, head_dim, total_seq_len),
         );
         let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(layer);
-        let result = backend.cached_causal_attention_with_scratch(
-            &q,
+        backend.cached_causal_attention_reusing(
+            q,
             cached_k,
             cached_v,
             CachedAttentionSpec {
@@ -1158,8 +1239,9 @@ impl<B: Backend> LlamaAttention<B> {
                 total_seq_len,
             },
             qk_scratch,
+            attention_out,
         )?;
-        let attn_out_dim = backend.shape(&result)[1];
+        let attn_out_dim = backend.shape(attention_out)[1];
         if let Some(s) = _span_attn {
             s.end(
                 vec![seq_len, attn_out_dim],
@@ -1176,7 +1258,7 @@ impl<B: Backend> LlamaAttention<B> {
             trace::bytes_matmul_input(seq_len, attn_out_dim, self.o_proj.weight_bytes(backend)),
             trace::flops_matmul(seq_len, embed_dim, attn_out_dim),
         );
-        let result = self.o_proj.forward(backend, &result)?;
+        self.o_proj.forward_reusing(backend, attention_out, out)?;
         if let Some(s) = _span_o {
             s.end(
                 vec![seq_len, embed_dim],
@@ -1184,7 +1266,7 @@ impl<B: Backend> LlamaAttention<B> {
             );
         }
 
-        Ok(result)
+        Ok(())
     }
 }
 
@@ -1252,18 +1334,37 @@ impl<B: Backend> LlamaBlock<B> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
         let mut hooks = DisabledHooks;
-        self.forward_with_cache_hooked(backend, x, cache, layer, start_pos, &mut hooks)
+        let mut scratch = LlamaLayerScratch::new(backend)?;
+        let mut x = x.clone();
+        self.forward_with_cache_hooked(
+            backend,
+            &mut x,
+            cache,
+            layer,
+            start_pos,
+            &mut hooks,
+            &mut scratch,
+        )?;
+        Ok(x)
     }
 
+    /// One cached decoder block over the residual stream `x`, updated in
+    /// place. Every intermediate lives in `scratch`, which the caller keeps
+    /// across layers, so a prefill allocates its buffers once instead of
+    /// once per layer and operation. Bit-identical to the former
+    /// allocate-per-op form: same kernels in the same order, and the
+    /// residual adds are the same single IEEE add per element.
+    #[allow(clippy::too_many_arguments)]
     fn forward_with_cache_hooked<H>(
         &self,
         backend: &B,
-        x: &B::Tensor,
+        x: &mut B::Tensor,
         cache: &mut crate::kv_cache::KVCache,
         layer: usize,
         start_pos: usize,
         hooks: &mut H,
-    ) -> Result<B::Tensor, B::Error>
+        scratch: &mut LlamaLayerScratch<B::Tensor>,
+    ) -> Result<(), B::Error>
     where
         H: LayerHooks<B::Tensor, B::Error>,
     {
@@ -1271,9 +1372,16 @@ impl<B: Backend> LlamaBlock<B> {
 
         trace::set_current_layer(layer);
 
+        let LlamaLayerScratch {
+            normed,
+            attention,
+            attention_out,
+            gate,
+            up,
+            mlp_out,
+        } = scratch;
         let embed_dim = backend.shape(x)[1];
         let seq_len = backend.shape(x)[0];
-        let x_shape = vec![seq_len, embed_dim];
         let x_bytes = trace::bytes_from_shape(backend.shape(x));
         let norm_bytes = trace::bytes_from_shape(backend.shape(&self.input_layernorm));
 
@@ -1282,39 +1390,45 @@ impl<B: Backend> LlamaBlock<B> {
             "attn_rms_norm",
             layer,
             OpKind::RmsNorm,
-            x_shape.clone(),
+            vec![seq_len, embed_dim],
             x_bytes + norm_bytes,
             trace::flops_rms_norm(seq_len, embed_dim),
         );
-        let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
-        let normed_shape = backend.shape(&normed).to_vec();
-        let normed_bytes = trace::bytes_from_shape(backend.shape(&normed));
+        backend.rms_norm_reusing(x, &self.input_layernorm, self.norm_eps, normed)?;
         if let Some(s) = _span_attn_norm {
-            s.end(normed_shape, normed_bytes);
+            s.end(
+                backend.shape(normed).to_vec(),
+                trace::bytes_from_shape(backend.shape(normed)),
+            );
         }
 
         // attention (cached) — sub-spans are inside LlamaAttention::forward_with_cache
-        let mut attn_out = self
-            .self_attn
-            .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
-        hooks.after_attention(layer, &mut attn_out)?;
+        self.self_attn.forward_with_cache_reusing(
+            backend,
+            normed,
+            cache,
+            layer,
+            start_pos,
+            attention,
+            attention_out,
+        )?;
+        hooks.after_attention(layer, attention_out)?;
 
         // -- attn residual add --
-        let attn_out_bytes = trace::bytes_from_shape(backend.shape(&attn_out));
-        #[allow(clippy::needless_borrow)]
+        let attn_out_bytes = trace::bytes_from_shape(backend.shape(attention_out));
         let _span_attn_add = llama_trace_span!(
             "attn_residual_add",
             layer,
             OpKind::ResidualAdd,
-            x_shape.clone(),
+            vec![seq_len, embed_dim],
             x_bytes + attn_out_bytes,
-            trace::flops_residual_add(backend.data(&x).len()),
+            trace::flops_residual_add(backend.data(x).len()),
         );
-        let x = backend.add(x, &attn_out)?;
+        backend.add_in_place(x, attention_out)?;
         if let Some(s) = _span_attn_add {
             s.end(
-                vec![backend.shape(&x)[0], backend.shape(&x)[1]],
-                trace::bytes_from_shape(backend.shape(&x)),
+                vec![backend.shape(x)[0], backend.shape(x)[1]],
+                trace::bytes_from_shape(backend.shape(x)),
             );
         }
 
@@ -1324,41 +1438,89 @@ impl<B: Backend> LlamaBlock<B> {
             "mlp_rms_norm",
             layer,
             OpKind::RmsNorm,
-            vec![backend.shape(&x)[0], backend.shape(&x)[1]],
-            trace::bytes_from_shape(backend.shape(&x)) + mlp_norm_bytes,
-            trace::flops_rms_norm(backend.shape(&x)[0], backend.shape(&x)[1]),
+            vec![backend.shape(x)[0], backend.shape(x)[1]],
+            trace::bytes_from_shape(backend.shape(x)) + mlp_norm_bytes,
+            trace::flops_rms_norm(backend.shape(x)[0], backend.shape(x)[1]),
         );
-        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
-        let normed_shape = backend.shape(&normed).to_vec();
-        let normed_bytes = trace::bytes_from_shape(backend.shape(&normed));
+        backend.rms_norm_reusing(x, &self.post_attention_layernorm, self.norm_eps, normed)?;
         if let Some(s) = _span_mlp_norm {
-            s.end(normed_shape, normed_bytes);
+            s.end(
+                backend.shape(normed).to_vec(),
+                trace::bytes_from_shape(backend.shape(normed)),
+            );
         }
 
-        // swiglu mlp — sub-spans are inside LlamaMlp::forward
-        let mut mlp_out = self.mlp.forward(backend, &normed)?;
-        hooks.after_mlp(layer, &mut mlp_out)?;
+        // swiglu mlp — sub-spans are inside LlamaMlp::forward_reusing
+        self.mlp
+            .forward_reusing(backend, normed, gate, up, mlp_out)?;
+        hooks.after_mlp(layer, mlp_out)?;
 
         // -- mlp residual add --
-        let mlp_out_bytes = trace::bytes_from_shape(backend.shape(&mlp_out));
-        #[allow(clippy::needless_borrow)]
+        let mlp_out_bytes = trace::bytes_from_shape(backend.shape(mlp_out));
         let _span_mlp_add = llama_trace_span!(
             "mlp_residual_add",
             layer,
             OpKind::ResidualAdd,
-            vec![backend.shape(&x)[0], backend.shape(&x)[1]],
-            trace::bytes_from_shape(backend.shape(&x)) + mlp_out_bytes,
-            trace::flops_residual_add(backend.data(&x).len()),
+            vec![backend.shape(x)[0], backend.shape(x)[1]],
+            trace::bytes_from_shape(backend.shape(x)) + mlp_out_bytes,
+            trace::flops_residual_add(backend.data(x).len()),
         );
-        let result = backend.add(&x, &mlp_out)?;
+        backend.add_in_place(x, mlp_out)?;
         if let Some(s) = _span_mlp_add {
             s.end(
-                vec![backend.shape(&result)[0], backend.shape(&result)[1]],
-                trace::bytes_from_shape(backend.shape(&result)),
+                vec![backend.shape(x)[0], backend.shape(x)[1]],
+                trace::bytes_from_shape(backend.shape(x)),
             );
         }
 
-        Ok(result)
+        Ok(())
+    }
+}
+
+/// Attention intermediates reused across the layers of one forward call.
+pub(crate) struct LlamaAttentionScratch<T> {
+    q: T,
+    k: T,
+    v: T,
+    /// Attention context before the output projection.
+    attention: T,
+}
+
+impl<T> LlamaAttentionScratch<T> {
+    fn new<B: Backend<Tensor = T>>(backend: &B) -> Result<Self, B::Error> {
+        Ok(Self {
+            q: backend.zeroes(&[0, 0])?,
+            k: backend.zeroes(&[0, 0])?,
+            v: backend.zeroes(&[0, 0])?,
+            attention: backend.zeroes(&[0, 0])?,
+        })
+    }
+}
+
+/// Decoder-block intermediates reused across the layers of one eager
+/// (generic/hooked) forward call. Each buffer grows to the prompt's size on
+/// the first layer and is overwritten, never reallocated, by later layers.
+pub(crate) struct LlamaLayerScratch<T> {
+    normed: T,
+    attention: LlamaAttentionScratch<T>,
+    /// Attention block output (after `o_proj`), exposed to hooks.
+    attention_out: T,
+    gate: T,
+    up: T,
+    /// MLP block output (after `down_proj`), exposed to hooks.
+    mlp_out: T,
+}
+
+impl<T> LlamaLayerScratch<T> {
+    pub(crate) fn new<B: Backend<Tensor = T>>(backend: &B) -> Result<Self, B::Error> {
+        Ok(Self {
+            normed: backend.zeroes(&[0, 0])?,
+            attention: LlamaAttentionScratch::new(backend)?,
+            attention_out: backend.zeroes(&[0, 0])?,
+            gate: backend.zeroes(&[0, 0])?,
+            up: backend.zeroes(&[0, 0])?,
+            mlp_out: backend.zeroes(&[0, 0])?,
+        })
     }
 }
 
@@ -3179,7 +3341,7 @@ impl<B: Backend> Llama<B> {
         );
         let embed_dim = self.config.embed_dim;
         let x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
-        self.forward_embeddings_with_cache(backend, &x, cache, start_pos)
+        self.forward_owned_embeddings_with_cache(backend, x, cache, start_pos)
     }
 
     /// forward pass with incremental kv caching over precomputed embeddings.
@@ -3200,13 +3362,34 @@ impl<B: Backend> Llama<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        cache.validate_start_pos(start_pos);
-        let seq_len = backend.shape(embeddings)[0];
-        assert!(seq_len > 0, "Llama forward requires at least one embedding");
-        let mut x = embeddings.clone();
+        self.forward_owned_embeddings_with_cache(backend, embeddings.clone(), cache, start_pos)
+    }
 
+    /// [`Llama::forward_embeddings_with_cache`] over an owned residual
+    /// stream, which the layers update in place.
+    fn forward_owned_embeddings_with_cache(
+        &self,
+        backend: &B,
+        mut x: B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        let seq_len = backend.shape(&x)[0];
+        assert!(seq_len > 0, "Llama forward requires at least one embedding");
+
+        let mut hooks = DisabledHooks;
+        let mut scratch = LlamaLayerScratch::new(backend)?;
         for (layer, block) in self.blocks.iter().enumerate() {
-            x = block.forward_with_cache(backend, &x, cache, layer, start_pos)?;
+            block.forward_with_cache_hooked(
+                backend,
+                &mut x,
+                cache,
+                layer,
+                start_pos,
+                &mut hooks,
+                &mut scratch,
+            )?;
         }
         // advance the cache cursor after all layers have stored k/v
         for _ in 0..seq_len {
@@ -3282,7 +3465,9 @@ impl<B: Backend> Llama<B> {
             );
         }
 
-        self.forward_last_logits_embeddings_with_cache_hooked(backend, &x, cache, start_pos, hooks)
+        self.forward_last_logits_owned_embeddings_with_cache_hooked(
+            backend, x, cache, start_pos, hooks,
+        )
     }
 
     /// last-logits forward over precomputed embeddings (hooked).
@@ -3300,17 +3485,47 @@ impl<B: Backend> Llama<B> {
     where
         H: LayerHooks<B::Tensor, B::Error>,
     {
+        self.forward_last_logits_owned_embeddings_with_cache_hooked(
+            backend,
+            embeddings.clone(),
+            cache,
+            start_pos,
+            hooks,
+        )
+    }
+
+    /// Hooked last-logits forward over an owned residual stream, which the
+    /// layers update in place through one shared [`LlamaLayerScratch`].
+    fn forward_last_logits_owned_embeddings_with_cache_hooked<H>(
+        &self,
+        backend: &B,
+        mut x: B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         cache.validate_start_pos(start_pos);
-        let seq_len = backend.shape(embeddings)[0];
+        let seq_len = backend.shape(&x)[0];
         let embed_dim = self.config.embed_dim;
         assert!(seq_len > 0, "Llama forward requires at least one embedding");
-        let mut x = embeddings.clone();
 
+        let mut scratch = LlamaLayerScratch::new(backend)?;
         for (layer, block) in self.blocks.iter().enumerate() {
             hooks.before_layer(layer, &mut x)?;
-            x = block.forward_with_cache_hooked(backend, &x, cache, layer, start_pos, hooks)?;
+            block.forward_with_cache_hooked(
+                backend,
+                &mut x,
+                cache,
+                layer,
+                start_pos,
+                hooks,
+                &mut scratch,
+            )?;
             hooks.after_layer(layer, &mut x)?;
         }
         for _ in 0..seq_len {
@@ -4329,6 +4544,61 @@ mod tests {
             "disabled hook dispatch must not allocate once per layer"
         );
     }
+
+    /// Allocation events of a multi-token (generic/eager) prefill into a
+    /// fresh cache, after one warm-up prefill has sized the thread-local
+    /// activation and attention-score buffers. Runs on a one-thread Rayon
+    /// pool so every kernel executes (and is counted) on the measuring
+    /// thread and no count depends on the global job injector.
+    fn warmed_prefill_allocation_count(n_layers: usize, qwen: bool) -> usize {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let mut model = test_llama_model_with_layers(n_layers);
+            if qwen {
+                configure_as_test_qwen(&mut model);
+            }
+            let backend = CpuBackend;
+            let prompt = [3, 4, 5, 6, 7];
+            let mut warm = model.create_cache(&backend, model.config.max_seq_len);
+            let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut warm, 0)
+                .unwrap();
+            assert!(crate::alloc_counter::counting_active());
+            let (result, allocations) = crate::alloc_counter::count_allocations(|| {
+                ForwardModel::forward_last_logits_with_cache(
+                    &model, &backend, &prompt, &mut cache, 0,
+                )
+            });
+            result.unwrap();
+            allocations
+        })
+    }
+
+    /// The eager prefill reuses one set of scratch buffers across layers:
+    /// its allocation count must not grow with depth, and stays within a
+    /// small per-forward budget (embedding, scratch set-up, final logits).
+    /// Before scratch reuse every layer allocated ~50 times (three
+    /// allocations per intermediate tensor).
+    #[test]
+    fn prefill_allocations_do_not_scale_with_layers() {
+        for qwen in [false, true] {
+            let one_layer = warmed_prefill_allocation_count(1, qwen);
+            let four_layers = warmed_prefill_allocation_count(4, qwen);
+            assert_eq!(
+                four_layers, one_layer,
+                "eager prefill allocated per layer (qwen={qwen})"
+            );
+            assert!(
+                one_layer <= PREFILL_ALLOCATION_BUDGET,
+                "eager prefill made {one_layer} allocations, budget {PREFILL_ALLOCATION_BUDGET} (qwen={qwen})"
+            );
+        }
+    }
+
+    const PREFILL_ALLOCATION_BUDGET: usize = 48;
 
     #[test]
     fn split_half_rope_remains_on_generic_decode_path() {

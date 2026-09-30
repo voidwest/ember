@@ -271,6 +271,109 @@ pub trait Backend {
         sin: &Self::Tensor,
         start_pos: usize,
     ) -> Result<Self::Tensor, Self::Error>;
+
+    // -- buffer-reusing variants ----------------------------------
+    // The eager (hooked/generic) prefill keeps one set of scratch tensors
+    // per forward call and writes every layer's intermediates into them
+    // through these methods. Each default delegates to the allocating
+    // operation, so alternate backends stay source-compatible; an override
+    // must produce bit-identical values (same kernels, same operation order),
+    // only without allocating when `out` already has the capacity.
+
+    /// [`Backend::matmul_q8_0`] written into `out` (resized as needed).
+    fn matmul_q8_0_reusing(
+        &self,
+        x: &Self::Tensor,
+        w: &QuantizedWeight,
+        out: &mut Self::Tensor,
+    ) -> Result<(), Self::Error> {
+        *out = self.matmul_q8_0(x, w)?;
+        Ok(())
+    }
+
+    /// [`Backend::matmul_k`] written into `out` (resized as needed).
+    fn matmul_k_reusing(
+        &self,
+        x: &Self::Tensor,
+        w: &crate::quant_k::KQuantWeight,
+        out: &mut Self::Tensor,
+    ) -> Result<(), Self::Error> {
+        *out = self.matmul_k(x, w)?;
+        Ok(())
+    }
+
+    /// [`Backend::add_broadcast`] applied to `x` in place.
+    fn add_broadcast_in_place(
+        &self,
+        x: &mut Self::Tensor,
+        bias: &Self::Tensor,
+    ) -> Result<(), Self::Error> {
+        *x = self.add_broadcast(x, bias)?;
+        Ok(())
+    }
+
+    /// [`Backend::add`] accumulated into `x`: `x = x + other`.
+    fn add_in_place(&self, x: &mut Self::Tensor, other: &Self::Tensor) -> Result<(), Self::Error> {
+        *x = self.add(x, other)?;
+        Ok(())
+    }
+
+    /// [`Backend::silu`] applied to `x` in place.
+    fn silu_in_place(&self, x: &mut Self::Tensor) -> Result<(), Self::Error> {
+        *x = self.silu(x)?;
+        Ok(())
+    }
+
+    /// [`Backend::elemul`] accumulated into `x`: `x = x * other`.
+    fn elemul_in_place(
+        &self,
+        x: &mut Self::Tensor,
+        other: &Self::Tensor,
+    ) -> Result<(), Self::Error> {
+        *x = self.elemul(x, other)?;
+        Ok(())
+    }
+
+    /// [`Backend::rms_norm`] written into `out` (resized as needed).
+    fn rms_norm_reusing(
+        &self,
+        x: &Self::Tensor,
+        weight: &Self::Tensor,
+        eps: f32,
+        out: &mut Self::Tensor,
+    ) -> Result<(), Self::Error> {
+        *out = self.rms_norm(x, weight, eps)?;
+        Ok(())
+    }
+
+    /// [`Backend::cached_causal_attention_with_scratch`] written into `out`.
+    fn cached_causal_attention_reusing(
+        &self,
+        q: &Self::Tensor,
+        cached_k: &[f16],
+        cached_v: &[f16],
+        spec: CachedAttentionSpec,
+        qk_row: &mut Vec<f32>,
+        out: &mut Self::Tensor,
+    ) -> Result<(), Self::Error> {
+        *out = self.cached_causal_attention_with_scratch(q, cached_k, cached_v, spec, qk_row)?;
+        Ok(())
+    }
+
+    /// Run `update` over the tensor's host values and keep the result in `x`.
+    /// The default round-trips through host memory; CPU storage is mutated
+    /// directly.
+    fn update_in_place(
+        &self,
+        x: &mut Self::Tensor,
+        update: impl FnOnce(&mut [f32]),
+    ) -> Result<(), Self::Error> {
+        let shape = self.shape(x).to_vec();
+        let mut data = self.data(x).to_vec();
+        update(&mut data);
+        *x = self.load_from_cpu(data, &shape)?;
+        Ok(())
+    }
 }
 
 /// a composable unit that runs a forward pass.
@@ -908,15 +1011,7 @@ impl Backend for CpuBackend {
     fn matmul_q8_0(&self, x: &CpuTensor, w: &QuantizedWeight) -> Result<CpuTensor, CpuError> {
         let (seq_len, output_len) = q8_matmul_output_len(x, w)?;
         let mut out = vec![0.0f32; output_len];
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(x.data(), &mut input);
-            if seq_len == 1 {
-                crate::simd::matmul_q8_0_decode(&input, w, &mut out);
-            } else {
-                crate::simd::matmul_q8_0_batch(&input, seq_len, w, &mut out);
-            }
-        });
+        q8_0_matmul_rows(x.data(), seq_len, w, &mut out);
         Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
     }
 
@@ -933,6 +1028,92 @@ impl Backend for CpuBackend {
         crate::k_matmul::matmul_k_into_parallel(x.data(), seq_len, w, &mut out)
             .map_err(CpuError::Kernel)?;
         Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
+    }
+
+    fn matmul_q8_0_reusing(
+        &self,
+        x: &CpuTensor,
+        w: &QuantizedWeight,
+        out: &mut CpuTensor,
+    ) -> Result<(), CpuError> {
+        let (seq_len, _) = q8_matmul_output_len(x, w)?;
+        out.reset_zeroed(&[seq_len, w.out_features()]);
+        q8_0_matmul_rows(x.data(), seq_len, w, out.data_mut());
+        Ok(())
+    }
+
+    fn matmul_k_reusing(
+        &self,
+        x: &CpuTensor,
+        w: &crate::quant_k::KQuantWeight,
+        out: &mut CpuTensor,
+    ) -> Result<(), CpuError> {
+        let (seq_len, _) = k_matmul_output_len(x, w)?;
+        out.reset_zeroed(&[seq_len, w.out_features()]);
+        crate::k_matmul::matmul_k_into_parallel(x.data(), seq_len, w, out.data_mut())
+            .map_err(CpuError::Kernel)
+    }
+
+    fn add_broadcast_in_place(&self, x: &mut CpuTensor, bias: &CpuTensor) -> Result<(), CpuError> {
+        x.add_broadcast_in_place(bias);
+        Ok(())
+    }
+
+    fn add_in_place(&self, x: &mut CpuTensor, other: &CpuTensor) -> Result<(), CpuError> {
+        x.add_in_place(other);
+        Ok(())
+    }
+
+    fn silu_in_place(&self, x: &mut CpuTensor) -> Result<(), CpuError> {
+        x.silu_in_place();
+        Ok(())
+    }
+
+    fn elemul_in_place(&self, x: &mut CpuTensor, other: &CpuTensor) -> Result<(), CpuError> {
+        x.elemul_in_place(other);
+        Ok(())
+    }
+
+    fn rms_norm_reusing(
+        &self,
+        x: &CpuTensor,
+        weight: &CpuTensor,
+        eps: f32,
+        out: &mut CpuTensor,
+    ) -> Result<(), CpuError> {
+        x.rms_norm_into(weight, eps, out);
+        Ok(())
+    }
+
+    fn cached_causal_attention_reusing(
+        &self,
+        q: &CpuTensor,
+        cached_k: &[f16],
+        cached_v: &[f16],
+        spec: CachedAttentionSpec,
+        qk_row: &mut Vec<f32>,
+        out: &mut CpuTensor,
+    ) -> Result<(), CpuError> {
+        let seq_len = validate_cached_attention_inputs(q, cached_k, cached_v, &spec)?;
+        out.reset_zeroed(&[seq_len, spec.n_heads * spec.head_dim]);
+        cached_attention_into(
+            q,
+            cached_k,
+            cached_v,
+            &spec,
+            seq_len,
+            qk_row,
+            out.data_mut(),
+        )
+    }
+
+    fn update_in_place(
+        &self,
+        x: &mut CpuTensor,
+        update: impl FnOnce(&mut [f32]),
+    ) -> Result<(), CpuError> {
+        update(x.data_mut());
+        Ok(())
     }
 
     fn matmul_q8_0_pair(
@@ -1366,60 +1547,10 @@ impl Backend for CpuBackend {
         spec: CachedAttentionSpec,
         qk_row: &mut Vec<f32>,
     ) -> Result<CpuTensor, CpuError> {
-        if q.ndim() != 2 {
-            return Err(CpuError::ShapeMismatch(format!(
-                "cached_causal_attention: q must be 2D, got {:?}",
-                q.shape()
-            )));
-        }
-        let seq_len = q.shape()[0];
+        let seq_len = validate_cached_attention_inputs(q, cached_k, cached_v, &spec)?;
         let embed_dim = spec.n_heads * spec.head_dim;
-        if q.shape()[1] != embed_dim {
-            return Err(CpuError::ShapeMismatch(format!(
-                "cached_causal_attention: q width {} != expected {}",
-                q.shape()[1],
-                embed_dim
-            )));
-        }
-        if spec.total_seq_len < seq_len || spec.total_seq_len > spec.max_seq_len {
-            return Err(CpuError::ShapeMismatch(format!(
-                "cached_causal_attention: total_seq_len {} invalid for seq_len {} and max_seq_len {}",
-                spec.total_seq_len,
-                seq_len,
-                spec.max_seq_len
-            )));
-        }
-        let cache_len = spec.n_kv_heads * spec.max_seq_len * spec.head_dim;
-        if cached_k.len() != cache_len || cached_v.len() != cache_len {
-            return Err(CpuError::ShapeMismatch(format!(
-                "cached_causal_attention: cache len mismatch, got k={} v={}, expected {}",
-                cached_k.len(),
-                cached_v.len(),
-                cache_len
-            )));
-        }
-
-        let n_repeat = validate_gqa(spec.n_heads, spec.n_kv_heads)?;
-        let scale = (spec.head_dim as f32).sqrt().recip();
-        let q_data = q.data();
-        let cache_head_stride = spec.max_seq_len * spec.head_dim;
-
         let mut out = vec![0.0f32; seq_len * embed_dim];
-        cached_attention_dispatch(
-            q_data,
-            cached_k,
-            cached_v,
-            &spec,
-            seq_len,
-            embed_dim,
-            n_repeat,
-            scale,
-            cache_head_stride,
-            spec.head_dim,
-            None,
-            qk_row,
-            &mut out,
-        );
+        cached_attention_into(q, cached_k, cached_v, &spec, seq_len, qk_row, &mut out)?;
         Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out))
     }
 
@@ -1539,6 +1670,95 @@ fn validate_attention_inputs(
     }
     validate_gqa(spec.n_heads, spec.n_kv_heads)?;
     Ok(seq_len)
+}
+
+/// Quantize `x` (`[rows, in_features]`) once and write `x × w` into `out`:
+/// the shared body of the allocating and reusing Q8_0 matmuls.
+fn q8_0_matmul_rows(x: &[f32], rows: usize, w: &QuantizedWeight, out: &mut [f32]) {
+    Q8_0_DECODE_INPUT.with(|input| {
+        let mut input = input.borrow_mut();
+        crate::quant::quantize_q8_0_into(x, &mut input);
+        if rows == 1 {
+            crate::simd::matmul_q8_0_decode(&input, w, out);
+        } else {
+            crate::simd::matmul_q8_0_batch(&input, rows, w, out);
+        }
+    });
+}
+
+/// Shape checks for cached causal attention; returns the query row count.
+fn validate_cached_attention_inputs(
+    q: &CpuTensor,
+    cached_k: &[f16],
+    cached_v: &[f16],
+    spec: &CachedAttentionSpec,
+) -> Result<usize, CpuError> {
+    if q.ndim() != 2 {
+        return Err(CpuError::ShapeMismatch(format!(
+            "cached_causal_attention: q must be 2D, got {:?}",
+            q.shape()
+        )));
+    }
+    let seq_len = q.shape()[0];
+    let embed_dim = spec.n_heads * spec.head_dim;
+    if q.shape()[1] != embed_dim {
+        return Err(CpuError::ShapeMismatch(format!(
+            "cached_causal_attention: q width {} != expected {}",
+            q.shape()[1],
+            embed_dim
+        )));
+    }
+    if spec.total_seq_len < seq_len || spec.total_seq_len > spec.max_seq_len {
+        return Err(CpuError::ShapeMismatch(format!(
+            "cached_causal_attention: total_seq_len {} invalid for seq_len {} and max_seq_len {}",
+            spec.total_seq_len, seq_len, spec.max_seq_len
+        )));
+    }
+    let cache_len = spec.n_kv_heads * spec.max_seq_len * spec.head_dim;
+    if cached_k.len() != cache_len || cached_v.len() != cache_len {
+        return Err(CpuError::ShapeMismatch(format!(
+            "cached_causal_attention: cache len mismatch, got k={} v={}, expected {}",
+            cached_k.len(),
+            cached_v.len(),
+            cache_len
+        )));
+    }
+    validate_gqa(spec.n_heads, spec.n_kv_heads)?;
+    Ok(seq_len)
+}
+
+/// Cached causal attention into a zeroed `out` of `[seq_len, n_heads *
+/// head_dim]` values (the kernels accumulate into it). Inputs must have
+/// passed [`validate_cached_attention_inputs`].
+fn cached_attention_into(
+    q: &CpuTensor,
+    cached_k: &[f16],
+    cached_v: &[f16],
+    spec: &CachedAttentionSpec,
+    seq_len: usize,
+    qk_row: &mut Vec<f32>,
+    out: &mut [f32],
+) -> Result<(), CpuError> {
+    let embed_dim = spec.n_heads * spec.head_dim;
+    let n_repeat = validate_gqa(spec.n_heads, spec.n_kv_heads)?;
+    let scale = (spec.head_dim as f32).sqrt().recip();
+    let cache_head_stride = spec.max_seq_len * spec.head_dim;
+    cached_attention_dispatch(
+        q.data(),
+        cached_k,
+        cached_v,
+        spec,
+        seq_len,
+        embed_dim,
+        n_repeat,
+        scale,
+        cache_head_stride,
+        spec.head_dim,
+        None,
+        qk_row,
+        out,
+    );
+    Ok(())
 }
 
 pub(crate) fn validate_gqa(n_heads: usize, n_kv_heads: usize) -> Result<usize, CpuError> {
