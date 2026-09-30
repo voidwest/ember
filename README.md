@@ -86,7 +86,7 @@ cargo run --release --bin ember -- gui
 scripts/bundle-macos.sh && open target/bundle/Ember.app
 ```
 
-It has a built-in sample result that needs no model, dark and light themes, a
+A **Sweep** runs a change at every layer and plots the curve (about twenty seconds for a 16-layer model). It has a built-in sample result that needs no model, dark and light themes, a
 command palette (Cmd+K) and a Presentation mode. Runs are saved and can be
 reopened. See the [console notes](docs/v06-gui.md) and the
 [demo outline](docs/demo-outline.md).

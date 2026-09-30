@@ -39,7 +39,6 @@ gpui_kit::actions!(
         OpenSettings,
         OpenPalette,
         HideShowSidebar,
-        HideShowInspector,
         EnterPresentation,
         StartExperiment,
         ReplayLastRun,
@@ -65,6 +64,7 @@ mod picker;
 mod runs_table;
 mod store_writer;
 mod theme;
+mod sweep;
 mod views;
 mod workspace;
 mod worker;
@@ -82,6 +82,7 @@ use menu::{app_menus, register_menu_actions};
 use palette::Command;
 use runs_table::{fmt_bytes, quant_of, relative_time, truncate_path_start, RunsDelegate};
 use theme::{AppearanceMode, Colors, Radius, Space, Type};
+use sweep::Sweep;
 use workspace::Reference;
 use worker::{spawn_worker, WorkerMsg, WorkerReply};
 
@@ -362,6 +363,8 @@ enum ResultView {
     Layers,
     Tokens,
     Trace,
+    /// Only offered once a sweep has finished.
+    Sweep,
 }
 
 impl ResultView {
@@ -377,6 +380,7 @@ impl ResultView {
             Self::Layers => "layers",
             Self::Tokens => "tokens",
             Self::Trace => "trace",
+            Self::Sweep => "sweep",
         }
     }
 
@@ -386,6 +390,7 @@ impl ResultView {
             Self::Layers => "Layers",
             Self::Tokens => "Tokens",
             Self::Trace => "Raw trace",
+            Self::Sweep => "Sweep",
         }
     }
 }
@@ -470,9 +475,6 @@ struct Console {
     palette_input: Entity<TextInput>,
     step: WorkspaceStep,
     view: View,
-    inspector_open: bool,
-    /// Whether the window is wide enough to show the inspector this frame.
-    inspector_fits: bool,
     /// The Review page is showing the built-in illustrative sample, not a run.
     sample: bool,
     /// Which saved run the Review page is showing, when it is one from
@@ -483,11 +485,19 @@ struct Console {
     copied: bool,
     /// A result pinned to compare later runs against.
     reference: Option<Reference>,
+    /// A sweep over layers, running or finished.
+    sweep: Option<Sweep>,
+    /// A sweep was asked for before the model was loaded; start it when ready.
+    pending_sweep: bool,
+    /// Title and text for a result opened from somewhere other than a run.
+    opened_note: Option<(String, String)>,
     /// The compact examples list in the setup pane.
     examples_open: bool,
+    /// The Model section of the setup pane, expanded while a model is loaded.
+    model_open: bool,
     sidebar_open: bool,
     /// Presentation mode, and the panes it hid so leaving restores them.
-    presentation: Option<(bool, bool)>,
+    presentation: Option<bool>,
     advanced_open: bool,
     pending_run: bool,
     pending_context: Option<FormValues>,
@@ -736,17 +746,15 @@ impl Console {
             // permanently half-empty on the setup steps. Both panes remember
             // their last state across launches -- under gui-tests the files
             // are ignored so the fixtures stay deterministic.
-            inspector_fits: true,
             sample: false,
             copied: false,
             reference: None,
+            sweep: None,
+            pending_sweep: false,
+            opened_note: None,
             examples_open: false,
+            model_open: false,
             saved_run: None,
-            inspector_open: if cfg!(feature = "gui-tests") {
-                false
-            } else {
-                theme::load_flag("inspector").unwrap_or(false)
-            },
             sidebar_open: if cfg!(feature = "gui-tests") {
                 true
             } else {
@@ -872,20 +880,6 @@ impl Console {
             .err()
     }
 
-    fn visible_experiment_context(&self) -> FormValues {
-        if self.status == Status::Running {
-            self.pending_context
-                .clone()
-                .unwrap_or_else(|| self.form_values())
-        } else if self.step == WorkspaceStep::Review && self.baseline.is_some() {
-            self.result_context
-                .clone()
-                .unwrap_or_else(|| self.form_values())
-        } else {
-            self.form_values()
-        }
-    }
-
     /// Build the v0.5 request from the current form fields; the shared
     /// `parse_run_request` gate validates it exactly like the web console.
     fn build_run_request(&self) -> Result<RunRequest, String> {
@@ -895,6 +889,7 @@ impl Console {
     fn send_run(&mut self, cfg: RunConfig) {
         self.sample = false;
         self.saved_run = None;
+        self.opened_note = None;
         self.status = Status::Running;
         self.step = WorkspaceStep::Review;
         self.pending_context = Some(self.form_values());
@@ -952,6 +947,7 @@ impl Console {
                 WorkerReply::Prepared(result) => match *result {
                     Ok(info) => {
                         self.session = Some(info);
+                        self.model_open = false;
                         let n = self.session.as_ref().map(|s| s.n_layers).unwrap_or(1);
                         let target = self
                             .layer
@@ -976,6 +972,9 @@ impl Console {
                             self.pending_run = false;
                             self.run();
                         }
+                        if self.pending_sweep {
+                            self.start_sweep(cx);
+                        }
                     }
                     Err(error) => {
                         self.pending_run = false;
@@ -987,6 +986,7 @@ impl Console {
                     Ok(bundle) => {
                         self.sample = false;
                         self.saved_run = None;
+                        self.opened_note = None;
                         self.copied = false;
                         self.result_context = self.pending_context.take();
                         self.baseline = Some(bundle.baseline.clone());
@@ -1021,6 +1021,11 @@ impl Console {
                             .result_context
                             .clone()
                             .unwrap_or_else(|| self.form_values());
+                        // A sweep's runs are kept on the sweep, not in history:
+                        // sixteen near-identical rows would bury the runs the
+                        // user chose to make.
+                        let in_sweep = self.sweep_running();
+                        if !in_sweep {
                         let number = self.store.next_run_number();
                         let now = unix_now();
                         self.store.push_run(RunRecord {
@@ -1050,12 +1055,20 @@ impl Console {
                         // The state that produced this run is the resume point.
                         self.save_draft();
                         self.persist();
+                        }
                         self.status = Status::Idle;
+                        if in_sweep {
+                            self.sweep_point_done(cx);
+                        }
                     }
                     Err(error) => {
                         self.pending_context = None;
                         self.error = Some(error);
                         self.status = Status::Idle;
+                        if self.sweep_running() {
+                            self.stop_sweep(cx);
+                            self.advance_sweep(cx);
+                        }
                     }
                 },
                 WorkerReply::RestoreDone(result) => match *result {
@@ -1212,16 +1225,6 @@ impl Console {
         cx.notify();
     }
 
-    fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
-        self.inspector_open = !self.inspector_open;
-        // Presentation mode owns the panes temporarily; what the user chose
-        // before it is what gets restored and remembered.
-        if self.presentation.is_none() {
-            theme::persist_flag("inspector", self.inspector_open);
-        }
-        cx.notify();
-    }
-
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = !self.sidebar_open;
         if self.presentation.is_none() {
@@ -1346,21 +1349,19 @@ impl Console {
         cx.notify();
     }
 
-    /// Presentation mode: a larger text scale with the sidebar and inspector
+    /// Presentation mode: a larger text scale with the sidebar
     /// out of the way. Nothing else changes, and leaving restores the panes
     /// exactly as they were. The panes are hidden without touching the
     /// persisted flags, so a crash mid-talk does not lose the workspace.
     fn toggle_presentation(&mut self, cx: &mut Context<Self>) {
         match self.presentation.take() {
-            Some((sidebar, inspector)) => {
+            Some(sidebar) => {
                 self.sidebar_open = sidebar;
-                self.inspector_open = inspector;
                 theme::set_ui_scale(1.0);
             }
             None => {
-                self.presentation = Some((self.sidebar_open, self.inspector_open));
+                self.presentation = Some(self.sidebar_open);
                 self.sidebar_open = false;
-                self.inspector_open = false;
                 theme::set_ui_scale(theme::PRESENTATION_SCALE);
             }
         }
@@ -1442,7 +1443,6 @@ impl Console {
             Command::GoModels => self.goto(View::Models, cx),
             Command::GoRuns => self.goto(View::Runs, cx),
             Command::GoSettings => self.goto(View::Settings, cx),
-            Command::ToggleInspector => self.toggle_inspector(cx),
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTheme => self.cycle_appearance(cx),
             Command::TogglePresentation => self.toggle_presentation(cx),
@@ -1623,6 +1623,18 @@ impl Console {
     /// Poll the worker reply channel every 80 ms while the app lives. The
     /// worker thread is unchanged from the iced implementation; only the
     /// foreground subscription is replaced by gpui's async executor.
+    /// Launch straight into the workspace for someone who has used Ember
+    /// before: their unfinished experiment is restored into the setup, and
+    /// Home -- a page about getting started -- is not the first thing they
+    /// see. A first launch has no history and no draft, and still opens Home.
+    fn open_where_you_left_off(&mut self, cx: &mut Context<Self>) {
+        if self.store.draft.is_some() {
+            self.restore_draft(cx);
+        } else if !self.store.runs.is_empty() {
+            self.view = View::Experiment;
+        }
+    }
+
     fn spawn_poll(&mut self, cx: &mut Context<Self>) {
         self.poll_task(cx).detach();
     }
@@ -1666,10 +1678,6 @@ impl Console {
         // through the persisting methods rather than flipping the fields.
         if cmd && !shift && key == "b" {
             self.toggle_sidebar(cx);
-            return;
-        }
-        if cmd && shift && key == "i" {
-            self.toggle_inspector(cx);
             return;
         }
         if cmd && !shift && key == "n" {
@@ -1909,6 +1917,7 @@ pub(crate) fn run_gui_command(
                         })
                         .detach();
                         console.sync_kit_theme(cx);
+                        console.open_where_you_left_off(cx);
                         console.spawn_poll(cx);
                         console.start_model_discovery(cx);
                         console

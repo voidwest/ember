@@ -32,7 +32,6 @@ pub(super) fn app_menus() -> Vec<Menu> {
             MenuItem::action("Command Palette", OpenPalette),
             MenuItem::separator(),
             MenuItem::action("Show or Hide Sidebar", HideShowSidebar),
-            MenuItem::action("Show or Hide Inspector", HideShowInspector),
             MenuItem::action("Presentation Mode", EnterPresentation),
         ]),
         Menu::new("Help").items([
@@ -67,7 +66,6 @@ pub(super) fn register_menu_actions(
     route!(OpenSettings, |c, cx| c.goto(View::Settings, cx));
     route!(ShowShortcuts, |c, cx| c.goto(View::Settings, cx));
     route!(HideShowSidebar, |c, cx| c.toggle_sidebar(cx));
-    route!(HideShowInspector, |c, cx| c.toggle_inspector(cx));
     route!(EnterPresentation, |c, cx| c.toggle_presentation(cx));
     route!(OpenSampleResult, |c, cx| c.show_sample(cx));
     route!(StartExperiment, |c, cx| {

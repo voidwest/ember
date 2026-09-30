@@ -603,8 +603,74 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
     shot(&mut context, "compare-with-reference")?;
     click(&mut context, "result:layers")?;
     shot(&mut context, "compare-layers")?;
+    // A sweep: the same change at every layer, then open one point.
+    context.update_window(handle.into(), |_, _, cx| {
+        console.update(cx, |console, cx| {
+            console.select_combo(ComboId::Op, "scale", cx);
+            console.value = "0.0".into();
+            let value = console.inputs.value.clone();
+            console.set_input_value(value, "0.0".into(), cx);
+            console.select_combo(ComboId::Site, "after-layer", cx);
+            cx.notify();
+        });
+    })?;
+    click(&mut context, "setup-sweep")?;
+    let sweep_started = std::time::Instant::now();
+    let mut sweep_shots = 0;
+    loop {
+        context.advance_clock(Duration::from_millis(50));
+        context.run_until_parked();
+        std::thread::sleep(Duration::from_millis(50));
+        context.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, cx| {
+                if console.drain_replies(cx) {
+                    cx.notify();
+                }
+            });
+        })?;
+        let (finished, progress, error) = console.read_with(&context, |c, _| {
+            (
+                c.sweep.as_ref().is_some_and(|s| s.finished),
+                c.sweep.as_ref().map_or(0, |s| s.points.len()),
+                c.error.clone(),
+            )
+        });
+        if let Some(error) = error {
+            anyhow::bail!("the sweep reported an error: {error}");
+        }
+        if progress >= 6 && sweep_shots == 0 {
+            shot(&mut context, "sweep-midway")?;
+            sweep_shots = 1;
+        }
+        if finished {
+            break;
+        }
+        anyhow::ensure!(sweep_started.elapsed() < Duration::from_secs(600), "sweep timed out");
+    }
+    let points = console.read_with(&context, |c, _| c.sweep.as_ref().map_or(0, |s| s.points.len()));
+    eprintln!("sweep of {points} layers finished in {:.1}s", sweep_started.elapsed().as_secs_f32());
+    anyhow::ensure!(points >= 14, "the sweep produced too few points: {points}");
+    shot(&mut context, "sweep-result")?;
+    click(&mut context, "sweep-open:8")?;
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.result_view) == ResultView::Overview,
+        "opening a sweep point did not show its result"
+    );
+    shot(&mut context, "sweep-point-opened")?;
+    click(&mut context, "result:sweep")?;
     click(&mut context, &format!("nav:{}", View::Runs.key()))?;
     shot(&mut context, "runs")?;
+    click(&mut context, "run-compare:1")?;
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.reference.as_ref().is_some_and(|r| r.label.starts_with("Run #1"))),
+        "Compare on a saved run did not pin it"
+    );
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.view) == View::Experiment,
+        "Compare did not return to the workspace"
+    );
+    shot(&mut context, "compare-from-runs")?;
+    click(&mut context, &format!("nav:{}", View::Runs.key()))?;
     click(&mut context, "run-open:1")?;
     anyhow::ensure!(
         console.read_with(&context, |c, _| c.saved_run) == Some(1),
@@ -709,7 +775,6 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                         console.appearance = mode;
                         console.view = view;
                         console.step = step;
-                        console.inspector_open = inspector;
                         // The seed comparison persists on the console once the
                         // Review scene has run, and scenes share one console
                         // per window. Without this reset every scene after the
@@ -819,7 +884,6 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                             console.appearance = mode;
                             console.view = view;
                             console.step = step;
-                            console.inspector_open = false;
                             console.sync_kit_theme(cx);
                             cx.notify();
                         });
@@ -886,7 +950,6 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                     console.appearance = AppearanceMode::Dark;
                     console.view = View::Experiment;
                     console.step = WorkspaceStep::Review;
-                    console.inspector_open = false;
                     console.status = status;
                     console.sync_kit_theme(cx);
                 });
@@ -912,7 +975,6 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                 context.update_window(handle.into(), |_, window, cx| {
                     console.update(cx, |console, cx| {
                         console.appearance = mode;
-                        console.inspector_open = true;
                         if !console.sample {
                             console.show_sample(cx);
                         }

@@ -243,7 +243,7 @@ impl TableDelegate for RunsDelegate {
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
             // Wide enough for Reuse + Pin + Delete, the fullest lane a row
             // can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(264.0)),
+            _ => Column::new(run_col::ACTIONS, "").width(px(340.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -343,6 +343,21 @@ impl TableDelegate for RunsDelegate {
                             }
                         }),
                 );
+                let console = self.console.clone();
+                lane = lane.child(
+                    Button::new(SharedString::from(format!("run-compare:{number}")))
+                        .ghost()
+                        .compact()
+                        .label("Compare")
+                        .tooltip("Pin this run as the reference and go back to the workspace")
+                        .on_click(move |_, _, cx| {
+                            if let Some(console) = console.as_ref() {
+                                let _ = console.update(cx, |console, cx| {
+                                    console.compare_with_run(number, cx);
+                                });
+                            }
+                        }),
+                );
             }
             if let Some(console) = reuse {
                 lane = lane.child(
@@ -365,11 +380,11 @@ impl TableDelegate for RunsDelegate {
                     Button::new(SharedString::from(format!("run-pin:{number}")))
                         .ghost()
                         .compact()
-                        .label(if pinned { "Unpin" } else { "Pin" })
+                        .label(if pinned { "Unstar" } else { "Star" })
                         .tooltip(if pinned {
-                            "Unpin this run"
+                            "Remove the star"
                         } else {
-                            "Keep this run at the top of the history"
+                            "Star this run to keep it at the top of the history"
                         })
                         .on_click(move |_, _, cx| {
                             if let Some(console) = console.as_ref() {

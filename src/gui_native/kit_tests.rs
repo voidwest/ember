@@ -9,30 +9,6 @@ use std::{
     sync::{mpsc, Arc, Mutex},
 };
 
-/// The inspector declares 300px. This asserts the layout engine agrees.
-///
-/// It was rendering at roughly 118px at the standard 1180pt window, clipping
-/// the model name, the hook and the advanced disclosure mid-word on every
-/// experiment screen. Four hypotheses were tried and ruled out by reading
-/// screenshots: `min_w(0)` on the aside, `flex_shrink_0` on it, `w_full()`
-/// on the workspace column, and `overflow_x_hidden` on the scroll container.
-/// Inferring layout from a picture of it does not work.
-///
-/// **What this does and does not prove.** It passes, so the declaration is
-/// honoured and the 300px is not being ignored outright. But the test window
-/// is wide enough that the row never has to overflow, which is exactly the
-/// condition the render fails under -- so this does not reproduce the bug.
-/// Closing it needs this test to drive a narrow window, and then whatever it
-/// reports is the number to fix against.
-///
-/// The aside also needed `.test_support()`. Without it its id was only a
-/// scope inside its children's paths, so a test could find the controls
-/// inside it but never the box itself -- which is why a layout bug this
-/// visible had no test standing behind it.
-/// The bottom of a page must be reachable. The workspace used `h_full()`
-/// inside a column that also holds the stepper, so it came out one stepper
-/// too tall: scrolled all the way down, the last control (generation length
-/// on Prompt) still sat under the status bar, clipped.
 #[gpui_kit::test]
 async fn page_bottom_is_reachable_by_scrolling(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
@@ -98,64 +74,6 @@ async fn page_bottom_is_reachable_by_scrolling(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui_kit::test]
-async fn inspector_keeps_its_declared_width(cx: &mut TestAppContext) {
-    cx.update(gpui_kit::init);
-    let (tx, _worker) = mpsc::channel();
-    let (_reply, rx) = mpsc::channel();
-    let cell: Arc<Mutex<Option<gpui_kit::Entity<Console>>>> = Arc::default();
-    let sink = cell.clone();
-    let handle = cx.add_window(move |window, cx| {
-        let console = cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(rx)), false, window, cx));
-        console.update(cx, |console, _| {
-            console.view = View::Experiment;
-            console.inspector_open = true;
-        });
-        *sink.lock().expect("cell unlocked") = Some(console.clone());
-        Root::new(console, window, cx)
-    });
-    cx.run_until_parked();
-    cx.update_window(handle.into(), |_, window, cx| {
-        window.draw(cx).clear(cx);
-    })
-    .unwrap();
-    // The aside appears once the row that owns it has been laid out, which
-    // is a later frame than the first. `find` on an earlier frame reports a
-    // miss even though the id is registered, so wait for it rather than
-    // reading the first frame and concluding the inspector is not there.
-    cx.wait_for(
-        handle.into(),
-        std::time::Duration::from_secs(2),
-        |window, _| window.try_find(SharedString::from("inspector")).is_some(),
-    )
-    .await;
-
-    let width = cx
-        .update_window(handle.into(), |_, window, _| {
-            window
-                .find(SharedString::from("inspector"))
-                .bounds()
-                .size
-                .width
-        })
-        .expect("the window update runs");
-    // Compared in f32: `Pixels` has no `abs` in this version.
-    let rendered: f32 = width.into();
-    assert!(
-        (rendered - super::views::INSPECTOR_WIDTH).abs() < 2.0,
-        "inspector rendered at {rendered}px, not the {}px it declares",
-        super::views::INSPECTOR_WIDTH
-    );
-}
-
-/// The primary action must be gated identically by the button and by the
-/// Ctrl+Enter shortcut.
-///
-/// The keyboard path previously advanced the workspace with no gate at
-/// all, so a visibly disabled button could still be driven from the
-/// keyboard -- and the UI advertises "Ctrl+Enter" right next to it.
-/// While a run is in flight the button is disabled; the shortcut must
-/// refuse too.
 #[gpui_kit::test]
 fn primary_action_is_gated_for_both_mouse_and_keyboard(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
@@ -729,19 +647,24 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
     cx.update_window(handle.into(), |_, window, cx| {
         assert_ne!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
         window.click(SharedString::from("nav:experiments"), cx);
-        // The advanced controls live in the inspector, and the inspector
-        // starts closed -- so this has to open the inspector first. This
-        // test used to find `advanced-toggle` without doing that, which
-        // was only possible because a second, unclosable copy of the
-        // inspector was being rendered alongside the real one.
+        // The advanced controls sit in the setup pane behind a disclosure.
         assert!(
             window
-                .try_find(SharedString::from("advanced-toggle"))
+                .try_find(SharedString::from("execution-picker"))
                 .is_none(),
-            "advanced controls must not be reachable while the inspector is closed"
+            "the advanced controls start collapsed"
         );
-        window.click(SharedString::from("inspector-toggle"), cx);
-        window.click(SharedString::from("advanced-toggle"), cx);
+        // The control sits below the fold of a short window: scroll it in.
+        window.scroll(
+            SharedString::from("setup-scroll"),
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.0),
+                gpui_kit::px(-2000.0),
+            )),
+            cx,
+        );
+        window.draw(cx).clear(cx);
+        window.click(SharedString::from("setup-advanced"), cx);
         window.click(SharedString::from("picker:Site"), cx);
     })
     .unwrap();

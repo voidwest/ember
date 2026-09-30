@@ -19,7 +19,6 @@ pub(super) enum Command {
     GoModels,
     GoRuns,
     GoSettings,
-    ToggleInspector,
     ToggleSidebar,
     ToggleTheme,
     TogglePresentation,
@@ -29,7 +28,7 @@ impl Command {
     /// Catalog order: creation first, then navigation, then view toggles,
     /// then the experiment flow -- the order a new user discovers in and a
     /// regular user stops reading.
-    pub(super) const ALL: [Command; 14] = [
+    pub(super) const ALL: [Command; 13] = [
         Command::NewExperiment,
         Command::LoadModel,
         Command::RunExperiment,
@@ -40,7 +39,6 @@ impl Command {
         Command::GoModels,
         Command::GoRuns,
         Command::GoSettings,
-        Command::ToggleInspector,
         Command::ToggleSidebar,
         Command::ToggleTheme,
         Command::TogglePresentation,
@@ -58,7 +56,6 @@ impl Command {
             Command::GoModels => "Go to Models",
             Command::GoRuns => "Go to Runs",
             Command::GoSettings => "Go to Settings",
-            Command::ToggleInspector => "Toggle inspector",
             Command::ToggleSidebar => "Toggle sidebar",
             Command::ToggleTheme => "Toggle theme",
             Command::TogglePresentation => "Presentation mode",
@@ -78,10 +75,9 @@ impl Command {
             Command::GoModels => "Local models and their state",
             Command::GoRuns => "Every run from this session",
             Command::GoSettings => "Appearance and defaults",
-            Command::ToggleInspector => "Show or hide the context inspector",
             Command::ToggleSidebar => "Show or hide the navigation sidebar",
             Command::ToggleTheme => "Cycle system, dark, light",
-            Command::TogglePresentation => "Larger text, sidebar and inspector hidden",
+            Command::TogglePresentation => "Larger text, sidebar hidden",
         }
     }
 }

@@ -65,6 +65,12 @@ again**. Because the model is already loaded it takes about a second. The
 draws the pinned run as a dashed line behind the new one. "Same idea, a
 different place: the model absorbs it. Where you intervene is the whole story."
 
+**6b. The whole curve (45s, optional) -- Sweep**
+Set *Change* back to *Change strength*, strength 0.0, *Where* to *Layer output*,
+then click **Sweep all 16 layers**. About twenty seconds later the Sweep tab
+shows how much each layer's change moved the model; the words changed at every
+layer here. Click **Open** on a row to read that run.
+
 **7. Take it with you (15s) -- Copy summary**
 Click **Copy summary** and paste it anywhere: model, prompt, change, verdict, both
 outputs and the per-layer table, as Markdown.

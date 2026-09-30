@@ -395,5 +395,30 @@ run again -- and a second run on an already-loaded model takes about a second.
   as a dashed line behind the new one on the chart. A run reopened from Runs can
   be pinned too.
 - Before the first run the results side is an empty state with the examples.
-- Narrow windows fold the sidebar away below 1240pt and the inspector below
-  1560pt so the two panes keep room; the saved preferences are untouched.
+- Narrow windows fold the sidebar away below 1240pt so the two panes keep room;
+  the saved preference is untouched.
+
+### Sweeps
+
+For a change that acts on one layer, **Sweep all N layers** (under Run) runs the
+same experiment at every layer in turn and plots the peak divergence each run
+reached, by the layer that was changed. A second run on a loaded model takes
+about a second, so a 16-layer model sweeps in roughly twenty. The **Sweep** tab
+has the curve, a sentence saying at how many layers the words changed and where
+the effect was largest, and one row per layer whose **Open** shows that run in
+full. **Copy CSV** exports the curve. Layers the form rejects (a source layer
+that is not earlier than the target, say) are skipped, and **Stop** ends a sweep
+after the run in flight. Sweep runs are kept on the sweep, not written to
+history: sixteen near-identical rows would bury the runs you chose to make.
+
+### What changed from the wizard
+
+The contextual inspector is gone (it restated the setup). Its advanced controls
+-- execution engine, exact token limit, raw model path, hook ids -- are under
+**Advanced** in the setup pane, and the selected layer's values are in the
+chart's readout. The Model section collapses to one line once a model is loaded.
+On Runs, **Star** (was Pin) keeps a run at the top, **Compare** pins a saved run
+as the reference and returns to the workspace, **Open** shows its comparison and
+**Reuse** loads its settings. A returning user (with history or an unfinished
+experiment) launches straight into the workspace with their setup restored;
+Home is for a first launch.

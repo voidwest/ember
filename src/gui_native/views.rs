@@ -190,6 +190,10 @@ impl Console {
                             "Running"
                         } else if self.saved_run.is_some() {
                             "Saved run"
+                        } else if self.result_view == ResultView::Sweep {
+                            "Sweep"
+                        } else if self.opened_note.is_some() {
+                            "Sweep point"
                         } else if self.sample {
                             "Sample result"
                         } else if self.results_stale() {
@@ -222,32 +226,6 @@ impl Console {
                         self.appearance.label()
                     ))
                     .on_click(toggle),
-            )
-            // No button when there is no room: a toggle that changes nothing
-            // on screen reads as broken.
-            .when(
-                self.view == View::Experiment && self.inspector_fits,
-                |bar| {
-                    bar.child(
-                        Button::new("inspector-toggle")
-                            .ghost()
-                            .small()
-                            .selected(self.inspector_open)
-                            .label("Inspector")
-                            .tooltip("Toggle the inspector")
-                            .accessibility_label(format!(
-                                "Inspector. {}",
-                                if self.inspector_open {
-                                    "Hide the inspector"
-                                } else {
-                                    "Show the inspector"
-                                }
-                            ))
-                            .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
-                                console.toggle_inspector(cx);
-                            })),
-                    )
-                },
             )
     }
 
@@ -387,272 +365,6 @@ impl Console {
             .gap(px(Space::XS))
             .child(label(title, Type::SECTION, colors.text))
             .child(label(hint.to_string(), Type::BODY, colors.text_muted))
-    }
-
-    fn advanced_inspector(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let context = self.visible_experiment_context();
-        let model_name = model_display_name(&context.model_path);
-        let prompt_excerpt = truncate_chars(&context.prompt, 120);
-        let target = if per_layer(&context.site) {
-            format!(
-                "Layer {}\n{}\n{}",
-                context.layer,
-                site_label(&context.site),
-                token_label(&context.token)
-            )
-        } else {
-            format!(
-                "{}\n{}",
-                site_label(&context.site),
-                token_label(&context.token)
-            )
-        };
-        let intervention = match context.op.as_str() {
-            "scale" => format!("Scale ×{}", context.value),
-            "zero" => "Set activation to zero".to_string(),
-            "replace" => format!("Replace from layer {}", context.source_layer),
-            "interpolate" => format!("Interpolate α={}", context.value),
-            "add-delta" => format!("Add delta from layer {}", context.source_layer),
-            _ => context.op.clone(),
-        };
-        let active_metric = self
-            .hovered_layer
-            .or(self.selected_layer)
-            .and_then(|layer| {
-                self.layer_series
-                    .iter()
-                    .find(|metric| metric.layer == layer)
-            });
-        let active_metric_label = if self.hovered_layer.is_some() {
-            "Hovered"
-        } else {
-            "Selected"
-        };
-        let advanced = self.advanced_open.then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(Space::MD))
-                .pt_2()
-                .child(field(
-                    colors,
-                    "Execution engine",
-                    self.picker(
-                        colors,
-                        "execution-picker",
-                        ComboId::Execution,
-                        &self.execution,
-                        &self.execution_options,
-                        cx,
-                    ),
-                ))
-                .child(field(
-                    colors,
-                    "Exact token limit",
-                    text_input(
-                        colors,
-                        self.inputs.max_tokens.clone(),
-                        FONT_MONO_NAME,
-                        Type::BODY,
-                        None,
-                        cx,
-                    ),
-                ))
-                .child(field(
-                    colors,
-                    "Raw model path",
-                    text_input(
-                        colors,
-                        self.inputs.model.clone(),
-                        FONT_MONO_NAME,
-                        Type::LABEL,
-                        Some(52.0),
-                        cx,
-                    ),
-                ))
-                .child(
-                    div()
-                        .p(px(Space::SM))
-                        .bg(colors.surface_raised)
-                        .rounded(px(Radius::MD))
-                        .flex()
-                        .flex_col()
-                        .gap(px(Space::XS))
-                        .child(mono(
-                            format!("hook     {}", self.site),
-                            Type::LABEL,
-                            colors.text_faint,
-                        ))
-                        .child(mono(
-                            format!("operation {}", self.op),
-                            Type::LABEL,
-                            colors.text_faint,
-                        ))
-                        .child(mono(
-                            format!("tokens    {}", self.token),
-                            Type::LABEL,
-                            colors.text_faint,
-                        )),
-                )
-        });
-        // Notion-style property row: the name on the left, the value beside it.
-        let prop = |name: &'static str, value: Div| -> Div {
-            div()
-                .flex()
-                .flex_row()
-                .items_start()
-                .gap(px(Space::MD))
-                .child(div().w(px(80.0)).flex_none().child(label(
-                    name,
-                    Type::META,
-                    colors.text_faint,
-                )))
-                .child(div().flex_1().min_w(px(0.0)).child(value))
-        };
-        let toggle = cx.listener(|console, _: &ClickEvent, _window, cx| {
-            console.advanced_open = !console.advanced_open;
-            cx.notify();
-        });
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(Space::MD))
-            .child(prop(
-                "Model",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label(model_name, Type::BODY, colors.text))
-                    .child(match &self.session {
-                        Some(session) => mono(
-                            format!(
-                                "{} · {} layers · {}d",
-                                session.architecture, session.n_layers, session.embed_dim
-                            ),
-                            Type::META,
-                            colors.text_muted,
-                        ),
-                        None => mono("not loaded", Type::META, colors.text_faint),
-                    }),
-            ))
-            .child(prop(
-                "Input",
-                div().flex().flex_col().gap(px(Space::XS)).child(multiline(
-                    &prompt_excerpt,
-                    Type::LABEL,
-                    colors.text,
-                    FONT_ARABIC_NAME,
-                )),
-            ))
-            .child(prop(
-                "Target",
-                div().flex().flex_col().gap(px(Space::XS)).child(multiline(
-                    &target,
-                    Type::LABEL,
-                    colors.text,
-                    FONT_SANS_NAME,
-                )),
-            ))
-            .child(prop(
-                "Intervention",
-                div().flex().flex_col().gap(px(Space::XS)).child(label(
-                    intervention,
-                    Type::BODY,
-                    colors.accent,
-                )),
-            ))
-            .child(prop(
-                "Generation",
-                div().flex().flex_col().gap(px(Space::XS)).child(mono(
-                    format!(
-                        "≤{} tokens · seed 0\n{}",
-                        context.max_tokens, context.execution
-                    ),
-                    Type::META,
-                    colors.text,
-                )),
-            ))
-            .children(self.intervention.as_ref().map(|output| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::MD))
-                    .child(rule_h(colors))
-                    .child(prop(
-                        "Run",
-                        div().flex().flex_col().gap(px(Space::XS)).child(mono(
-                            format!(
-                                "{} total\n{} generated\n{}",
-                                self.last_metrics.as_ref().map_or_else(
-                                    || "—".to_string(),
-                                    |(_, elapsed, _)| fmt_ms(*elapsed)
-                                ),
-                                output.generated_tokens,
-                                fmt_tps(output.decode_tps)
-                            ),
-                            Type::LABEL,
-                            colors.text,
-                        )),
-                    ))
-            }))
-            .children(active_metric.map(|metric| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::MD))
-                    .child(rule_h(colors))
-                    .child(prop(
-                        active_metric_label,
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(Space::XS))
-                            .child(mono(
-                                format!("layer {}", metric.layer),
-                                Type::LABEL,
-                                colors.text,
-                            ))
-                            .child(mono(
-                                metric.relative_l2_difference.map_or_else(
-                                    || "relative L2  —".to_string(),
-                                    |value| format!("relative L2  {value:.6}"),
-                                ),
-                                Type::LABEL,
-                                colors.accent,
-                            ))
-                            .child(mono(
-                                metric.cosine_distance.map_or_else(
-                                    || "cosine distance  —".to_string(),
-                                    |value| format!("cosine distance  {value:.6}"),
-                                ),
-                                Type::LABEL,
-                                colors.text_muted,
-                            )),
-                    ))
-            }))
-            .child(rule_h(colors))
-            // A ghost button with only a text label reads as static copy in a
-            // wide empty column, so the accessible name states the position
-            // and the label changes with the state.
-            .child(
-                Button::new("advanced-toggle")
-                    .ghost()
-                    .w_full()
-                    .label(if self.advanced_open {
-                        "Hide advanced controls"
-                    } else {
-                        "Show advanced controls"
-                    })
-                    .accessibility_label(if self.advanced_open {
-                        "Hide advanced controls (currently expanded)"
-                    } else {
-                        "Show advanced controls (currently collapsed)"
-                    })
-                    .on_click(toggle),
-            )
-            .children(advanced)
     }
 
     fn main_panel(&mut self, colors: &Colors, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -1096,7 +808,7 @@ impl Console {
             .child(body)
             .when(row_count > 0, |page| {
                 page.child(label(
-                    "Reuse loads a run's settings into a new experiment. Pin keeps a run at the top of the list.",
+                    "Open shows a run's comparison, Reuse loads its settings, and Compare pins it as the reference for the next run. Star keeps a run at the top.",
                     Type::LABEL,
                     colors.text_faint,
                 ))
@@ -1222,7 +934,7 @@ impl Console {
                                     .child(label("Workspace state", Type::BODY, colors.text)),
                             )
                             .child(label(
-                                "The inspector, sidebar and in-progress experiment are remembered between launches.",
+                                "The sidebar and the in-progress experiment are remembered between launches.",
                                 Type::LABEL,
                                 colors.text_faint,
                             )),
@@ -2094,17 +1806,23 @@ impl Console {
 
     /// Result sub-views: Overview, Layers, Tokens, Trace.
     fn result_tabs(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let tabs: Vec<(&'static str, &'static str, String)> = ResultView::ALL
+        // The Sweep tab exists only once a sweep has finished.
+        let mut views: Vec<ResultView> = ResultView::ALL.to_vec();
+        if self.sweep.as_ref().is_some_and(|sweep| sweep.finished) {
+            views.push(ResultView::Sweep);
+        }
+        let count = views.len();
+        let tabs: Vec<(&'static str, &'static str, String)> = views
             .iter()
             .map(|view| {
                 (
                     view.key(),
                     view.label(),
-                    format!("{} of 4 result views", view.label()),
+                    format!("{} of {count} result views", view.label()),
                 )
             })
             .collect();
-        let active = ResultView::ALL
+        let active = views
             .iter()
             .position(|view| *view == self.result_view)
             .unwrap_or(0);
@@ -2445,6 +2163,7 @@ impl Console {
                     .child(self.paired_outputs(colors, cx))
                     .child(self.token_comparison_panel(colors))
                     .into_any_element(),
+                ResultView::Sweep => self.sweep_panel(colors, cx).into_any_element(),
                 ResultView::Trace => div()
                     .flex()
                     .flex_col()
@@ -2542,11 +2261,12 @@ impl Console {
                         )
                     }),
             )
+            .children(self.sweep_progress(colors, cx))
             .when(self.busy(), |page| page.child(self.run_progress(colors)))
             .when(has_results && !self.busy() && self.results_stale(), |page| {
                 page.child(self.stale_notice(colors))
             })
-            .when(has_results && self.sample, |page| {
+            .when(has_results && self.sample && self.result_view != ResultView::Sweep, |page| {
                 page.child(
                     div()
                         .w_full()
@@ -2560,17 +2280,19 @@ impl Console {
                         .border_color(colors.accent)
                         .bg(colors.accent_soft)
                         .child(label(
-                            match self.saved_run {
-                                Some(number) => format!("Saved run #{number}"),
-                                None => "Sample result".to_string(),
+                            match (self.saved_run, &self.opened_note) {
+                                (Some(number), _) => format!("Saved run #{number}"),
+                                (None, Some((title, _))) => title.clone(),
+                                (None, None) => "Sample result".to_string(),
                             },
                             Type::LABEL,
                             colors.accent,
                         ))
                         .child(label(
-                            match self.saved_run {
-                                Some(_) => "Reopened from your history. Duplicate branches from it, or run it again to check it still reproduces.",
-                                None => "Illustrative data, so you can see what a finished comparison looks like. Run your own experiment and it replaces this.",
+                            match (self.saved_run, &self.opened_note) {
+                                (Some(_), _) => "Reopened from your history. The setup holds its settings: change one and run, or run it again to check it still reproduces.".to_string(),
+                                (None, Some((_, text))) => text.clone(),
+                                (None, None) => "Illustrative data, so you can see what a finished comparison looks like. Run your own experiment and it replaces this.".to_string(),
                             },
                             Type::LABEL,
                             colors.text,
@@ -2579,9 +2301,12 @@ impl Console {
             })
             .when(has_results, |page| page.child(div().pt(px(Space::SM)).child(self.result_tabs(colors, cx))))
             .child(result_body)
-            .when(has_results && self.result_view != ResultView::Trace, |page| {
-                page.child(self.verification_panel(colors))
-            })
+            .when(
+                has_results
+                    && self.result_view != ResultView::Trace
+                    && self.result_view != ResultView::Sweep,
+                |page| page.child(self.verification_panel(colors)),
+            )
     }
 
     fn output_panel(
@@ -2867,27 +2592,17 @@ fn shortcut_rows() -> Vec<(String, &'static str)> {
             "Overview / Layers / Tokens / Raw trace",
         ),
         (format!("{cmd}+B"), "Show or hide the sidebar"),
-        (format!("{cmd}+Shift+I"), "Show or hide the inspector"),
     ]
 }
 
-/// Window widths below which the inspector, then the sidebar, fold away.
-/// Column width of the Prompt and Intervention forms.
-/// The inspector reads as a property list (name left, value right), which
-/// needs a little more room than a stacked label did.
-pub(super) const INSPECTOR_WIDTH: f32 = 344.0;
-const INSPECTOR_MIN_WINDOW: f32 = 1560.0;
 const SIDEBAR_MIN_WINDOW: f32 = 1240.0;
 
 impl Render for Console {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Narrow windows give up chrome in a fixed order -- inspector first,
-        // then the sidebar -- so the workspace keeps the room its headings
-        // need. The stored flags are untouched: widening the window brings
-        // both panes back exactly as the user left them.
+        // Narrow windows give up the sidebar so the two workspace panes keep
+        // the room they need. The stored flag is untouched: widening the
+        // window brings it back exactly as the user left it.
         let width = f32::from(window.viewport_size().width);
-        self.inspector_fits = width >= INSPECTOR_MIN_WINDOW;
-        let show_inspector = self.inspector_open && self.inspector_fits;
         let show_sidebar = self.sidebar_open && width >= SIDEBAR_MIN_WINDOW;
         let colors = self.colors();
         let topbar = self.topbar(&colors, cx);
@@ -2901,79 +2616,18 @@ impl Render for Console {
             View::Models => self.models_view(&colors, cx).into_any_element(),
             View::Runs => self.runs_view(&colors, window, cx).into_any_element(),
             View::Settings => self.settings_view(&colors, cx).into_any_element(),
-            View::Experiment => {
-                let inspector = self.advanced_inspector(&colors, cx);
-                // The column is the growing region; the inspector is a fixed
-                // aside beside it. Note the direction is set once here --
-                // re-calling .flex() on this element would silently override
-                // flex_col with a row and squeeze the workspace out.
-                let column = div()
-                    .flex()
-                    .flex_col()
-                    // No `w_full()` here. `width: 100%` overrides the
-                    // `flex-basis: 0%` that `flex_1` sets, so the workspace
-                    // claimed the whole row and the 300px aside was left with
-                    // whatever was over -- about 118px, clipping the model name,
-                    // the hook and the advanced disclosure mid-word. `flex_1`
-                    // already means "take the space that is not spoken for".
-                    .flex_1()
-                    .min_h(px(0.0))
-                    // The workspace is the pane that must give way. Without an
-                    // explicit min-width it keeps its intrinsic width and shoves
-                    // the inspector past the right edge of the window.
-                    .min_w(px(0.0))
-                    .child(self.main_panel(&colors, cx));
-                if show_inspector {
-                    // The inspector is an aside beside the workspace, not a
-                    // band below it: the row is the thing that places them.
-                    //
-                    // No `w_full()` here, and an explicit `min_w(0)`: width
-                    // 100% overrides the flex-basis `flex_1` sets, and without
-                    // a min-width the row's shrink is clamped at its
-                    // min-content -- so an intrinsically wide page pushed the
-                    // 300px aside past the window edge, leaving roughly the
-                    // first 100px visible. Same trap the workspace column
-                    // comment below describes, one level up.
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .min_h(px(0.0))
-                        .child(column)
-                        .child(
-                            div()
-                                .id(ElementId::Name(SharedString::from("inspector")))
-                                // Observe the aside. Without this its id is only
-                                // a scope in its children's paths, so a test can
-                                // find the controls inside it but not the box
-                                // itself -- which is why the width bug below had
-                                // no test to catch it. A no-op outside the
-                                // `test-support` feature.
-                                .test_support()
-                                .w(px(INSPECTOR_WIDTH))
-                                .flex_none()
-                                // `flex_none` alone was not enough: the row
-                                // still took the shortfall out of the aside, and
-                                // a 300px inspector was rendering at about 120px
-                                // with the model name, the hook and the advanced
-                                // disclosure all clipped mid-word. The shrink is
-                                // pinned explicitly so the workspace column is
-                                // the only thing that gives way.
-                                .flex_shrink_0()
-                                .h_full()
-                                .overflow_y_scroll()
-                                .bg(colors.surface)
-                                .border_l_1()
-                                .border_color(colors.border)
-                                .p(px(Space::LG))
-                                .child(inspector),
-                        )
-                        .into_any_element()
-                } else {
-                    column.into_any_element()
-                }
-            }
+            // The workspace: setup and results side by side. It is the only
+            // page with two panes of its own, so it fills the content region.
+            View::Experiment => div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                // The row must be allowed to shrink below its content or a
+                // wide results page pushes the window's edge out.
+                .min_w(px(0.0))
+                .child(self.main_panel(&colors, cx))
+                .into_any_element(),
         };
 
         let body = div()
@@ -3025,7 +2679,6 @@ fn palette_shortcut(command: Command) -> Option<Kbd> {
         Command::RerunExperiment => "cmd-r",
         Command::RunExperiment => "cmd-enter",
         Command::ToggleSidebar => "cmd-b",
-        Command::ToggleInspector => "cmd-shift-i",
         _ => return None,
     };
     Some(Kbd::new(Keystroke::parse(stroke).ok()?))

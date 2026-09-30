@@ -89,6 +89,51 @@ impl Console {
         cx.notify();
     }
 
+    /// Pin a saved run as the reference and return to the workspace, so the
+    /// next run is judged against it. Needs a run that kept its result.
+    pub(super) fn compare_with_run(&mut self, number: u64, cx: &mut Context<Self>) {
+        let Some(record) = self.store.runs.iter().find(|run| run.number == number).cloned() else {
+            return;
+        };
+        let (Some(result), Some(config)) = (record.result, record.config) else {
+            return;
+        };
+        let values = FormValues {
+            model_path: config.model_path,
+            prompt: record.prompt,
+            max_tokens: config.max_tokens,
+            execution: config.execution,
+            site: config.site,
+            layer: config.layer,
+            op: config.op,
+            value: config.value,
+            source: config.source,
+            source_layer: config.source_layer,
+            token: config.token,
+            span: config.span,
+        };
+        self.reference = Some(Reference {
+            label: format!("Run #{number} \u{00b7} {}", change_summary(&values)),
+            layers: result
+                .layers
+                .iter()
+                .map(|layer| LayerMetric {
+                    layer: layer.layer,
+                    relative_l2_difference: layer.relative_l2,
+                    cosine_distance: layer.cosine,
+                    maximum_absolute_difference: None,
+                    exact: layer.relative_l2 == Some(0.0),
+                })
+                .collect(),
+            first_layer: result.first_layer_divergence,
+            peak: result.peak_relative_l2.zip(result.peak_layer),
+            text_equal: record.outputs_equal,
+            intervention_text: result.intervention_text,
+        });
+        self.goto(super::View::Experiment, cx);
+        cx.notify();
+    }
+
     pub(super) fn clear_reference(&mut self, cx: &mut Context<Self>) {
         self.reference = None;
         cx.notify();
@@ -103,6 +148,43 @@ impl Console {
         let model_ready = self.session.is_some();
 
         let heading = |text: &'static str| label(text, Type::META, colors.text_faint);
+
+        // Once a model is loaded the section is a single line -- the model is
+        // not what you edit from run to run -- with a way back to the picker.
+        let model_summary = div()
+            .flex()
+            .flex_col()
+            .gap(px(Space::XS))
+            .child(heading("Model"))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::SM))
+                    .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(label(
+                        model_display_name(&self.model_path),
+                        Type::BODY,
+                        colors.text,
+                    )))
+                    .child(chip("Ready", colors.ok))
+                    .child(text_button(
+                        "setup-model-change",
+                        "Change",
+                        cx.listener(|console, _: &ClickEvent, _window, cx| {
+                            console.model_open = true;
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .children(self.session.as_ref().map(|info| {
+                label(
+                    format!("{} \u{00b7} {} layers", info.architecture, info.n_layers),
+                    Type::META,
+                    colors.text_faint,
+                )
+            }));
+        let collapse_model = model_ready && !self.model_open;
 
         let model = div()
             .flex()
@@ -286,6 +368,62 @@ impl Console {
                 ))
             });
 
+        let advanced = div()
+            .flex()
+            .flex_col()
+            .gap(px(Space::SM))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(heading("Advanced"))
+                    .child(div().flex_1())
+                    .child(text_button(
+                        "setup-advanced",
+                        if self.advanced_open { "Hide" } else { "Show" },
+                        cx.listener(|console, _: &ClickEvent, _window, cx| {
+                            console.advanced_open = !console.advanced_open;
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .when(self.advanced_open, |section| {
+                section
+                    .child(field(
+                        colors,
+                        "Execution engine",
+                        self.picker(
+                            colors,
+                            "execution-picker",
+                            ComboId::Execution,
+                            &self.execution,
+                            &self.execution_options,
+                            cx,
+                        ),
+                    ))
+                    .child(field(
+                        colors,
+                        "Exact token limit",
+                        text_input(
+                            colors,
+                            self.inputs.max_tokens.clone(),
+                            super::FONT_MONO_NAME,
+                            Type::META,
+                            None,
+                            cx,
+                        ),
+                    ))
+                    .child(mono(
+                        format!(
+                            "hook {} \u{00b7} operation {} \u{00b7} tokens {}",
+                            self.site, self.op, self.token
+                        ),
+                        Type::MICRO,
+                        colors.text_faint,
+                    ))
+            });
+
         let length = div()
             .flex()
             .flex_col()
@@ -324,7 +462,33 @@ impl Console {
                         console.run_now();
                         cx.notify();
                     })),
-            );
+            )
+            .children(self.can_sweep().then(|| {
+                if self.sweep_running() {
+                    Button::new("setup-sweep-stop")
+                        .w_full()
+                        .label("Stop sweep")
+                        .accessibility_label("Stop the sweep after the run in flight")
+                        .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                            console.stop_sweep(cx);
+                        }))
+                } else {
+                    let layers = self.session.as_ref().map(|session| session.n_layers);
+                    Button::new("setup-sweep")
+                        .w_full()
+                        .label(match layers {
+                            Some(count) => format!("Sweep all {count} layers"),
+                            None => "Sweep all layers".to_string(),
+                        })
+                        .tooltip("Run this experiment at every layer and plot the effect of each")
+                        .accessibility_label("Sweep the change across every layer")
+                        .disabled(!can_run)
+                        .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                            console.start_sweep(cx);
+                            cx.notify();
+                        }))
+                }
+            }));
 
         let rule = || rule_h(colors);
         div()
@@ -368,14 +532,16 @@ impl Console {
                     .when(self.examples_open, |pane| {
                         pane.child(self.examples_list(colors, cx))
                     })
-                    .child(model)
+                    .child(if collapse_model { model_summary } else { model })
                     .child(rule())
                     .child(prompt)
                     .child(length)
                     .child(rule())
                     .child(change)
                     .child(where_)
-                    .child(target),
+                    .child(target)
+                    .child(rule())
+                    .child(advanced),
             )
             .child(footer)
     }
