@@ -113,6 +113,12 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
 
+      - name: fuzz lockfile in sync
+        # fuzz/ is a separate cargo project with its own lockfile; a root
+        # dependency change that is not mirrored there only surfaced later, in
+        # the path-filtered parser-fuzz workflow.
+        run: cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null
+
       - name: docs
         # rustdoc lints (broken_intra_doc_links, private_intra_doc_links) are
         # warn-level in lib.rs; -D warnings turns any regression into a red

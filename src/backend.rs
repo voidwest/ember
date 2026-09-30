@@ -1962,6 +1962,25 @@ pub(crate) fn cached_attention_dispatch(
         let max_j = spec.total_seq_len - seq_len + i;
         let min_j = sliding_window.map_or(0, |window| (max_j + 1).saturating_sub(window));
         scores.resize(max_j + 1, 0.0);
+        // Prefill rows take the register-tiled kernel (bit-identical per
+        // element); single-row decode keeps the generic body.
+        if seq_len > 1 {
+            let q_idx = i * embed_dim + h * spec.head_dim;
+            if crate::attention_kernels::cached_row_head(
+                &q[q_idx..q_idx + spec.head_dim],
+                cached_k,
+                cached_v,
+                (h / n_repeat) * cache_head_stride,
+                cache_head_dim,
+                scale,
+                min_j,
+                max_j,
+                scores,
+                head_out,
+            ) {
+                return;
+            }
+        }
         cached_attention_row_head(
             q,
             cached_k,

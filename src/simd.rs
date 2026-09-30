@@ -2327,6 +2327,27 @@ pub(crate) fn matmul_q8_0_batch(x: &[u8], rows: usize, w: &QuantizedWeight, out:
     assert_eq!(x.len(), expected_input_len);
     assert_eq!(out.len(), expected_output_len);
 
+    #[cfg(target_arch = "aarch64")]
+    if rows > 1 && crate::q8_gemm::supported() {
+        // Bit-identical tiled GEMM (same per-element block order and scale
+        // arithmetic as the decode and legacy batch kernels).
+        let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
+        crate::q8_gemm::matmul(x, rows, w.data(), w.out_features(), blocks_per_row, out);
+        return;
+    }
+    matmul_q8_0_batch_legacy(x, rows, w, out);
+}
+
+/// The pre-GEMM batch schedule: row tiles of up to four activation rows, each
+/// streaming the whole weight matrix. Kept for CPUs without the tiled GEMM
+/// and as the bit-identity oracle in tests.
+pub(crate) fn matmul_q8_0_batch_legacy(
+    x: &[u8],
+    rows: usize,
+    w: &QuantizedWeight,
+    out: &mut [f32],
+) {
+    let encoded_row_len = (w.in_features() / Q8_0_BLOCK_SIZE) * Q8_0_TYPE_SIZE;
     let tile_rows = q8_batch_tile_rows(rows);
 
     if tile_rows == 1 {
