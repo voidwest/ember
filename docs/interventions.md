@@ -15,6 +15,16 @@ documented hook timing (see `docs/v05-research-contract.md`).
 - `add-delta`: `target := target + source`.
 - `restore-original`: write back the exact pre-intervention snapshot of
   the target row.
+- `steer { alpha, normalize }`: `target := target + alpha * c * d`, where
+  `d` is the source direction and `c` is `1` (`normalize = "none"`, the
+  default), `1/|d|` (`"unit"`), or `|target|/|d|` (`"match-residual-norm"`:
+  `alpha` is a fraction of the row's own norm, taken before the change).
+  Norms and the coefficient are computed in f64; a term that rounds to zero
+  leaves the value untouched, so `alpha = 0` is bit-identical to no
+  intervention. `alpha` must be finite; a zero-norm direction fails closed
+  under normalization.
+- `ablate-projection`: `target := target - (target . u) u`, `u = d/|d|`
+  (removes the component along the direction).
 
 The pre-intervention snapshot of every intervened row is taken at the
 first fire and checksummed; `restore-original` reproduces it exactly.
@@ -30,6 +40,52 @@ first fire and checksummed; `restore-original` reproduces it exactly.
   explicit expert compatibility override is set (recorded prominently in
   provenance).
 - `zero`: an all-zero row.
+- `vector-file { path, sha256, tensor? }` (direction operations only): a
+  `.npy` (little-endian `<f4`/`<f8`, C order) or `.safetensors` file. The
+  SHA-256 is required, so the file is part of the experiment's semantic
+  identity; a file that hashes differently fails before anything runs.
+  `tensor` names the tensor in a multi-tensor safetensors file. Shape `[d]`
+  or `[1, d]` applies at every intervened layer; `[n_layers, d]` gives row
+  `L` to layer `L` (per-layer sites). `d` must equal the site width (the
+  model's embedding width, or the vocabulary for `logits`); anything else is
+  a dimension-mismatch error.
+- `contrastive { positive, negative, tokens? }` (direction operations only):
+  the direction is `mean(capture | positive) - mean(capture | negative)` at
+  the intervention's site and each of its layers. The driver prefills every
+  prompt once (capture-only, same model, execution mode and threads),
+  averages the rows `tokens` selects (default `prompt-final`) per prompt,
+  then averages over prompts, in f64. The result is cached for the session,
+  so an alpha sweep computes it once.
+
+`inline-vector` sources also serve `steer`/`ablate-projection`; the other
+sources (captures, `zero`) do not, and direction sources are refused for
+the other operations.
+
+### Direction artifacts
+
+Every `vector-file` or `contrastive` direction is written into the bundle:
+
+```text
+artifacts/directions/<intervention>.safetensors   one F32 tensor layer-<L> per layer
+artifacts/directions/<intervention>.json          ember.direction.v1 record
+```
+
+The record names the intervention, site, source kind, the pinned file hash
+or the SHA-256 of every contrastive prompt, and each layer's tensor name,
+width, checksum and (informational) L2 norm. Both files are ordinary
+payloads (in `checksums.sha256` and the semantic manifest's payload map),
+and `experiment verify` adds a `direction artifacts` check: each record
+matches its tensors (checksums, widths), the spec (file pin or prompt hashes,
+site, resolved layers), and no stray direction artifact exists.
+
+### Steering and shared prefixes
+
+The shared-prefix boundary is the earliest intervened block, as for every
+operation: a variant steering layer `L` resumes at `L` and its bundle is
+bit-identical to a full recompute (tested with inline, file and
+contrastive directions and with `ablate-projection`, in reference and
+planned modes). Contrastive prompts run before the variant's inputs and do
+not touch the recorded prefix.
 
 No arbitrary executable transformations exist.
 

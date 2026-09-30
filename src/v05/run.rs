@@ -60,6 +60,9 @@ pub struct BundleMaterials {
     pub results: Vec<InputResult>,
     pub warnings: Vec<String>,
     pub runtime: RuntimeMetrics,
+    /// Additional deterministic files under `artifacts/` (direction
+    /// vectors, analysis reports). They are hashed like every payload.
+    pub artifacts: BTreeMap<String, Vec<u8>>,
 }
 
 /// The assembled bundle: file set, semantic manifest, runtime JSON.
@@ -197,6 +200,17 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
         "execution-plan.json".to_string(),
         pretty_json(&stored_plan)?,
     );
+
+    // artifacts/: resolved directions and analysis reports.
+    for (relative, bytes) in &materials.artifacts {
+        if !relative.starts_with("artifacts/") || files.contains_key(relative) {
+            return Err(format!(
+                "artifact path '{relative}' must lie under artifacts/ and be unique"
+            ));
+        }
+        crate::v05::bundle::validate_relative_path(relative)?;
+        files.insert(relative.clone(), bytes.clone());
+    }
 
     // semantic manifest (payload checksums filled below).
     let mut payloads: BTreeMap<String, String> = BTreeMap::new();
@@ -710,6 +724,7 @@ directory = "runs/bundle-test"
                 threads: 1,
                 prefix_reuse: None,
             },
+            artifacts: BTreeMap::new(),
         }
     }
 

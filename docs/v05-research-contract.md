@@ -110,8 +110,8 @@ Interventions apply at the same moments as observations, in-place:
 Interventions are applied once per evaluation (prefill and each decode
 step), gated by the resolved token selector (section 6). A replace
 intervention with a single-row source applies the source row to every
-selected row. For source-consuming operations (`replace`, `interpolate`, and
-`add-delta`), a source with multiple rows must have exactly the selected target
+selected row. For source-consuming operations (`replace`, `interpolate`,
+`add-delta`, `steer` and `ablate-projection`), a source with multiple rows must have exactly the selected target
 row count; rows correspond in selector order. Other source row counts fail
 before the operation mutates any target row. Source columns must match target
 columns; truncation and implicit reshaping are forbidden.
@@ -259,7 +259,9 @@ applies an intervention, and restores must record all three events.
 Stable (schema-versioned, `ember.hook.v1`): hook site ids, layer numbering,
 token-position conventions, site semantics (sections 1-6), capture plan
 fields, intervention operation set (`replace`, `zero`, `scale`,
-`interpolate`, `add-delta`, `restore-original`), bundle layout, bundle
+`interpolate`, `add-delta`, `restore-original`, and the direction
+operations `steer` and `ablate-projection`, whose source is a direction:
+see `docs/interventions.md`), bundle layout, bundle
 schema version, semantic manifest fields, semantic hash definition.
 
 Diagnostic (may evolve within 0.5.x): kernel names, dispatch details,

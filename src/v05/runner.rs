@@ -141,6 +141,9 @@ pub struct V05Experiment {
     captures: Vec<CaptureTarget>,
     interventions: Vec<InterventionTarget>,
     bundle_sources: Vec<BundleSource>,
+    /// Resolved directions of `vector-file`/`contrastive` sources, keyed by
+    /// (intervention id, layer); head sites use layer 0.
+    directions: HashMap<(String, usize), Vec<f32>>,
     // runtime state
     prompt_len: usize,
     tokenizations: HashMap<TextNormalization, TokenizationInfo>,
@@ -179,6 +182,7 @@ impl V05Experiment {
             captures: Vec::new(),
             interventions: Vec::new(),
             bundle_sources: Vec::new(),
+            directions: HashMap::new(),
             prompt_len: 0,
             tokenizations: HashMap::new(),
             result: None,
@@ -226,6 +230,13 @@ impl V05Experiment {
     /// execution.
     pub fn inject_bundle_source(&mut self, source: BundleSource) {
         self.bundle_sources.push(source);
+    }
+
+    /// Inject a direction the driver resolved before execution for
+    /// `intervention_id` at `layer` (layer 0 for head sites).
+    pub fn inject_direction(&mut self, intervention_id: &str, layer: usize, values: Vec<f32>) {
+        self.directions
+            .insert((intervention_id.to_string(), layer), values);
     }
 
     /// Inject the tokenization computed by the CLI driver.
@@ -613,6 +624,31 @@ impl V05Experiment {
                         }
                         Some(bundle.rows.clone())
                     }
+                    Some(
+                        source @ (InterventionSource::VectorFile { .. }
+                        | InterventionSource::Contrastive { .. }),
+                    ) => {
+                        let direction = self
+                            .directions
+                            .get(&(target.intervention_id.clone(), layer))
+                            .ok_or_else(|| {
+                                ExperimentError::new(format!(
+                                    "intervention '{}': the {} direction for layer {layer} was \
+                                     not resolved before execution",
+                                    target.intervention_id,
+                                    source.kind_name()
+                                ))
+                            })?;
+                        if direction.len() != columns {
+                            return Err(ExperimentError::new(format!(
+                                "intervention '{}': direction has {} values; the site {site} \
+                                 tensor has {columns} columns",
+                                target.intervention_id,
+                                direction.len()
+                            )));
+                        }
+                        Some(direction.clone())
+                    }
                 };
                 // A single source row broadcasts; otherwise rows correspond
                 // in selector order. Reject incompatible shapes before changing
@@ -684,6 +720,39 @@ impl V05Experiment {
                             for (value, &src) in row.iter_mut().zip(source.iter()) {
                                 *value += src;
                             }
+                            applied = true;
+                        }
+                        InterventionOperation::Steer { alpha, normalize } => {
+                            let direction = source_row.ok_or_else(|| {
+                                ExperimentError::new(format!(
+                                    "intervention '{}': steer requires a direction",
+                                    target.intervention_id
+                                ))
+                            })?;
+                            crate::v05::steering::steer_row(row, direction, alpha, normalize)
+                                .map_err(|error| {
+                                    ExperimentError::new(format!(
+                                        "intervention '{}': {error}",
+                                        target.intervention_id
+                                    ))
+                                })?;
+                            applied = true;
+                        }
+                        InterventionOperation::AblateProjection => {
+                            let direction = source_row.ok_or_else(|| {
+                                ExperimentError::new(format!(
+                                    "intervention '{}': ablate-projection requires a direction",
+                                    target.intervention_id
+                                ))
+                            })?;
+                            crate::v05::steering::ablate_projection_row(row, direction).map_err(
+                                |error| {
+                                    ExperimentError::new(format!(
+                                        "intervention '{}': {error}",
+                                        target.intervention_id
+                                    ))
+                                },
+                            )?;
                             applied = true;
                         }
                         InterventionOperation::RestoreOriginal => {
@@ -811,12 +880,7 @@ fn generated_step_of(selector: &TokenSelector) -> Result<usize, ExperimentError>
 }
 
 fn source_kind(source: &InterventionSource) -> String {
-    match source {
-        InterventionSource::InlineVector { .. } => "inline-vector".into(),
-        InterventionSource::CaptureFromCurrentRun { .. } => "capture-from-current-run".into(),
-        InterventionSource::CaptureFromBundle { .. } => "capture-from-bundle".into(),
-        InterventionSource::Zero => "zero".into(),
-    }
+    source.kind_name().to_string()
 }
 
 /// SHA-256 over the little-endian bytes of `values`, as lowercase hex.

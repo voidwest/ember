@@ -20,6 +20,7 @@ pub mod run;
 pub mod runner;
 pub mod safetensors;
 pub mod spec;
+pub mod steering;
 pub mod sweep;
 #[cfg(test)]
 pub mod testutil;

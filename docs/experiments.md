@@ -195,8 +195,18 @@ an ordinary spec (see `examples/experiments/morphology-layer-sweep.toml`):
 [sweep]
 layers = "all"                # or [2, 4, 8], or { start = 0, end = 16, step = 2 }
 positions = [3, 7]            # optional: absolute token positions
+alphas = [0.0, 2.0, 4.0]      # optional: sets `alpha` of the swept interventions
 interventions = ["replace"]   # optional: which interventions move (default: all)
 ```
+
+`alphas` sweeps the `alpha` of `steer` (or `interpolate`) interventions,
+crossed with `layers` (and `positions`) when both are given; with `alphas`
+alone the swept interventions keep their declared layers and point ids are
+`alpha-0`, `alpha-2`, `alpha-neg-1.5`; crossed, `layer-07-alpha-2`. Every
+swept intervention must have an `alpha`. `sweep.json` then records `alphas`
+and each point's `alpha`, and `sweep.csv` gains an `alpha` column (layer
+sweeps keep their exact earlier format). See
+`examples/experiments/steering-sentiment-sweep.toml`.
 
 Each *point* is the spec with the swept interventions at `layers = [L]`
 (and, with `positions`, `tokens = { kind = "absolute-token", index = P }`);

@@ -448,7 +448,13 @@ pub(crate) struct PreparedRun {
     /// The model section the session was prepared from; shared execution
     /// admits only specs naming the same model, tokenizer and architecture.
     pub model_spec: ember::v05::spec::ModelSpec,
+    /// Contrastive directions already computed in this session, keyed by
+    /// everything they depend on (a sweep over alpha computes each once).
+    pub direction_cache: Mutex<std::collections::BTreeMap<String, DirectionLayers>>,
 }
+
+/// Per-layer direction vectors.
+pub(crate) type DirectionLayers = std::collections::BTreeMap<usize, Vec<f32>>;
 
 /// Refuse a spec that names a different model, tokenizer or architecture
 /// than the loaded session, or pins hashes the session does not have.
@@ -558,6 +564,7 @@ pub(crate) fn prepare_run(
         gguf_metadata,
         model_path: resolved.model.path.clone(),
         model_spec: resolved.model.clone(),
+        direction_cache: Mutex::new(std::collections::BTreeMap::new()),
     })
 }
 
@@ -629,7 +636,7 @@ fn execute_prepared_inner(
     let mut timing = RunTiming::default();
     for index in 0..resolved.inputs.len() {
         let started = std::time::Instant::now();
-        let experiment = new_input_experiment(prepared, resolved, &active.bundle_sources, index)?;
+        let experiment = new_input_experiment(prepared, resolved, Some(&active), index)?;
         let result = run_input(prepared, resolved, &active, &experiment, None, None, cancel)?;
         timing.add(started.elapsed(), &result);
         results.push(result);
@@ -680,6 +687,9 @@ pub(crate) struct RunOutcome {
 pub(crate) struct ActiveSpec {
     pub plan: std::sync::Arc<ember::plan::ExecutionPlan>,
     pub bundle_sources: Vec<BundleSource>,
+    /// Directions of `vector-file`/`contrastive` sources, resolved before
+    /// execution and written into the bundle as artifacts.
+    pub directions: Vec<ember::v05::steering::ResolvedDirection>,
     pub threads: usize,
 }
 
@@ -698,11 +708,16 @@ impl RunTiming {
 }
 
 /// Build the spec's execution plan (making it the model's active plan) and
-/// load its cross-bundle sources.
+/// load its cross-bundle sources and directions.
+///
+/// Directions are resolved first: a contrastive direction runs the model
+/// over its prompts (under a capture-only plan of its own), so the spec's
+/// own plan is built afterwards and is the one the model is left running.
 pub(crate) fn activate_spec(
     prepared: &PreparedRun,
     resolved: &ember::v05::spec::ExperimentSpecV1,
 ) -> anyhow::Result<ActiveSpec> {
+    let directions = crate::cli_experiment_steering::resolve_directions(prepared, resolved)?;
     let mode = resolved.execution.mode;
     let threads = pool_threads(resolved)?;
     let model = &prepared.model;
@@ -758,16 +773,18 @@ pub(crate) fn activate_spec(
     Ok(ActiveSpec {
         plan,
         bundle_sources,
+        directions,
         threads,
     })
 }
 
 /// A fresh experiment for input `index`, with its tokenization and the
-/// spec's cross-bundle sources injected.
+/// spec's cross-bundle sources and directions injected (`active` is `None`
+/// for an observer, which never intervenes).
 pub(crate) fn new_input_experiment(
     prepared: &PreparedRun,
     resolved: &ember::v05::spec::ExperimentSpecV1,
-    bundle_sources: &[BundleSource],
+    active: Option<&ActiveSpec>,
     index: usize,
 ) -> anyhow::Result<Arc<Mutex<V05Experiment>>> {
     let facts = ModelFacts {
@@ -789,8 +806,15 @@ pub(crate) fn new_input_experiment(
     let info = tokenize_for_selection(&prepared.tokenizer, &input.text, TextNormalization::None)
         .map_err(anyhow::Error::msg)?;
     experiment.inject_tokenization(info);
-    for source in bundle_sources {
-        experiment.inject_bundle_source(source.clone());
+    if let Some(active) = active {
+        for source in &active.bundle_sources {
+            experiment.inject_bundle_source(source.clone());
+        }
+        for direction in &active.directions {
+            for (layer, values) in &direction.layers {
+                experiment.inject_direction(&direction.intervention_id, *layer, values.clone());
+            }
+        }
     }
     Ok(Arc::new(Mutex::new(experiment)))
 }
@@ -916,6 +940,9 @@ pub(crate) fn finish_bundle(
     };
     let mut resolved_with_output = (*resolved).clone();
     resolved_with_output.output.directory = target.output_directory.to_path_buf();
+    let artifacts =
+        ember::v05::steering::direction_artifact_files(&active.directions, &resolved.interventions)
+            .map_err(anyhow::Error::msg)?;
     let materials = BundleMaterials {
         spec_text: target.spec_text.to_string(),
         resolved: resolved_with_output,
@@ -937,6 +964,7 @@ pub(crate) fn finish_bundle(
         results: results.clone(),
         warnings: Vec::new(),
         runtime,
+        artifacts,
     };
     let (path, identity) =
         write_bundle(&materials, target.retain_incomplete).map_err(anyhow::Error::msg)?;
@@ -997,6 +1025,7 @@ pub(crate) fn run_validate_command(command: &ValidateArgs) -> anyhow::Result<()>
         return crate::cli_experiment_sweep::run_validate_sweep(command, &text);
     }
     let (_, resolved) = resolve_spec_file(&command.spec, None, None)?;
+    let direction_files = crate::cli_experiment_steering::check_direction_files(&resolved)?;
     if command.json {
         println!(
             "{}",
@@ -1007,6 +1036,7 @@ pub(crate) fn run_validate_command(command: &ValidateArgs) -> anyhow::Result<()>
                 "execution_mode": resolved.execution.mode.name(),
                 "captures": resolved.captures.len(),
                 "interventions": resolved.interventions.len(),
+                "direction_files_checked": direction_files,
                 "inputs": resolved.inputs.len(),
                 "defaults": resolved.defaults,
             }))?
@@ -1019,6 +1049,9 @@ pub(crate) fn run_validate_command(command: &ValidateArgs) -> anyhow::Result<()>
         println!("  inputs: {}", resolved.inputs.len());
         println!("  captures: {}", resolved.captures.len());
         println!("  interventions: {}", resolved.interventions.len());
+        if direction_files > 0 {
+            println!("  direction files: {direction_files} (hash and shape checked)");
+        }
         println!("  defaults applied: {}", resolved.defaults.len());
     }
     Ok(())

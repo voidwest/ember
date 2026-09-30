@@ -30,6 +30,31 @@ pub enum InterventionOperation {
     AddDelta,
     /// Write the run's own pre-intervention snapshot back at the same site.
     RestoreOriginal,
+    /// Steering: `target := target + alpha * c * direction`, where the
+    /// direction is the source row and `c` comes from `normalize`.
+    Steer {
+        alpha: f32,
+        #[serde(default)]
+        normalize: SteerNormalization,
+    },
+    /// Remove the component along the source direction:
+    /// `target := target - (target . u) u` with `u = d / |d|`.
+    AblateProjection,
+}
+
+/// How a steering direction is scaled before `alpha` multiplies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SteerNormalization {
+    /// Use the direction as given: `target += alpha * d`.
+    #[default]
+    None,
+    /// Unit length: `target += alpha * d / |d|`.
+    Unit,
+    /// Unit length times the norm of the target row before the change:
+    /// `target += alpha * |target| * d / |d|`, so `alpha` is a fraction of
+    /// the row's own norm.
+    MatchResidualNorm,
 }
 // Empty struct variants reject stray fields that Serde ignores for unit variants.
 #[derive(Deserialize)]
@@ -47,6 +72,14 @@ enum StrictInterventionOperation {
     AddDelta {},
     /// Write the run's own pre-intervention snapshot back at the same site.
     RestoreOriginal {},
+    /// Steering along the source direction.
+    Steer {
+        alpha: f32,
+        #[serde(default)]
+        normalize: SteerNormalization,
+    },
+    /// Remove the component along the source direction.
+    AblateProjection {},
 }
 
 impl From<StrictInterventionOperation> for InterventionOperation {
@@ -58,6 +91,10 @@ impl From<StrictInterventionOperation> for InterventionOperation {
             StrictInterventionOperation::Interpolate { alpha } => Self::Interpolate { alpha },
             StrictInterventionOperation::AddDelta {} => Self::AddDelta,
             StrictInterventionOperation::RestoreOriginal {} => Self::RestoreOriginal,
+            StrictInterventionOperation::Steer { alpha, normalize } => {
+                Self::Steer { alpha, normalize }
+            }
+            StrictInterventionOperation::AblateProjection {} => Self::AblateProjection,
         }
     }
 }
@@ -70,7 +107,28 @@ impl InterventionOperation {
             InterventionOperation::Replace
                 | InterventionOperation::Interpolate { .. }
                 | InterventionOperation::AddDelta
+                | InterventionOperation::Steer { .. }
+                | InterventionOperation::AblateProjection
         )
+    }
+
+    /// Whether this operation acts along a direction (its source is a
+    /// direction, not a replacement row).
+    pub const fn is_direction_op(self) -> bool {
+        matches!(
+            self,
+            InterventionOperation::Steer { .. } | InterventionOperation::AblateProjection
+        )
+    }
+
+    /// The operation's `alpha`, for operations that have one (the value a
+    /// sweep's `alphas` sets).
+    pub const fn alpha(self) -> Option<f32> {
+        match self {
+            InterventionOperation::Interpolate { alpha }
+            | InterventionOperation::Steer { alpha, .. } => Some(alpha),
+            _ => None,
+        }
     }
 
     /// The kebab-case operation kind (matches the TOML/JSON `kind` tag).
@@ -82,6 +140,8 @@ impl InterventionOperation {
             InterventionOperation::Interpolate { .. } => "interpolate",
             InterventionOperation::AddDelta => "add-delta",
             InterventionOperation::RestoreOriginal => "restore-original",
+            InterventionOperation::Steer { .. } => "steer",
+            InterventionOperation::AblateProjection => "ablate-projection",
         }
     }
 
@@ -118,6 +178,26 @@ pub enum InterventionSource {
     },
     /// The zero tensor (for `replace`).
     Zero,
+    /// A direction read from a `.npy` or `.safetensors` file whose SHA-256
+    /// is pinned (direction operations only).
+    VectorFile {
+        path: std::path::PathBuf,
+        sha256: String,
+        /// Tensor name inside a safetensors file (required when it holds
+        /// more than one tensor; not allowed for `.npy`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tensor: Option<String>,
+    },
+    /// A contrastive direction computed in the run: the mean capture over
+    /// `positive` prompts minus the mean over `negative` prompts, at the
+    /// intervention's site and layer (direction operations only).
+    Contrastive {
+        positive: Vec<String>,
+        negative: Vec<String>,
+        /// Rows averaged per prompt (default `prompt-final`).
+        #[serde(default = "default_contrastive_tokens")]
+        tokens: TokenSelector,
+    },
 }
 // Empty struct variants reject stray fields that Serde ignores for unit variants.
 #[derive(Deserialize)]
@@ -136,6 +216,20 @@ enum StrictInterventionSource {
     },
     /// The zero tensor (for `replace`).
     Zero {},
+    /// A direction read from a pinned file.
+    VectorFile {
+        path: std::path::PathBuf,
+        sha256: String,
+        #[serde(default)]
+        tensor: Option<String>,
+    },
+    /// A contrastive direction computed in the run.
+    Contrastive {
+        positive: Vec<String>,
+        negative: Vec<String>,
+        #[serde(default = "default_contrastive_tokens")]
+        tokens: TokenSelector,
+    },
 }
 
 impl From<StrictInterventionSource> for InterventionSource {
@@ -157,6 +251,51 @@ impl From<StrictInterventionSource> for InterventionSource {
                 layer,
             },
             StrictInterventionSource::Zero {} => Self::Zero,
+            StrictInterventionSource::VectorFile {
+                path,
+                sha256,
+                tensor,
+            } => Self::VectorFile {
+                path,
+                sha256,
+                tensor,
+            },
+            StrictInterventionSource::Contrastive {
+                positive,
+                negative,
+                tokens,
+            } => Self::Contrastive {
+                positive,
+                negative,
+                tokens,
+            },
+        }
+    }
+}
+
+fn default_contrastive_tokens() -> TokenSelector {
+    TokenSelector::PromptFinal
+}
+
+impl InterventionSource {
+    /// Whether this source yields a direction the driver resolves before
+    /// execution (a pinned file or a contrastive mean difference).
+    pub const fn is_resolved_direction(&self) -> bool {
+        matches!(
+            self,
+            InterventionSource::VectorFile { .. } | InterventionSource::Contrastive { .. }
+        )
+    }
+
+    /// The kebab-case source kind (matches the TOML/JSON `kind` tag).
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            InterventionSource::InlineVector { .. } => "inline-vector",
+            InterventionSource::CaptureFromCurrentRun { .. } => "capture-from-current-run",
+            InterventionSource::CaptureFromBundle { .. } => "capture-from-bundle",
+            InterventionSource::Zero => "zero",
+            InterventionSource::VectorFile { .. } => "vector-file",
+            InterventionSource::Contrastive { .. } => "contrastive",
         }
     }
 }
@@ -269,6 +408,108 @@ impl InterventionSpec {
                 "intervention '{}': inline vector must not be empty",
                 self.id
             ));
+        }
+        if let InterventionOperation::Steer { alpha, .. } = self.operation
+            && !alpha.is_finite()
+        {
+            return Err(format!(
+                "intervention '{}': steer alpha must be finite",
+                self.id
+            ));
+        }
+        if let Some(source) = &self.source {
+            let direction_source = source.is_resolved_direction();
+            if self.operation.is_direction_op()
+                && !direction_source
+                && !matches!(source, InterventionSource::InlineVector { .. })
+            {
+                return Err(format!(
+                    "intervention '{}': {} takes a direction: use an inline-vector, \
+                     vector-file or contrastive source, not {}",
+                    self.id,
+                    self.operation.kind_name(),
+                    source.kind_name()
+                ));
+            }
+            if direction_source && !self.operation.is_direction_op() {
+                return Err(format!(
+                    "intervention '{}': a {} source is a direction and needs a direction \
+                     operation (steer or ablate-projection), not {}",
+                    self.id,
+                    source.kind_name(),
+                    self.operation.kind_name()
+                ));
+            }
+            if let Some(values) = match source {
+                InterventionSource::InlineVector { values } => Some(values),
+                _ => None,
+            } && values.iter().any(|value| !value.is_finite())
+            {
+                return Err(format!(
+                    "intervention '{}': inline vector values must be finite",
+                    self.id
+                ));
+            }
+        }
+        match &self.source {
+            Some(InterventionSource::VectorFile {
+                path,
+                sha256,
+                tensor,
+            }) => {
+                if path.as_os_str().is_empty() {
+                    return Err(format!(
+                        "intervention '{}': vector-file path must not be empty",
+                        self.id
+                    ));
+                }
+                if sha256.len() != 64
+                    || !sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    return Err(format!(
+                        "intervention '{}': vector-file sha256 must be 64 lowercase hex \
+                         characters (the file's SHA-256 is part of the experiment's identity)",
+                        self.id
+                    ));
+                }
+                if tensor.as_deref().is_some_and(str::is_empty) {
+                    return Err(format!(
+                        "intervention '{}': vector-file tensor name must not be empty",
+                        self.id
+                    ));
+                }
+            }
+            Some(InterventionSource::Contrastive {
+                positive,
+                negative,
+                tokens,
+            }) => {
+                for (name, prompts) in [("positive", positive), ("negative", negative)] {
+                    if prompts.is_empty() {
+                        return Err(format!(
+                            "intervention '{}': contrastive {name} prompts must not be empty",
+                            self.id
+                        ));
+                    }
+                    if prompts.iter().any(|prompt| prompt.is_empty()) {
+                        return Err(format!(
+                            "intervention '{}': contrastive {name} prompts must be non-empty \
+                             text",
+                            self.id
+                        ));
+                    }
+                }
+                if tokens.is_generated() {
+                    return Err(format!(
+                        "intervention '{}': contrastive prompts are only prefilled; their \
+                         token selector cannot be generated-step",
+                        self.id
+                    ));
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

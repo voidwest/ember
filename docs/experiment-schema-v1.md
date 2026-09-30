@@ -55,7 +55,7 @@ id = "iv-1"                         # required; unique, no capture-id collision
 site = "attention-output"           # required
 layers = [0]                        # optional
 operation = { kind = "zero" }       # required; see operations
-# source = { kind = "zero" }        # required by replace/interpolate/add-delta
+# source = { kind = "zero" }        # required by replace/interpolate/add-delta/steer/ablate-projection
 [interventions.tokens]              # required
 kind = "prompt-final"
 
@@ -78,9 +78,36 @@ settings are identical whether a default is omitted or explicitly supplied.
 ## Sweeps
 
 An optional `[sweep]` table turns the spec into a template for a layer
-sweep (`layers`, optional `positions`, optional `interventions`); see
+sweep (`layers`, optional `positions`, optional `alphas`, optional
+`interventions`; `layers` may be omitted when `alphas` is given); see
 `docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
 spec with `[sweep]` is only accepted as a sweep.
+
+## Operations and sources
+
+```toml
+operation = { kind = "replace" }                 # source required
+operation = { kind = "zero" }
+operation = { kind = "scale", factor = 0.5 }
+operation = { kind = "interpolate", alpha = 0.5 } # source required
+operation = { kind = "add-delta" }               # source required
+operation = { kind = "restore-original" }
+operation = { kind = "steer", alpha = 4.0, normalize = "unit" } # none|unit|match-residual-norm; direction source
+operation = { kind = "ablate-projection" }       # direction source
+
+source = { kind = "inline-vector", values = [0.1, 0.2] }
+source = { kind = "capture-from-current-run", capture_id = "cap" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/x", capture_id = "cap", input_id = "i", layer = 7 }
+source = { kind = "zero" }
+source = { kind = "vector-file", path = "dir.npy", sha256 = "<64 hex>" }            # tensor = "name" for safetensors
+source = { kind = "contrastive", positive = ["..."], negative = ["..."] }          # tokens = {...}, default prompt-final
+```
+
+Direction operations (`steer`, `ablate-projection`) take `inline-vector`,
+`vector-file` or `contrastive` sources; `vector-file`/`contrastive` are
+refused for other operations. `vector-file` requires a 64-hex `sha256`;
+contrastive prompt lists must be non-empty and their selector cannot be
+`generated-step`. See `docs/interventions.md`.
 
 ## Semantic hook sites
 

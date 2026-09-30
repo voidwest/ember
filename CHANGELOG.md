@@ -26,6 +26,15 @@ publish this section as a released version until those are closed.
   standalone runs (tested on synthetic F32/Q8_0 models in reference and
   planned modes, and on the morphology example); `runtime.json` records the
   path each input took (`prefix_reuse`). See docs/experiments.md.
+- Experiments: steering vectors. `steer { alpha, normalize }` adds
+  `alpha * d` (optionally unit-normalized or scaled to the row's norm) and
+  `ablate-projection` removes the component along `d`. Directions come from
+  an inline vector, a SHA-256-pinned `.npy`/`.safetensors` file
+  (`vector-file`), or a `contrastive` mean difference over positive and
+  negative prompts computed in the run; resolved directions are written into
+  the bundle under `artifacts/directions/` and checked by `verify`. Sweeps
+  accept `alphas`. `alpha = 0` is bit-identical to the baseline, and steered
+  variants keep the shared-prefix contract. See docs/interventions.md.
 - Experiments: layer sweeps. A `[sweep]` table (`layers`, optional
   `positions`, optional `interventions`) runs one intervention across
   layers: one ordinary bundle per point plus a baseline, `sweep.json`

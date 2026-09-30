@@ -9,6 +9,7 @@ mod cli_diff_corpus;
 mod cli_experiment;
 mod cli_experiment_lens;
 mod cli_experiment_shared;
+mod cli_experiment_steering;
 mod cli_experiment_sweep;
 mod cli_inspect;
 mod cli_support;

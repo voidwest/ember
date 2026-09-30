@@ -68,6 +68,7 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
                 "swept_interventions": definition.interventions,
                 "layers": layers,
                 "positions": definition.positions,
+                "alphas": definition.alphas,
                 "baseline_interventions": baseline.resolved.interventions.len(),
             }))?
         );
@@ -85,7 +86,18 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
             "  swept interventions: {}",
             definition.interventions.join(", ")
         );
-        println!("  layers: {layers} (resolved against the model at run time)");
+        if definition.layers.is_some() {
+            println!("  layers: {layers} (resolved against the model at run time)");
+        } else {
+            println!("  layers: as declared (not swept)");
+        }
+        if let Some(alphas) = &definition.alphas {
+            println!("  alphas: {alphas:?}");
+        }
+        let checked = crate::cli_experiment_steering::check_direction_files(&definition.template)?;
+        if checked > 0 {
+            println!("  direction files: {checked} (hash and shape checked)");
+        }
         if let Some(positions) = &definition.positions {
             println!("  positions: {positions:?}");
         }
@@ -149,7 +161,7 @@ pub(crate) fn run_sweep(
         })
         .collect();
     eprintln!(
-        "sweep: {} point(s) over {} layer(s), baseline computed once",
+        "sweep: {} point(s) on a {}-layer model, baseline computed once",
         points.len(),
         n_layers
     );
@@ -187,8 +199,9 @@ pub(crate) fn run_sweep(
         let bundle = load_bundle_for_source(&outcome.path).map_err(anyhow::Error::msg)?;
         records.push(SweepPointRecord {
             id: point.id.clone(),
-            layer: point.layer.expect("points carry a layer"),
+            layer: point.layer,
             position: point.position,
+            alpha: point.alpha,
             bundle: reference(outcome, &point.relative_dir),
             inputs: point_metrics(&baseline_bundle, &bundle).map_err(anyhow::Error::msg)?,
         });
@@ -205,6 +218,7 @@ pub(crate) fn run_sweep(
             .resolve_layers(n_layers)
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         positions: definition.positions.clone(),
+        alphas: definition.alphas.clone(),
         interventions: definition.interventions.clone(),
         baseline: reference(&base, &baseline.relative_dir),
         points: records,
@@ -303,16 +317,20 @@ fn describe_prefix_of(outcome: &RunOutcome) -> String {
 }
 
 fn print_table(manifest: &SweepManifest) {
+    let over = match (&manifest.alphas, manifest.layers.is_empty()) {
+        (Some(alphas), true) => format!("alphas {alphas:?}"),
+        (Some(alphas), false) => format!("layers {:?} x alphas {alphas:?}", manifest.layers),
+        (None, _) => format!("layers {:?}", manifest.layers),
+    };
     println!(
-        "sweep '{}': {} point(s), swept {} over layers {:?}",
+        "sweep '{}': {} point(s), swept {} over {over}",
         manifest.experiment,
         manifest.points.len(),
         manifest.interventions.join(", "),
-        manifest.layers
     );
     println!(
-        "  {:<18} {:>5} {:<14} {:>14} {:>12}  {:<30} text",
-        "point", "layer", "input", "first diverges", "peak rel-l2", "at"
+        "  {:<24} {:>5} {:>7} {:<14} {:>14} {:>12}  {:<30} text",
+        "point", "layer", "alpha", "input", "first diverges", "peak rel-l2", "at"
     );
     for point in &manifest.points {
         for input in &point.inputs {
@@ -323,9 +341,16 @@ fn print_table(manifest: &SweepManifest) {
                 _ => "-".into(),
             };
             println!(
-                "  {:<18} {:>5} {:<14} {:>14} {:>12}  {:<30} {}",
+                "  {:<24} {:>5} {:>7} {:<14} {:>14} {:>12}  {:<30} {}",
                 point.id,
-                point.layer,
+                point
+                    .layer
+                    .map(|layer| layer.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                point
+                    .alpha
+                    .map(|alpha| alpha.to_string())
+                    .unwrap_or_else(|| "-".into()),
                 input.input_id,
                 input
                     .first_divergent_step

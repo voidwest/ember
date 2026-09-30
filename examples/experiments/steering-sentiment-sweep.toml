@@ -1,0 +1,89 @@
+# Steering along a contrastive direction, swept over alpha.
+#
+# The direction is computed inside the run: the mean residual stream leaving
+# block 6 at the final token of the positive prompts minus the same mean
+# over the negative prompts (the default contrastive token selector). It is
+# saved in every point bundle as artifacts/directions/<intervention>.safetensors
+# (hashed, and checked by `experiment verify`); the two interventions below
+# share it (computed once per session) and steer every prompt token of
+# their input. Each point adds alpha * |x| * d/|d| to the steered
+# rows (normalize = "match-residual-norm": alpha is a fraction of the row's
+# own norm). The alpha-0 point is bit-identical to the baseline.
+#
+#   ember experiment validate examples/experiments/steering-sentiment-sweep.toml
+#   ember experiment run examples/experiments/steering-sentiment-sweep.toml
+#   ember experiment verify runs/steering-sentiment-sweep
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "steering-sentiment-sweep"
+description = "Contrastive (positive minus negative) steering at layer 6, alpha swept."
+seed = 42
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 8
+deterministic = true
+
+[generation]
+max_new_tokens = 16
+temperature = 0.0
+
+[[inputs]]
+id = "review"
+text = "I watched the new film last night. Honestly, my opinion of it is that"
+
+[[inputs]]
+id = "weather"
+text = "We spent the whole weekend at the lake, and the trip was"
+
+[[captures]]
+id = "final-rows"
+site = "residual-post-mlp"
+layers = "all"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "steer-review"
+site = "residual-post-mlp"
+layers = [6]
+inputs = ["review"]
+operation = { kind = "steer", alpha = 1.0, normalize = "match-residual-norm" }
+source = { kind = "contrastive", positive = ["I love this. It is wonderful, delightful and amazing.", "What a fantastic, happy, beautiful day!", "This was the best experience of my life; I am thrilled."], negative = ["I hate this. It is terrible, awful and disgusting.", "What a miserable, sad, horrible day!", "This was the worst experience of my life; I am furious."] }
+
+# Every prompt token of this input (the whole text, all subtokens).
+[interventions.tokens]
+kind = "byte-span"
+start = 0
+end = 69
+subtokens = "all"
+
+[[interventions]]
+id = "steer-weather"
+site = "residual-post-mlp"
+layers = [6]
+inputs = ["weather"]
+operation = { kind = "steer", alpha = 1.0, normalize = "match-residual-norm" }
+source = { kind = "contrastive", positive = ["I love this. It is wonderful, delightful and amazing.", "What a fantastic, happy, beautiful day!", "This was the best experience of my life; I am thrilled."], negative = ["I hate this. It is terrible, awful and disgusting.", "What a miserable, sad, horrible day!", "This was the worst experience of my life; I am furious."] }
+
+[interventions.tokens]
+kind = "byte-span"
+start = 0
+end = 56
+subtokens = "all"
+
+[output]
+directory = "runs/steering-sentiment-sweep"
+overwrite = false
+
+[sweep]
+alphas = [0.0, 0.5, 1.0]

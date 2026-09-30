@@ -347,6 +347,10 @@ const REQUIRED_FILES: [&str; 15] = [
 
 const PAYLOAD_FILE: &str = "captures/tensors.safetensors";
 
+/// Bundle files under this prefix are optional deterministic artifacts
+/// (directions, analysis reports), read and checked when present.
+const ARTIFACTS_PREFIX: &str = "artifacts/";
+
 /// A report file that older Ember versions wrote into the bundle itself.
 /// It is tolerated in the inventory but never read: its contents cannot
 /// influence verification.
@@ -500,6 +504,16 @@ fn verify_and_load(
         files.insert(relative.to_string(), read_regular_file(root, relative)?);
     }
     files.insert("manifest.json".to_string(), manifest_bytes);
+    // Artifacts (directions, analysis reports) are interpreted below, so
+    // they are read once here like the required documents.
+    for relative in listed
+        .iter()
+        .filter(|name| name.starts_with(ARTIFACTS_PREFIX))
+    {
+        if actual_files.contains(relative) {
+            files.insert(relative.clone(), read_regular_file(root, relative)?);
+        }
+    }
 
     let semantic_manifest = parse_semantic_manifest(&files["semantic-manifest.json"])?;
     report.record(
@@ -744,6 +758,37 @@ fn verify_and_load(
             intervention_errors.join("; ")
         },
     );
+
+    // direction artifacts agree with the spec and their tensors
+    let listed_artifacts: Vec<String> = listed
+        .iter()
+        .filter(|name| name.starts_with(ARTIFACTS_PREFIX))
+        .cloned()
+        .collect();
+    let has_directions = semantic_manifest.interventions.iter().any(|intervention| {
+        intervention
+            .source
+            .as_ref()
+            .is_some_and(|source| source.is_resolved_direction())
+    }) || listed_artifacts
+        .iter()
+        .any(|name| name.starts_with(crate::v05::steering::DIRECTION_DIR));
+    if has_directions {
+        let direction_errors = crate::v05::steering::verify_direction_artifacts(
+            &semantic_manifest,
+            &listed_artifacts,
+            &|relative| files.get(relative).cloned(),
+        );
+        report.record(
+            "direction artifacts",
+            direction_errors.is_empty(),
+            if direction_errors.is_empty() {
+                "every resolved direction matches its record and the spec".to_string()
+            } else {
+                direction_errors.join("; ")
+            },
+        );
+    }
 
     // execution-plan hash matches the stored plan
     let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&files["execution-plan.json"])

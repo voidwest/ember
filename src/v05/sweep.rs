@@ -14,6 +14,11 @@
 //! `tokens = { kind = "absolute-token", index = P }`); everything else is
 //! unchanged. A *baseline* experiment is the spec without interventions.
 //!
+//! `alphas = [0.0, 2.0, 4.0]` sweeps the `alpha` of the swept interventions
+//! (`steer`, `interpolate`) as well, alone or crossed with layers (and
+//! positions): `layers` may then be omitted, and the swept interventions stay
+//! at their declared layers. Point ids gain an `alpha-<value>` part.
+//!
 //! Output layout: every point and the baseline is one ordinary, independently
 //! verifiable and reproducible `ember.bundle.v1` bundle whose `experiment.toml`
 //! is the derived spec (with a first-line comment naming the sweep spec's
@@ -54,11 +59,16 @@ pub const SWEEP_CSV_FILE: &str = "sweep.csv";
 pub const SWEEP_RUNTIME_FILE: &str = "sweep-runtime.json";
 
 /// The `[sweep]` table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawSweepSpec {
     /// Layers the swept interventions move to: `"all"`, a list, or a range.
-    pub layers: LayerSelector,
+    /// Optional when `alphas` is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<LayerSelector>,
+    /// `alpha` values for the swept interventions (`steer`, `interpolate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alphas: Option<Vec<f64>>,
     /// Optional absolute token positions; each (layer, position) pair is a
     /// point and the swept interventions' tokens become `absolute-token`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,8 +85,11 @@ pub struct SweepDefinition {
     pub text: String,
     pub spec_sha256: String,
     pub name: String,
-    pub layers: LayerSelector,
+    /// `None`: the swept interventions keep their declared layers.
+    pub layers: Option<LayerSelector>,
     pub positions: Option<Vec<usize>>,
+    /// Swept `alpha` values, ascending.
+    pub alphas: Option<Vec<f64>>,
     /// Swept intervention ids, in declaration order.
     pub interventions: Vec<String>,
     /// The spec without `[sweep]`, resolved (interventions at their
@@ -88,10 +101,11 @@ pub struct SweepDefinition {
 /// One derived experiment (a point or the baseline).
 #[derive(Debug, Clone)]
 pub struct DerivedSpec {
-    /// `baseline` or `layer-07` / `layer-07-pos-3`.
+    /// `baseline` or `layer-07` / `layer-07-pos-3` / `layer-07-alpha-2`.
     pub id: String,
     pub layer: Option<usize>,
     pub position: Option<usize>,
+    pub alpha: Option<f64>,
     /// The derived spec text (becomes the bundle's `experiment.toml`).
     pub text: String,
     pub resolved: ExperimentSpecV1,
@@ -156,11 +170,59 @@ impl SweepDefinition {
                     .collect()
             }
         };
+        if sweep.layers.is_none() && sweep.alphas.is_none() {
+            return Err(SpecError::at(
+                "sweep",
+                "a sweep needs `layers`, `alphas`, or both",
+            ));
+        }
+        if sweep.layers.is_none() && sweep.positions.is_some() {
+            return Err(SpecError::at(
+                "sweep.positions",
+                "positions are swept together with layers; add `layers`",
+            ));
+        }
+        let alphas = match sweep.alphas {
+            None => None,
+            Some(list) if list.is_empty() => {
+                return Err(SpecError::at("sweep.alphas", "the alpha list is empty"))
+            }
+            Some(mut list) => {
+                for (index, alpha) in list.iter().enumerate() {
+                    let survives = serde_json::to_string(alpha)
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<f64>(&text).ok())
+                        .is_some_and(|back| back.to_bits() == alpha.to_bits());
+                    if !alpha.is_finite() || !survives {
+                        return Err(SpecError::at(
+                            format!("sweep.alphas[{index}]"),
+                            format!("alpha {alpha} must be finite and a short decimal"),
+                        ));
+                    }
+                }
+                list.sort_by(f64::total_cmp);
+                list.dedup_by(|a, b| a.to_bits() == b.to_bits());
+                Some(list)
+            }
+        };
         for (index, intervention) in template.interventions.iter().enumerate() {
             if !swept.contains(&intervention.id) {
                 continue;
             }
             let path = format!("interventions[{index}]");
+            if alphas.is_some() && intervention.operation.alpha().is_none() {
+                return Err(SpecError::at(
+                    format!("{path}.operation"),
+                    format!(
+                        "an alpha sweep sets `alpha`; operation {} has none (use steer or \
+                         interpolate, or leave this intervention out of sweep.interventions)",
+                        intervention.operation.kind_name()
+                    ),
+                ));
+            }
+            if sweep.layers.is_none() {
+                continue;
+            }
             if !intervention.site.is_per_layer() {
                 return Err(SpecError::at(
                     format!("{path}.site"),
@@ -198,16 +260,17 @@ impl SweepDefinition {
             }
         }
         match &sweep.layers {
-            LayerSelector::All(value) if value != "all" => {
+            None => {}
+            Some(LayerSelector::All(value)) if value != "all" => {
                 return Err(SpecError::at(
                     "sweep.layers",
                     format!("expected the string \"all\", found {value:?}"),
                 ))
             }
-            LayerSelector::List(list) if list.is_empty() => {
+            Some(LayerSelector::List(list)) if list.is_empty() => {
                 return Err(SpecError::at("sweep.layers", "the layer list is empty"))
             }
-            LayerSelector::Range(range) if range.step == 0 || range.start >= range.end => {
+            Some(LayerSelector::Range(range)) if range.step == 0 || range.start >= range.end => {
                 return Err(SpecError::at(
                     "sweep.layers",
                     "a layer range needs start < end and step >= 1",
@@ -235,17 +298,22 @@ impl SweepDefinition {
             name: template.experiment.name.clone(),
             layers: sweep.layers,
             positions,
+            alphas,
             interventions: swept,
             template,
             document,
         })
     }
 
-    /// The layers of this sweep for an `n_layers`-layer model.
+    /// The layers of this sweep for an `n_layers`-layer model (empty when
+    /// the sweep does not move layers).
     pub fn resolve_layers(&self, n_layers: usize) -> Result<Vec<usize>, SpecError> {
-        self.layers
-            .resolve(n_layers)
-            .map_err(|error| SpecError::at("sweep.layers", error))
+        match &self.layers {
+            None => Ok(Vec::new()),
+            Some(layers) => layers
+                .resolve(n_layers)
+                .map_err(|error| SpecError::at("sweep.layers", error)),
+        }
     }
 
     fn output_root(&self) -> String {
@@ -291,6 +359,7 @@ impl SweepDefinition {
             id: id.to_string(),
             layer: None,
             position: None,
+            alpha: None,
             text,
             resolved,
             relative_dir,
@@ -312,7 +381,16 @@ impl SweepDefinition {
     /// Every point for an `n_layers`-layer model, layers ascending then
     /// positions ascending.
     pub fn points(&self, n_layers: usize) -> Result<Vec<DerivedSpec>, SpecError> {
-        let layers = self.resolve_layers(n_layers)?;
+        let resolved_layers = self.resolve_layers(n_layers)?;
+        let layers: Vec<Option<usize>> = if self.layers.is_some() {
+            resolved_layers.iter().copied().map(Some).collect()
+        } else {
+            vec![None]
+        };
+        let alphas: Vec<Option<f64>> = match &self.alphas {
+            None => vec![None],
+            Some(list) => list.iter().copied().map(Some).collect(),
+        };
         // A current-run source must have a value at every swept layer.
         for intervention in &self.template.interventions {
             if !self.interventions.contains(&intervention.id) {
@@ -326,7 +404,10 @@ impl SweepDefinition {
                     .layers
                     .resolve(n_layers)
                     .map_err(|error| SpecError::at("captures", error))?;
-                if let Some(missing) = layers.iter().find(|layer| !covered.contains(layer)) {
+                if let Some(missing) = resolved_layers
+                    .iter()
+                    .find(|layer| !covered.contains(layer))
+                {
                     return Err(SpecError::at(
                         "sweep.layers",
                         format!(
@@ -343,51 +424,88 @@ impl SweepDefinition {
             None => vec![None],
             Some(list) => list.iter().copied().map(Some).collect(),
         };
-        let mut out = Vec::with_capacity(layers.len() * positions.len());
+        let mut out = Vec::with_capacity(layers.len() * positions.len() * alphas.len());
         for &layer in &layers {
             for &position in &positions {
-                let id = match position {
-                    None => format!("layer-{layer:0width$}"),
-                    Some(position) => format!("layer-{layer:0width$}-pos-{position}"),
-                };
-                let mut document = self.document.clone();
-                if let Some(toml::Value::Array(interventions)) = document.get_mut("interventions") {
-                    for entry in interventions.iter_mut() {
-                        let toml::Value::Table(table) = entry else {
-                            continue;
-                        };
-                        let swept = table
-                            .get("id")
-                            .and_then(toml::Value::as_str)
-                            .is_some_and(|id| self.interventions.iter().any(|s| s == id));
-                        if !swept {
-                            continue;
-                        }
-                        table.insert(
-                            "layers".into(),
-                            toml::Value::Array(vec![toml::Value::Integer(layer as i64)]),
-                        );
-                        if let Some(position) = position {
-                            let mut tokens = toml::Table::new();
-                            tokens.insert("kind".into(), "absolute-token".into());
-                            tokens.insert("index".into(), toml::Value::Integer(position as i64));
-                            table.insert("tokens".into(), toml::Value::Table(tokens));
+                for &alpha in &alphas {
+                    let mut parts = Vec::new();
+                    if let Some(layer) = layer {
+                        parts.push(format!("layer-{layer:0width$}"));
+                    }
+                    if let Some(position) = position {
+                        parts.push(format!("pos-{position}"));
+                    }
+                    if let Some(alpha) = alpha {
+                        parts.push(alpha_id(alpha));
+                    }
+                    let id = parts.join("-");
+                    let mut document = self.document.clone();
+                    if let Some(toml::Value::Array(interventions)) =
+                        document.get_mut("interventions")
+                    {
+                        for entry in interventions.iter_mut() {
+                            let toml::Value::Table(table) = entry else {
+                                continue;
+                            };
+                            let swept = table
+                                .get("id")
+                                .and_then(toml::Value::as_str)
+                                .is_some_and(|id| self.interventions.iter().any(|s| s == id));
+                            if !swept {
+                                continue;
+                            }
+                            if let Some(layer) = layer {
+                                table.insert(
+                                    "layers".into(),
+                                    toml::Value::Array(vec![toml::Value::Integer(layer as i64)]),
+                                );
+                            }
+                            if let (Some(alpha), Some(toml::Value::Table(operation))) =
+                                (alpha, table.get_mut("operation"))
+                            {
+                                operation.insert("alpha".into(), toml::Value::Float(alpha));
+                            }
+                            if let Some(position) = position {
+                                let mut tokens = toml::Table::new();
+                                tokens.insert("kind".into(), "absolute-token".into());
+                                tokens
+                                    .insert("index".into(), toml::Value::Integer(position as i64));
+                                table.insert("tokens".into(), toml::Value::Table(tokens));
+                            }
                         }
                     }
+                    let mut coordinates = Vec::new();
+                    if let Some(layer) = layer {
+                        coordinates.push(format!("layer {layer}"));
+                    }
+                    if let Some(position) = position {
+                        coordinates.push(format!("token {position}"));
+                    }
+                    if let Some(alpha) = alpha {
+                        coordinates.push(format!("alpha {alpha}"));
+                    }
+                    let what = format!(
+                        "point {id} (swept interventions at {})",
+                        coordinates.join(", ")
+                    );
+                    let mut derived = self.derive(&id, &what, document, format!("points/{id}"))?;
+                    derived.layer = layer;
+                    derived.position = position;
+                    derived.alpha = alpha;
+                    out.push(derived);
                 }
-                let what = match position {
-                    None => format!("point {id} (swept interventions at layer {layer})"),
-                    Some(position) => format!(
-                        "point {id} (swept interventions at layer {layer}, token {position})"
-                    ),
-                };
-                let mut derived = self.derive(&id, &what, document, format!("points/{id}"))?;
-                derived.layer = Some(layer);
-                derived.position = position;
-                out.push(derived);
             }
         }
         Ok(out)
+    }
+}
+
+/// The point-id part of an alpha: `alpha-2`, `alpha-0.5`, `alpha-neg-1.5`.
+fn alpha_id(alpha: f64) -> String {
+    if alpha < 0.0 {
+        format!("alpha-neg-{}", -alpha)
+    } else {
+        format!("alpha-{}", alpha.abs())
     }
 }
 
@@ -424,8 +542,11 @@ pub struct SweepInputMetrics {
 #[serde(deny_unknown_fields)]
 pub struct SweepPointRecord {
     pub id: String,
-    pub layer: usize,
+    /// `None` when the sweep does not move layers.
+    pub layer: Option<usize>,
     pub position: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f64>,
     #[serde(flatten)]
     pub bundle: SweepBundleRef,
     pub inputs: Vec<SweepInputMetrics>,
@@ -444,6 +565,8 @@ pub struct SweepManifest {
     pub layer_count: usize,
     pub layers: Vec<usize>,
     pub positions: Option<Vec<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alphas: Option<Vec<f64>>,
     pub interventions: Vec<String>,
     pub baseline: SweepBundleRef,
     pub points: Vec<SweepPointRecord>,
@@ -465,17 +588,30 @@ impl SweepManifest {
         fn opt<T: std::fmt::Display>(value: &Option<T>) -> String {
             value.as_ref().map(ToString::to_string).unwrap_or_default()
         }
-        let mut out = String::from(
-            "point,layer,position,input_id,first_divergent_step,generated_text_equal,\
+        // The alpha column exists only for alpha sweeps, so earlier sweeps
+        // keep their exact table.
+        let with_alpha = self.alphas.is_some();
+        let mut out = String::from(if with_alpha {
+            "point,layer,position,alpha,"
+        } else {
+            "point,layer,position,"
+        });
+        out.push_str(
+            "input_id,first_divergent_step,generated_text_equal,\
              peak_relative_l2,peak_capture_id,peak_site,peak_layer,captures_exact,\
              captures_compared,semantic_hash\n",
         );
         for point in &self.points {
             for input in &point.inputs {
+                let alpha = if with_alpha {
+                    format!("{},", opt(&point.alpha))
+                } else {
+                    String::new()
+                };
                 out.push_str(&format!(
-                    "{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                    "{},{},{},{alpha}{},{},{},{},{},{},{},{},{},{}\n",
                     point.id,
-                    point.layer,
+                    opt(&point.layer),
                     opt(&point.position),
                     input.input_id,
                     opt(&input.first_divergent_step),
@@ -669,8 +805,9 @@ pub fn verify_sweep(dir: &Path, options: &VerifyOptions) -> Result<SweepVerifica
         definition.name == manifest.experiment
             && layers == manifest.layers
             && definition.positions == manifest.positions
+            && definition.alphas == manifest.alphas
             && definition.interventions == manifest.interventions,
-        "experiment name, layers, positions and swept interventions match the spec",
+        "experiment name, layers, positions, alphas and swept interventions match the spec",
     );
     let derived_ids: Vec<&str> = derived.iter().map(|point| point.id.as_str()).collect();
     let recorded_ids: Vec<&str> = manifest
@@ -757,14 +894,26 @@ pub fn verify_sweep(dir: &Path, options: &VerifyOptions) -> Result<SweepVerifica
         let expected = derived
             .iter()
             .find(|point| point.id == record.id)
-            .map(|point| (point.text.as_str(), point.layer, point.position));
+            .map(|point| {
+                (
+                    point.text.as_str(),
+                    point.layer,
+                    point.position,
+                    point.alpha,
+                )
+            });
         match expected {
-            Some((text, layer, position)) => {
+            Some((text, layer, position, alpha)) => {
                 bundle_checks(&mut report, &label, &bundle, &record.bundle, text);
                 report.check(
                     format!("{label} coordinates"),
-                    layer == Some(record.layer) && position == record.position,
-                    format!("layer {} position {:?}", record.layer, record.position),
+                    layer == record.layer
+                        && position == record.position
+                        && alpha.map(f64::to_bits) == record.alpha.map(f64::to_bits),
+                    format!(
+                        "layer {:?} position {:?} alpha {:?}",
+                        record.layer, record.position, record.alpha
+                    ),
                 );
             }
             None => report.check(
@@ -1072,10 +1221,12 @@ interventions = ["replace"]
             positions: None,
             interventions: vec!["i".into()],
             baseline: reference.clone(),
+            alphas: None,
             points: vec![SweepPointRecord {
                 id: "layer-01".into(),
-                layer: 1,
+                layer: Some(1),
                 position: None,
+                alpha: None,
                 bundle: SweepBundleRef {
                     bundle: "points/layer-01".into(),
                     ..reference

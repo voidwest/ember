@@ -426,14 +426,13 @@ fn run_base_pass_inner(
 
     for index in 0..input_count {
         let started = std::time::Instant::now();
-        let base_experiment =
-            new_input_experiment(prepared, base_spec, &base_active.bundle_sources, index)?;
+        let base_experiment = new_input_experiment(prepared, base_spec, Some(&base_active), index)?;
         let mut live_co: Vec<(usize, Shared<V05Experiment>)> = Vec::new();
         for (co_index, target) in co.iter().enumerate() {
             if co_reasons[co_index].is_none() {
                 live_co.push((
                     co_index,
-                    new_input_experiment(prepared, target.resolved, &[], index)?,
+                    new_input_experiment(prepared, target.resolved, None, index)?,
                 ));
             }
         }
@@ -442,7 +441,7 @@ fn run_base_pass_inner(
         for (variant_index, variant) in variants.iter().enumerate() {
             if let Some(ReuseDecision::Resume { first_layer }) = decisions[variant_index].get(index)
             {
-                match new_input_experiment(prepared, variant, &[], index) {
+                match new_input_experiment(prepared, variant, None, index) {
                     Ok(observer) => observers.push((variant_index, observer, *first_layer)),
                     Err(error) => {
                         plans[variant_index].push(InputPlan::Full {
@@ -628,8 +627,7 @@ fn run_full(
         let mut timing = RunTiming::default();
         for index in 0..target.resolved.inputs.len() {
             let started = std::time::Instant::now();
-            let experiment =
-                new_input_experiment(prepared, target.resolved, &active.bundle_sources, index)?;
+            let experiment = new_input_experiment(prepared, target.resolved, Some(&active), index)?;
             let result = run_input(
                 prepared,
                 target.resolved,
@@ -696,7 +694,7 @@ fn run_variant_inner(
     for (index, plan) in plans.into_iter().enumerate() {
         let started = std::time::Instant::now();
         let input_id = spec.inputs[index].id.clone();
-        let experiment = new_input_experiment(prepared, spec, &active.bundle_sources, index)?;
+        let experiment = new_input_experiment(prepared, spec, Some(&active), index)?;
         let resumable = match plan {
             InputPlan::Resume {
                 first_layer,
@@ -749,12 +747,7 @@ fn run_variant_inner(
                     Err(error) => match outcome {
                         // Refused before computing anything: rerun it whole.
                         Some(Err(reason)) => {
-                            let fresh = new_input_experiment(
-                                prepared,
-                                spec,
-                                &active.bundle_sources,
-                                index,
-                            )?;
+                            let fresh = new_input_experiment(prepared, spec, Some(&active), index)?;
                             let result =
                                 run_input(prepared, spec, &active, &fresh, None, None, cancel)?;
                             (result, PrefixPath::FullRecompute { reason })
@@ -1112,6 +1105,77 @@ layers = {layers}
         assert_eq!(paths(&recorded[3]), vec![resumed(n), resumed(n)]);
         assert_eq!(paths(&recorded[4]), vec![resumed(n), resumed(n)]);
         assert_eq!(paths(&recorded[5]), vec![full.clone(), full]);
+    }
+
+    /// Steering and projection ablation keep the prefix contract: the
+    /// boundary is the earliest steered block, and a resumed variant is
+    /// bit-identical to its full recompute, whatever the direction source.
+    fn steering_suite(model: &TinyModel, mode: &str) {
+        let base = format!("{INPUTS}{CAPTURES}");
+        let with = |parts: &[String]| format!("{base}{}", parts.concat());
+        let direction: Vec<f32> = (0..64)
+            .map(|i| ((i * 7 % 11) as f32 - 5.0) * 0.25)
+            .collect();
+        let npy = model.dir.join("direction.npy");
+        let bytes = ember::v05::steering::write_npy(&[64], &direction);
+        std::fs::write(&npy, &bytes).unwrap();
+        let sha = ember::v05::manifest::sha256_hex(&bytes);
+        let inline = format!("{direction:?}");
+        let steer_inline = with(&[intervention(
+            "steer",
+            "residual-post-mlp",
+            "[2]",
+            &format!(
+                "operation = {{ kind = \"steer\", alpha = 3.0 }}\nsource = {{ kind = \"inline-vector\", values = {inline} }}"
+            ),
+            PROMPT_FINAL,
+        )]);
+        let steer_file = with(&[intervention(
+            "steer-file",
+            "residual-pre-attention",
+            "[1]",
+            &format!(
+                "operation = {{ kind = \"steer\", alpha = 0.5, normalize = \"match-residual-norm\" }}\nsource = {{ kind = \"vector-file\", path = {:?}, sha256 = \"{sha}\" }}",
+                npy.display().to_string()
+            ),
+            PROMPT_FINAL,
+        )]);
+        let steer_contrastive = with(&[intervention(
+            "steer-contrast",
+            "residual-post-mlp",
+            "[3]",
+            "operation = { kind = \"steer\", alpha = 4.0, normalize = \"unit\" }\nsource = { kind = \"contrastive\", positive = [\"w1 w2 w3\", \"w4 w5\"], negative = [\"w9 w8 w7\"] }",
+            PROMPT_FINAL,
+        )]);
+        let ablate = with(&[intervention(
+            "ablate",
+            "residual-post-mlp",
+            "[2]",
+            &format!(
+                "operation = {{ kind = \"ablate-projection\" }}\nsource = {{ kind = \"inline-vector\", values = {inline} }}"
+            ),
+            "kind = \"relative-token\"\noffset_from_end = 1",
+        )]);
+        let recorded = check(
+            model,
+            mode,
+            0.0,
+            &base,
+            &[],
+            &[&steer_inline, &steer_file, &steer_contrastive, &ablate],
+        );
+        let resumed = |layer| ("resumed".to_string(), Some(layer));
+        assert_eq!(paths(&recorded[0]), vec![resumed(2), resumed(2)]);
+        assert_eq!(paths(&recorded[1]), vec![resumed(1), resumed(1)]);
+        assert_eq!(paths(&recorded[2]), vec![resumed(3), resumed(3)]);
+        assert_eq!(paths(&recorded[3]), vec![resumed(2), resumed(2)]);
+    }
+
+    #[test]
+    fn steering_variants_resume_bit_identically() {
+        let model = tiny_model("prefix-steer", 4, 64, true);
+        steering_suite(&model, "reference");
+        steering_suite(&model, "planned");
     }
 
     #[test]

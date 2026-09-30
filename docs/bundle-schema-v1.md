@@ -23,8 +23,16 @@ runs/example/
 │   └── index.jsonl          per-tensor index entries
 ├── interventions/events.jsonl  every intervention application
 ├── traces/events.jsonl      capture route records + per-layer fusion state
+├── artifacts/               optional deterministic artifacts (see below)
+│   └── directions/<id>.{safetensors,json}  resolved steering directions
 └── checksums.sha256         SHA-256 of every file at publish time
 ```
+
+`artifacts/` holds deterministic files produced by the run beyond captures:
+resolved `vector-file`/`contrastive` directions (`ember.direction.v1`, see
+`docs/interventions.md`). They are ordinary payloads: listed in
+`manifest.json`, checksummed, and part of the semantic manifest's payload map
+(so of both hashes). `verify` reads them once and checks their records.
 
 `verify` does not write into the bundle. Bundles verified by Ember releases
 before 1.0 may contain a `verification.json`; it is tolerated, never read,

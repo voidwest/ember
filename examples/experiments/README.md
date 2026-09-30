@@ -53,6 +53,13 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
    and `sweep.json`/`sweep.csv`, written to `runs/morphology-layer-sweep`
    (see `docs/experiments.md#layer-sweeps`).
 
+5. `steering-sentiment-sweep.toml` — a different workflow on the same
+   model: a contrastive (positive minus negative prompts) direction at
+   layer 6, added along every prompt token with
+   `normalize = "match-residual-norm"`, swept over `alpha = 0, 0.5, 1`.
+   The alpha-0 point is bit-identical to the baseline; every point bundle
+   carries the direction as `artifacts/directions/*`.
+
 ## Commands
 
 ```bash
