@@ -474,7 +474,7 @@ impl CpuTensor {
     #[inline]
     pub fn rms_norm(&self, weight: &Self, eps: f32) -> Self {
         assert_eq!(self.ndim(), 2, "rms_norm expects 2d [batch, features]");
-        let (batch, features) = (self.shape[0], self.shape[1]);
+        let features = self.shape[1];
         assert!(features > 0, "rms_norm requires at least one feature");
         assert_eq!(weight.len(), features);
         assert!(
@@ -483,6 +483,26 @@ impl CpuTensor {
         );
 
         let mut out = vec![0.0f32; self.len()];
+        self.rms_norm_rows(weight, eps, &mut out);
+        Self::from_data(self.shape.clone(), out)
+    }
+
+    /// [`CpuTensor::rms_norm`] written into `out`, reusing its storage.
+    /// Bit-identical to `rms_norm` (same kernels, same order).
+    pub(crate) fn rms_norm_into(&self, weight: &Self, eps: f32, out: &mut Self) {
+        assert_eq!(self.ndim(), 2, "rms_norm expects 2d [batch, features]");
+        assert!(self.shape[1] > 0, "rms_norm requires at least one feature");
+        assert_eq!(weight.len(), self.shape[1]);
+        assert!(
+            eps.is_finite() && eps >= 0.0,
+            "rms_norm requires finite eps >= 0"
+        );
+        out.reset_zeroed(&self.shape);
+        self.rms_norm_rows(weight, eps, &mut out.data);
+    }
+
+    fn rms_norm_rows(&self, weight: &Self, eps: f32, out: &mut [f32]) {
+        let (batch, features) = (self.shape[0], self.shape[1]);
         let weight_data = weight.data();
         for b in 0..batch {
             let offset = b * features;
@@ -494,7 +514,6 @@ impl CpuTensor {
 
             crate::simd::scale_weight_mul(row, rstd, weight_data, dst);
         }
-        Self::from_data(self.shape.clone(), out)
     }
 
     /// sigmoid linear unit: `x * sigmoid(x)` = `x / (1 + exp(-x))`.
@@ -502,8 +521,67 @@ impl CpuTensor {
     #[must_use]
     #[inline]
     pub fn silu(&self) -> Self {
-        let data: Vec<f32> = self.data.iter().map(|&x| x / (1.0 + (-x).exp())).collect();
+        let data: Vec<f32> = self.data.iter().map(|&x| silu_scalar(x)).collect();
         Self::from_data(self.shape.clone(), data)
+    }
+
+    /// [`CpuTensor::silu`] applied in place (same per-element formula).
+    pub(crate) fn silu_in_place(&mut self) {
+        for value in &mut self.data {
+            *value = silu_scalar(*value);
+        }
+    }
+
+    /// [`CpuTensor::elemul`] accumulated into `self`: `self[i] *= other[i]`.
+    /// One IEEE multiply per element, exactly as in `elemul`.
+    pub(crate) fn elemul_in_place(&mut self, other: &Self) {
+        assert_eq!(self.shape, other.shape, "elemul: shapes must match");
+        for (value, &factor) in self.data.iter_mut().zip(&other.data) {
+            *value *= factor;
+        }
+    }
+
+    /// [`CpuTensor::add`] accumulated into `self`: `self[i] += other[i]`.
+    /// One IEEE add per element, exactly as in `add`.
+    pub(crate) fn add_in_place(&mut self, other: &Self) {
+        assert_eq!(
+            self.shape, other.shape,
+            "addition: shapes must match (for now)"
+        );
+        crate::simd::add_assign(&mut self.data, &other.data);
+    }
+
+    /// [`CpuTensor::add_broadcast`] applied in place (same loop order).
+    pub(crate) fn add_broadcast_in_place(&mut self, bias: &Self) {
+        assert_eq!(self.ndim(), 2, "add_broadcast: lhs must be 2D");
+        assert_eq!(bias.ndim(), 1, "add_broadcast: rhs must be 1D");
+        let (rows, cols) = (self.shape[0], self.shape[1]);
+        assert_eq!(
+            bias.shape[0], cols,
+            "add_broadcast: bias size must match cols"
+        );
+        for r in 0..rows {
+            for c in 0..cols {
+                self.data[r * cols + c] += bias.data[c];
+            }
+        }
+    }
+
+    /// Reshape to `shape` and zero every element, keeping the existing
+    /// shape, stride and data allocations when their capacity suffices.
+    pub(crate) fn reset_zeroed(&mut self, shape: &[usize]) {
+        let len = Self::checked_element_count(shape);
+        self.shape.clear();
+        self.shape.extend_from_slice(shape);
+        self.strides.clear();
+        self.strides.resize(shape.len(), 1);
+        for i in (0..shape.len().saturating_sub(1)).rev() {
+            self.strides[i] = self.strides[i + 1]
+                .checked_mul(shape[i + 1])
+                .expect("tensor stride overflow");
+        }
+        self.data.clear();
+        self.data.resize(len, 0.0);
     }
 
     /// element-wise multiplication. panics if shapes differ.
@@ -789,6 +867,13 @@ impl CpuTensor {
             strides: vec![new_cols, 1],
         }
     }
+}
+
+/// `x * sigmoid(x)` = `x / (1 + exp(-x))`: the one SiLU formula shared by the
+/// allocating and in-place tensor paths.
+#[inline]
+fn silu_scalar(x: f32) -> f32 {
+    x / (1.0 + (-x).exp())
 }
 
 /// precompute cosine and sine tables for rotary position embeddings.
