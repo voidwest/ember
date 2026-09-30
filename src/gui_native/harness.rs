@@ -933,7 +933,10 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                                     scrolled += 1;
                                 }
                                 window.click(target, cx);
-                            } else {
+                            } else if window.try_find(SharedString::from(id.clone())).is_some() {
+                                // The sidebar gives way below 1240px, so at
+                                // the standard size there is no nav row to
+                                // hover; the scene then shows the page as is.
                                 window.hover(SharedString::from(id.clone()), cx);
                             }
                         }
