@@ -432,6 +432,15 @@ pub(crate) struct BenchDecodeCommand {
     #[arg(long, default_value_t = 1)]
     token_id: u32,
 
+    /// prompt length prefilled before the timed decode loop; prompts longer
+    /// than one token use a deterministic id sequence starting at --token-id
+    #[arg(long, default_value_t = 1)]
+    prompt_tokens: usize,
+
+    /// print a per-operator trace of the last measured prefill to stderr
+    #[arg(long)]
+    profile_prefill: bool,
+
     /// optional context-size cap
     #[arg(long, value_parser = parse_max_seq_len)]
     max_seq_len: Option<usize>,
