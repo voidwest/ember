@@ -42,7 +42,40 @@ To bind a bundle to an identity obtained elsewhere, anchor it:
   envelope over the bundle's `manifest.json` (`ember evidence sign --manifest
   <bundle>/manifest.json`) must verify against the trusted key, and its
   signed semantic and payload hashes must equal the recomputed ones. See
-  [attested execution](embersec/attested-execution.md).
+  [attested execution](embersec/attested-execution.md). With only
+  `--trusted-key <key.pub>`, the envelope is looked up next to the bundle as
+  `<bundle>.evidence.json`; a missing envelope fails the anchor.
+
+### Signed bundles
+
+`ember experiment run` signs the bundle it writes when given a key:
+
+```bash
+ember evidence init --key ~/.ember/sign.key          # once; writes sign.key + sign.pub
+ember experiment run spec.toml --sign-key ~/.ember/sign.key
+export EMBER_SIGN_KEY=~/.ember/sign.key              # or sign every run by default
+ember experiment run spec.toml                       # --no-sign opts out
+```
+
+After the bundle is written and self-verified, its `manifest.json` (which
+carries the semantic and payload hashes) is signed into a
+`signed-evidence-v2` envelope written **next to** the bundle as
+`<bundle>.evidence.json`, never inside it: a file inside would change the
+bundle's inventory and fail verification of the bundle it signs. Anyone
+holding the public key checks it with
+
+```bash
+ember experiment verify runs/probe --trusted-key sign.pub
+```
+
+which finds `runs/probe.evidence.json` on its own (pass `--expect-evidence
+<path>` if the envelope was moved). `experiment reproduce` takes the same
+options for the original bundle. Publish the `.pub` file (or its
+fingerprint) somewhere independent of the bundle, such as a paper or a
+repository README: an envelope checked against a key shipped alongside it
+proves nothing about who signed. `experiment reproduce` does not sign the
+reproduction bundle; sign it with `ember evidence sign --manifest
+<reproduction>/manifest.json --key <key> --out <reproduction>.evidence.json`.
 
 `experiment reproduce` accepts the same options for the original bundle,
 and `experiment compare` accepts `--expect-a-semantic-hash` and

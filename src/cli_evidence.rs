@@ -155,23 +155,30 @@ fn run_init(cmd: &InitCommand) -> Result<()> {
 }
 
 fn run_sign(cmd: &SignCommand) -> Result<()> {
-    let record: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&cmd.manifest)
-            .with_context(|| format!("failed to read record {}", cmd.manifest))?,
-    )
-    .with_context(|| format!("record {} is not valid JSON", cmd.manifest))?;
-    let seed = read_key_seed(&cmd.key)?;
-    let envelope = build_envelope(&record, &seed, ember::extraction::unix_timestamp())?;
     let out = cmd
         .out
         .clone()
         .unwrap_or_else(|| format!("{}.signed.json", cmd.manifest));
-    crate::cli_support::write_json_file(&out, &envelope)?;
+    let envelope = sign_record_file(Path::new(&cmd.manifest), &cmd.key, Path::new(&out))?;
     println!(
         "signed evidence written to {out} (signer {})",
         envelope["signer_fingerprint"].as_str().unwrap_or("?")
     );
     Ok(())
+}
+
+/// Sign the JSON record at `record` with the private key at `key` and write
+/// a `signed-evidence-v2` envelope to `out`. Returns the envelope.
+pub(crate) fn sign_record_file(record: &Path, key: &str, out: &Path) -> Result<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(record)
+            .with_context(|| format!("failed to read record {}", record.display()))?,
+    )
+    .with_context(|| format!("record {} is not valid JSON", record.display()))?;
+    let seed = read_key_seed(key)?;
+    let envelope = build_envelope(&parsed, &seed, ember::extraction::unix_timestamp())?;
+    crate::cli_support::write_json_file(&out.to_string_lossy(), &envelope)?;
+    Ok(envelope)
 }
 
 fn run_verify(cmd: &VerifyCommand) -> Result<()> {

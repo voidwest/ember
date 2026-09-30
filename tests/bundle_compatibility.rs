@@ -299,6 +299,26 @@ fn experiment_verify_anchors_identity_externally_and_never_writes_into_the_bundl
             .code(),
         Some(2)
     );
+    // `--trusted-key` alone looks for the sibling `<bundle>.evidence.json`
+    // that `experiment run --sign-key` writes; a missing one is a failed
+    // anchor, not a silent pass.
+    let missing = verify(&[
+        os("--trusted-key"),
+        key.with_extension("pub").into(),
+        os("--json"),
+    ]);
+    assert_eq!(missing.status.code(), Some(3), "{missing:?}");
+    let sibling = root.join("bundle.evidence.json");
+    sign(&bundle.join("manifest.json"), &sibling);
+    let discovered = verify(&[os("--trusted-key"), key.with_extension("pub").into()]);
+    assert_eq!(discovered.status.code(), Some(0), "{discovered:?}");
+    assert!(String::from_utf8_lossy(&discovered.stdout).contains("evidence anchor"));
+    let discovered_untrusted = verify(&[os("--trusted-key"), other.with_extension("pub").into()]);
+    assert_eq!(
+        discovered_untrusted.status.code(),
+        Some(3),
+        "{discovered_untrusted:?}"
+    );
 
     // Reports go outside the bundle, never into it.
     let report_path = root.join("report.json");

@@ -86,9 +86,41 @@ pub(crate) struct RunArgs {
     /// Keep the staging directory on failure (clearly marked incomplete).
     #[arg(long)]
     pub retain_incomplete: bool,
+    /// Sign the bundle's manifest.json with this private key (from
+    /// `ember evidence init`) and write the signed-evidence-v2 envelope next
+    /// to the bundle as `<bundle>.evidence.json`. Defaults to the
+    /// `EMBER_SIGN_KEY` environment variable when set.
+    #[arg(long, value_name = "key", conflicts_with = "no_sign")]
+    pub sign_key: Option<PathBuf>,
+    /// Do not sign, even when `EMBER_SIGN_KEY` is set.
+    #[arg(long)]
+    pub no_sign: bool,
     /// Machine-readable output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Environment variable naming the default signing key for
+/// `experiment run`.
+pub(crate) const SIGN_KEY_ENV: &str = "EMBER_SIGN_KEY";
+
+/// Where `experiment run --sign-key` writes a bundle's evidence envelope,
+/// and where `--trusted-key` looks for one without `--expect-evidence`:
+/// `<bundle>.evidence.json`, a sibling of the bundle directory. It lives
+/// outside the bundle because a file inside would change the bundle's
+/// inventory (and so fail verification of the very bundle it signs).
+pub(crate) fn bundle_evidence_path(bundle: &std::path::Path) -> PathBuf {
+    let named = bundle
+        .file_name()
+        .map(|_| bundle.to_path_buf())
+        .or_else(|| bundle.canonicalize().ok())
+        .unwrap_or_else(|| bundle.to_path_buf());
+    let mut name = named
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "bundle".into());
+    name.push(".evidence.json");
+    named.with_file_name(name)
 }
 
 #[derive(ClapArgs)]
@@ -133,17 +165,32 @@ pub(crate) struct AnchorArgs {
     pub expect_semantic_hash: Option<String>,
     /// Require a signed evidence envelope over the bundle's manifest.json
     /// (`ember evidence sign --manifest <bundle>/manifest.json`) whose signed
-    /// semantic and payload hashes equal the bundle's.
+    /// semantic and payload hashes equal the bundle's. `experiment run
+    /// --sign-key` writes one as `<bundle>.evidence.json`, the default when
+    /// only `--trusted-key` is given.
     #[arg(long, value_name = "envelope.json", requires = "trusted_key")]
     pub expect_evidence: Option<PathBuf>,
     /// The envelope signer's public key (`.pub` file or hex fingerprint).
-    #[arg(long, value_name = "key.pub", requires = "expect_evidence")]
+    /// Without `--expect-evidence` the envelope is looked up next to the
+    /// bundle as `<bundle>.evidence.json`.
+    #[arg(long, value_name = "key.pub")]
     pub trusted_key: Option<String>,
 }
 
 impl AnchorArgs {
     fn is_anchored(&self) -> bool {
-        self.expect_semantic_hash.is_some() || self.expect_evidence.is_some()
+        self.expect_semantic_hash.is_some() || self.trusted_key.is_some()
+    }
+
+    /// The envelope to check for `bundle` and its trusted key: the explicit
+    /// `--expect-evidence`, else the sibling `<bundle>.evidence.json`.
+    fn evidence_for(&self, bundle: &std::path::Path) -> Option<(PathBuf, &str)> {
+        let trusted_key = self.trusted_key.as_deref()?;
+        let envelope = self
+            .expect_evidence
+            .clone()
+            .unwrap_or_else(|| bundle_evidence_path(bundle));
+        Some((envelope, trusted_key))
     }
 }
 
@@ -804,6 +851,19 @@ pub(crate) fn run_experiment_command(
             report.checks.iter().filter(|check| !check.ok).count()
         );
     }
+    let sign_key = if command.no_sign {
+        None
+    } else {
+        command.sign_key.clone().or_else(|| {
+            std::env::var_os(SIGN_KEY_ENV)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+    };
+    let evidence = match &sign_key {
+        Some(key) => Some(sign_bundle(&path, key)?),
+        None => None,
+    };
     if command.json {
         println!(
             "{}",
@@ -812,6 +872,10 @@ pub(crate) fn run_experiment_command(
                 "bundle": path.display().to_string(),
                 "semantic_hash": identity.semantic_hash,
                 "payload_hash": identity.payload_hash,
+                "evidence": evidence.as_ref().map(|(envelope, signer)| serde_json::json!({
+                    "path": envelope.display().to_string(),
+                    "signer_fingerprint": signer,
+                })),
                 "verification": report,
             }))?
         );
@@ -820,8 +884,38 @@ pub(crate) fn run_experiment_command(
         println!("  semantic hash: {}", identity.semantic_hash);
         println!("  payload hash:  {}", identity.payload_hash);
         println!("  verification: {} check(s) passed", report.checks.len());
+        if let Some((envelope, signer)) = &evidence {
+            println!(
+                "  signed evidence: {} (signer {signer})",
+                envelope.display()
+            );
+            println!(
+                "    check with: ember experiment verify {} --trusted-key <key.pub>",
+                path.display()
+            );
+        }
     }
     Ok(())
+}
+
+/// Sign `<bundle>/manifest.json` into `<bundle>.evidence.json`. Returns the
+/// envelope path and the signer fingerprint.
+fn sign_bundle(
+    bundle: &std::path::Path,
+    key: &std::path::Path,
+) -> anyhow::Result<(PathBuf, String)> {
+    let envelope_path = bundle_evidence_path(bundle);
+    let envelope = crate::cli_evidence::sign_record_file(
+        &bundle.join("manifest.json"),
+        &key.to_string_lossy(),
+        &envelope_path,
+    )
+    .with_context(|| format!("failed to sign bundle '{}'", bundle.display()))?;
+    let signer = envelope["signer_fingerprint"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    Ok((envelope_path, signer))
 }
 
 pub(crate) fn run_inspect_command(command: &InspectArgs) -> anyhow::Result<()> {
@@ -977,9 +1071,9 @@ fn load_anchored_bundle(
         ..VerifyOptions::default()
     };
     let loaded = load_verified_bundle(bundle, &options).map_err(anyhow::Error::msg)?;
-    if let (Some(envelope), Some(trusted_key)) = (&anchor.expect_evidence, &anchor.trusted_key) {
+    if let Some((envelope, trusted_key)) = anchor.evidence_for(bundle) {
         let (ok, detail) = evidence_anchor(
-            envelope,
+            &envelope,
             trusted_key,
             &loaded.semantic_hash,
             &loaded.payload_hash,
@@ -1027,9 +1121,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
         expected_semantic_hash: command.anchor.expect_semantic_hash.clone(),
     };
     let mut report = verify_bundle(&command.bundle, &options).map_err(anyhow::Error::msg)?;
-    if let (Some(envelope), Some(trusted_key)) =
-        (&command.anchor.expect_evidence, &command.anchor.trusted_key)
-    {
+    if let Some((envelope, trusted_key)) = command.anchor.evidence_for(&command.bundle) {
         let (ok, detail) = if report.semantic_hash.is_empty() {
             (
                 false,
@@ -1037,7 +1129,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
             )
         } else {
             evidence_anchor(
-                envelope,
+                &envelope,
                 trusted_key,
                 &report.semantic_hash,
                 &report.payload_hash,
@@ -1472,4 +1564,26 @@ pub(crate) fn run_tokenize_command(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundle_evidence_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn evidence_envelope_sits_next_to_the_bundle_not_inside_it() {
+        assert_eq!(
+            bundle_evidence_path(Path::new("runs/probe")),
+            PathBuf::from("runs/probe.evidence.json")
+        );
+        assert_eq!(
+            bundle_evidence_path(Path::new("runs/probe/")),
+            PathBuf::from("runs/probe.evidence.json")
+        );
+        assert_eq!(
+            bundle_evidence_path(Path::new("probe.v1")),
+            PathBuf::from("probe.v1.evidence.json")
+        );
+    }
 }
