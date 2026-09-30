@@ -892,6 +892,13 @@ fn peak_rss_kb() -> Option<u64> {
 }
 
 /// Load the spec file and resolve it, applying CLI overrides.
+/// The spec text when the file declares `[sweep]`, otherwise `None`.
+fn read_sweep_spec(spec: &std::path::Path) -> anyhow::Result<Option<String>> {
+    let text = std::fs::read_to_string(spec)
+        .with_context(|| format!("cannot read experiment spec '{}'", spec.display()))?;
+    Ok(crate::cli_experiment_sweep::is_sweep_spec(&text).then_some(text))
+}
+
 fn resolve_spec_file(
     spec: &std::path::Path,
     execution: Option<&str>,
@@ -914,6 +921,9 @@ fn resolve_spec_file(
 }
 
 pub(crate) fn run_validate_command(command: &ValidateArgs) -> anyhow::Result<()> {
+    if let Some(text) = read_sweep_spec(&command.spec)? {
+        return crate::cli_experiment_sweep::run_validate_sweep(command, &text);
+    }
     let (_, resolved) = resolve_spec_file(&command.spec, None, None)?;
     if command.json {
         println!(
@@ -947,6 +957,14 @@ pub(crate) fn run_experiment_command(
     k_strategy: KStrategy,
     k_allow_fallback: bool,
 ) -> anyhow::Result<()> {
+    if let Some(text) = read_sweep_spec(&command.spec)? {
+        return crate::cli_experiment_sweep::run_sweep(
+            command,
+            &text,
+            k_strategy,
+            k_allow_fallback,
+        );
+    }
     let (spec_text, resolved) =
         resolve_spec_file(&command.spec, command.execution.as_deref(), command.threads)?;
     let output_directory = command
@@ -1115,6 +1133,9 @@ pub(crate) fn describe_prefix(record: &ember::v05::prefix::PrefixReuseRecord) ->
 }
 
 pub(crate) fn run_inspect_command(command: &InspectArgs) -> anyhow::Result<()> {
+    if ember::v05::sweep::is_sweep_dir(&command.bundle) {
+        return crate::cli_experiment_sweep::run_inspect_sweep(&command.bundle, command.json);
+    }
     let bundle =
         ember::v05::verify::load_bundle_for_source(&command.bundle).map_err(anyhow::Error::msg)?;
     let manifest = bundle.semantic_manifest;
@@ -1316,6 +1337,15 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
         tokenizer_path: command.tokenizer.clone(),
         expected_semantic_hash: command.anchor.expect_semantic_hash.clone(),
     };
+    if ember::v05::sweep::is_sweep_dir(&command.bundle) {
+        return crate::cli_experiment_sweep::run_verify_sweep(
+            &command.bundle,
+            &options,
+            command.anchor.expect_evidence.is_some(),
+            command.write_report.as_deref(),
+            command.json,
+        );
+    }
     let mut report = verify_bundle(&command.bundle, &options).map_err(anyhow::Error::msg)?;
     if let (Some(envelope), Some(trusted_key)) =
         (&command.anchor.expect_evidence, &command.anchor.trusted_key)
@@ -1397,6 +1427,15 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
 }
 
 pub(crate) fn run_compare_command(command: &CompareArgs) -> anyhow::Result<()> {
+    if ember::v05::sweep::is_sweep_dir(&command.a) || ember::v05::sweep::is_sweep_dir(&command.b) {
+        return crate::cli_experiment_sweep::run_compare_sweeps(
+            &command.a,
+            &command.b,
+            command.expect_a_semantic_hash.as_deref(),
+            command.expect_b_semantic_hash.as_deref(),
+            command.json,
+        );
+    }
     let anchor = |expected: &Option<String>| AnchorArgs {
         expect_semantic_hash: expected.clone(),
         ..AnchorArgs::default()

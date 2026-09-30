@@ -18,6 +18,7 @@ pub mod run;
 pub mod runner;
 pub mod safetensors;
 pub mod spec;
+pub mod sweep;
 #[cfg(test)]
 pub mod testutil;
 pub mod token_select;

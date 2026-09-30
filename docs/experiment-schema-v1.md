@@ -75,6 +75,13 @@ lists and automatic tokenizer selection are also recorded. The resolved
 settings are identical whether a default is omitted or explicitly supplied.
 
 
+## Sweeps
+
+An optional `[sweep]` table turns the spec into a template for a layer
+sweep (`layers`, optional `positions`, optional `interventions`); see
+`docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
+spec with `[sweep]` is only accepted as a sweep.
+
 ## Semantic hook sites
 
 | id | meaning | layers |

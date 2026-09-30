@@ -26,6 +26,14 @@ publish this section as a released version until those are closed.
   standalone runs (tested on synthetic F32/Q8_0 models in reference and
   planned modes, and on the morphology example); `runtime.json` records the
   path each input took (`prefix_reuse`). See docs/experiments.md.
+- Experiments: layer sweeps. A `[sweep]` table (`layers`, optional
+  `positions`, optional `interventions`) runs one intervention across
+  layers: one ordinary bundle per point plus a baseline, `sweep.json`
+  (`ember.sweep.v1`, with a `sweep_hash`) and `sweep.csv` with per-point
+  first divergent step and peak capture divergence. `validate`, `run`,
+  `verify` (recomputes derivations, metrics and the hash), `compare` and
+  `inspect` accept sweeps. Points share the baseline prefix; the example
+  16-layer sweep takes ~13 s instead of ~86 s for separate runs.
 - Bundle verification: `experiment verify` no longer writes
   `verification.json` into the bundle (use `--write-report <path>`); an old
   one is ignored. Every parsed bundle file is read once and the verified bytes

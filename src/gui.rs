@@ -403,6 +403,7 @@ fn raw_spec(
             tensor_format: Some("safetensors".to_string()),
             overwrite: Some(overwrite),
         },
+        sweep: None,
     }
 }
 

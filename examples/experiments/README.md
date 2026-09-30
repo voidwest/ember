@@ -48,6 +48,10 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
 3. `morphology-restoration.toml` — the same intervention followed by
    `restore-original` at the same site, writes
    `runs/morphology-restoration`.
+4. `morphology-layer-sweep.toml` — the intervention of step 2 at every
+   layer (`[sweep] layers = "all"`): one bundle per layer plus a baseline
+   and `sweep.json`/`sweep.csv`, written to `runs/morphology-layer-sweep`
+   (see `docs/experiments.md#layer-sweeps`).
 
 ## Commands
 
@@ -67,6 +71,16 @@ ember experiment compare runs/morphology-baseline runs/morphology-intervention
 # restoration reproduces the baseline exactly
 ember experiment run examples/experiments/morphology-restoration.toml
 ember experiment compare runs/morphology-baseline runs/morphology-restoration
+
+# or, instead of steps 1-3 (fresh output directories): one process, and the
+# baseline computes the prompt prefix once for both variants
+ember experiment run examples/experiments/morphology-layerwise-capture.toml \
+  --variant examples/experiments/morphology-intervention.toml \
+  --variant examples/experiments/morphology-restoration.toml
+
+# the intervention at every layer, then verify the whole sweep
+ember experiment run examples/experiments/morphology-layer-sweep.toml
+ember experiment verify runs/morphology-layer-sweep
 
 # reproduction
 ember experiment reproduce runs/morphology-baseline --model Llama-3.2-1B-Instruct-Q8_0.gguf

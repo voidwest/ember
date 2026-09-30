@@ -41,7 +41,7 @@ ember experiment reproduce runs/morphology-baseline --model Llama-3.2-1B-Instruc
 ## CLI surface
 
 ```text
-ember experiment validate <spec.toml> [--json]
+ember experiment validate <spec.toml> [--json]           # also a sweep spec
 ember experiment run <spec.toml> [--execution reference|planned|planned-fused]
                                 [--threads <n>] [--output <dir>] [--retain-incomplete]
                                 [--variant <spec.toml> ...] [--json]
@@ -117,6 +117,87 @@ prefill there instead of recomputing it:
   tokenizer or architecture are rejected outright.
 
 The GUI runs every baseline/intervention pair this way.
+
+## Layer sweeps
+
+"Where does it matter?" is one spec, not sixteen. Add a `[sweep]` table to
+an ordinary spec (see `examples/experiments/morphology-layer-sweep.toml`):
+
+```toml
+[sweep]
+layers = "all"                # or [2, 4, 8], or { start = 0, end = 16, step = 2 }
+positions = [3, 7]            # optional: absolute token positions
+interventions = ["replace"]   # optional: which interventions move (default: all)
+```
+
+Each *point* is the spec with the swept interventions at `layers = [L]`
+(and, with `positions`, `tokens = { kind = "absolute-token", index = P }`);
+everything else is unchanged. The *baseline* is the spec without
+interventions. Swept interventions must use per-layer sites; a
+`capture-from-bundle` source (fixed layer) cannot be swept, and a
+`capture-from-current-run` source must be at the swept site and capture
+every swept layer. A sweep spec never resolves as a single experiment.
+
+```text
+ember experiment validate sweep.toml     # the sweep and its template
+ember experiment run sweep.toml          # baseline + one bundle per point + summary
+ember experiment verify <sweep-dir>      # every bundle, derivations, metrics, sweep hash
+ember experiment compare <sweep-a> <sweep-b>
+ember experiment inspect <sweep-dir>
+```
+
+**Layout.** One ordinary `ember.bundle.v1` per point was chosen over one
+bundle with per-point outputs: the bundle schema, `verify`, `compare`,
+`inspect` and `reproduce` stay exactly as they are, and a point bundle is
+bit-identical to running its derived spec alone.
+
+```text
+<sweep>/sweep.toml          the sweep spec, byte for byte
+<sweep>/sweep.json          ember.sweep.v1: identities, per-point metrics, sweep_hash
+<sweep>/sweep.csv           the same metrics as a table (one row per point and input)
+<sweep>/sweep-runtime.json  timings and each bundle's prefix-reuse path (not hashed)
+<sweep>/baseline/           bundle; experiment.toml is the derived baseline spec
+<sweep>/points/layer-07/    bundle per point (layer-07-pos-3 with positions)
+```
+
+A derived spec is the sweep spec with `[sweep]` removed, the swept
+interventions moved, `experiment.name` suffixed with the point id and
+`output.directory` set to `<spec output.directory>/points/<id>`, preceded by
+a comment naming the sweep spec's SHA-256. `--output` moves the sweep
+directory without changing any derived spec, so identities do not depend on
+where a sweep was written.
+
+**Metrics** (per point and input, against the baseline, from `compare`):
+`first_divergent_step` (first generated step whose token differs),
+`generated_text_equal`, `peak_relative_l2` (largest relative L2 difference
+over every capture both bundles hold, rounded to 9 significant digits so it
+survives JSON exactly) with the capture, site and layer where it occurs, and
+how many captures were exact. `sweep_hash` covers the sweep spec hash, the
+model and tokenizer, the layers, every bundle's semantic and payload hash,
+and the metrics.
+
+**Verification** recomputes `sweep_hash`, checks the stored sweep spec
+against its hash, fully verifies every bundle (with `--model`/`--tokenizer`
+for deep checks), checks each bundle's `experiment.toml` is exactly the spec
+the sweep derives for that point, recomputes every metric from the bundles,
+and checks `sweep.csv`. `--expect-semantic-hash` anchors the sweep hash.
+`compare` verifies both sweeps and compares them point by point (semantic
+and payload hash, metrics); the verdict is `exact` when every point and the
+baseline have equal semantic hashes.
+
+**Execution.** A sweep is one shared pass (previous section): the baseline
+runs once with observers for every point, and each point resumes at its
+layer, so a 16-layer sweep computes the prompt prefix once rather than
+sixteen times and loads the model once. Points run one after another: each
+forward already uses the whole thread pool, and the forward is not
+reentrant on one thread (the fused decode workspace and the greedy logits
+buffer are thread-local `RefCell`s that a rayon worker stealing another
+point's task mid-forward would re-borrow), so parallel points would need
+per-point pools and would compete for memory bandwidth. On the pinned
+Llama-3.2-1B (Apple M1 Pro, 8 threads) the example sweep takes about 13 s
+(4.9 s model load, 7.5 s for 17 bundles); running the baseline and the 16
+derived specs as separate `experiment run`s takes about 86 s, with
+hash-identical bundles.
 
 ## Determinism and identity
 

@@ -221,6 +221,11 @@ pub struct RawExperimentSpec {
     #[serde(default)]
     pub interventions: Option<Vec<RawDefinition<InterventionSpec>>>,
     pub output: RawOutputSpec,
+    /// A layer sweep (`crate::v05::sweep`): the spec is then a template
+    /// from which one experiment per point is derived, and it does not
+    /// resolve as a single experiment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<crate::v05::sweep::RawSweepSpec>,
 }
 
 /// A strictly validated definition retaining the fields actually supplied by
@@ -449,6 +454,14 @@ impl RawExperimentSpec {
     /// Validate the schema identifier and resolve all defaults.
     pub fn resolve(self) -> Result<ExperimentSpecV1, SpecError> {
         check_schema_version(&self.schema)?;
+        if self.sweep.is_some() {
+            return Err(SpecError::at(
+                "sweep",
+                "this specification declares a [sweep]: it describes one experiment per sweep \
+                 point and is run as a sweep (`ember experiment run` handles it), not resolved \
+                 as a single experiment",
+            ));
+        }
         let mut defaults = Vec::new();
 
         let description = take_default(
