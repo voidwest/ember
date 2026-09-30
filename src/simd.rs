@@ -1802,6 +1802,223 @@ mod aarch64 {
         }
     }
 
+    /// Where block `b` of weight row `r` lives in a decode weight layout.
+    pub(crate) trait DecodeRowBlocks {
+        /// Pointer to the 32 signed quants.
+        fn quants(&self, row: usize, block: usize) -> *const u8;
+        /// Pointer to the little-endian f16 scale.
+        fn scale(&self, row: usize, block: usize) -> *const u8;
+    }
+
+    /// Row-contiguous GGUF Q8_0 blocks (`[scale, 32 quants]` per block).
+    pub(crate) struct RowsBlocks {
+        pub(crate) data: *const u8,
+        pub(crate) blocks: usize,
+    }
+
+    impl DecodeRowBlocks for RowsBlocks {
+        #[inline(always)]
+        fn quants(&self, row: usize, block: usize) -> *const u8 {
+            self.data
+                .wrapping_add((row * self.blocks + block) * Q8_0_TYPE_SIZE + 2)
+        }
+        #[inline(always)]
+        fn scale(&self, row: usize, block: usize) -> *const u8 {
+            self.data
+                .wrapping_add((row * self.blocks + block) * Q8_0_TYPE_SIZE)
+        }
+    }
+
+    /// Four-row interleaved stripes (see `QuantizedWeightInterleaved`).
+    pub(crate) struct InterleavedBlocks {
+        pub(crate) quants: *const u8,
+        pub(crate) scales: *const u8,
+        pub(crate) blocks: usize,
+    }
+
+    impl DecodeRowBlocks for InterleavedBlocks {
+        #[inline(always)]
+        fn quants(&self, row: usize, block: usize) -> *const u8 {
+            self.quants
+                .wrapping_add(((row / 4) * self.blocks + block) * 128 + (row % 4) * 32)
+        }
+        #[inline(always)]
+        fn scale(&self, row: usize, block: usize) -> *const u8 {
+            self.scales
+                .wrapping_add(((row / 4) * self.blocks + block) * 8 + (row % 4) * 2)
+        }
+    }
+
+    /// `R` weight rows × `C` activation columns. Each weight block is loaded
+    /// once for all columns. Every `(row, column)` accumulates
+    /// `sum += (dot as f32 * ws) * xs` in block order — the single-row decode
+    /// tile's exact arithmetic — so each column is bit-identical to decoding
+    /// that activation alone.
+    #[inline]
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    unsafe fn q8_columns_tile<L: DecodeRowBlocks, const R: usize, const C: usize>(
+        layout: &L,
+        x: *const u8,
+        row_bytes: usize,
+        row: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        unsafe {
+            let mut sums = [[0.0f32; C]; R];
+            for b in 0..row_bytes / Q8_0_TYPE_SIZE {
+                let mut xs = [0.0f32; C];
+                let mut x0 = [vdupq_n_s8(0); C];
+                let mut x1 = [vdupq_n_s8(0); C];
+                for c in 0..C {
+                    let xp = x.add(c * row_bytes + b * Q8_0_TYPE_SIZE);
+                    xs[c] = load_scale(xp);
+                    x0[c] = vld1q_s8(xp.add(2).cast());
+                    x1[c] = vld1q_s8(xp.add(18).cast());
+                }
+                for (r, row_sums) in sums.iter_mut().enumerate() {
+                    let wp = layout.quants(row + r, b);
+                    let ws = load_scale(layout.scale(row + r, b));
+                    let w0 = vld1q_s8(wp.cast());
+                    let w1 = vld1q_s8(wp.add(16).cast());
+                    for c in 0..C {
+                        let dot = signed_dot(signed_dot(vdupq_n_s32(0), x0[c], w0), x1[c], w1);
+                        row_sums[c] += vaddvq_s32(dot) as f32 * ws * xs[c];
+                    }
+                }
+            }
+            for (r, row_sums) in sums.iter().enumerate() {
+                for (c, &value) in row_sums.iter().enumerate() {
+                    *out.add(c * out_stride + row + r) = value;
+                }
+            }
+        }
+    }
+
+    /// `R` weight rows × four activation columns with the column scales in
+    /// one vector. Lane `c` computes `(dot_c as f32 * ws) * xs_c` and adds it
+    /// to its running sum: the pairwise integer reduction is exact, the
+    /// conversion rounds like the scalar cast, and the two multiplies and the
+    /// add stay separate IEEE operations, so every lane equals
+    /// [`q8_columns_tile`] (and single-row decode) bit for bit.
+    #[inline]
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    unsafe fn q8_columns4_tile<L: DecodeRowBlocks, const R: usize>(
+        layout: &L,
+        x: *const u8,
+        row_bytes: usize,
+        row: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        unsafe {
+            let mut sums = [vdupq_n_f32(0.0); R];
+            for b in 0..row_bytes / Q8_0_TYPE_SIZE {
+                let mut scales = [0.0f32; 4];
+                let mut x0 = [vdupq_n_s8(0); 4];
+                let mut x1 = [vdupq_n_s8(0); 4];
+                for c in 0..4 {
+                    let xp = x.add(c * row_bytes + b * Q8_0_TYPE_SIZE);
+                    scales[c] = load_scale(xp);
+                    x0[c] = vld1q_s8(xp.add(2).cast());
+                    x1[c] = vld1q_s8(xp.add(18).cast());
+                }
+                let xs = vld1q_f32(scales.as_ptr());
+                for (r, sum) in sums.iter_mut().enumerate() {
+                    let wp = layout.quants(row + r, b);
+                    let ws = load_scale(layout.scale(row + r, b));
+                    let w0 = vld1q_s8(wp.cast());
+                    let w1 = vld1q_s8(wp.add(16).cast());
+                    let zero = vdupq_n_s32(0);
+                    let d0 = signed_dot(signed_dot(zero, x0[0], w0), x1[0], w1);
+                    let d1 = signed_dot(signed_dot(zero, x0[1], w0), x1[1], w1);
+                    let d2 = signed_dot(signed_dot(zero, x0[2], w0), x1[2], w1);
+                    let d3 = signed_dot(signed_dot(zero, x0[3], w0), x1[3], w1);
+                    let dots = vpaddq_s32(vpaddq_s32(d0, d1), vpaddq_s32(d2, d3));
+                    let products = vmulq_f32(vmulq_n_f32(vcvtq_f32_s32(dots), ws), xs);
+                    *sum = vaddq_f32(*sum, products);
+                }
+            }
+            for (r, sum) in sums.iter().enumerate() {
+                let mut lanes = [0.0f32; 4];
+                vst1q_f32(lanes.as_mut_ptr(), *sum);
+                for (c, value) in lanes.into_iter().enumerate() {
+                    *out.add(c * out_stride + row + r) = value;
+                }
+            }
+        }
+    }
+
+    /// Weight rows `row_start..row_end` against `columns` quantized
+    /// activation rows (`x` holds `columns * row_bytes` bytes). Output column
+    /// `c` row `r` is written to `out[c * out_stride + r]`.
+    ///
+    /// # Safety
+    /// Requires NEON, FP16 and dotprod; `layout` must address every block of
+    /// the requested rows, `x` must hold `columns` activation rows, and `out`
+    /// must be valid for the addressed writes.
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn matmul_q8_0_decode_columns_dotprod<L: DecodeRowBlocks>(
+        layout: &L,
+        x: &[u8],
+        row_bytes: usize,
+        columns: usize,
+        row_start: usize,
+        row_end: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        assert!(x.len() >= columns * row_bytes);
+        unsafe {
+            // Wider batches are compute-bound, so taller row tiles amortize
+            // the activation loads; single-column work keeps two streams.
+            let tall = if columns >= 4 { 4 } else { 2 };
+            let mut row = row_start;
+            while row < row_end {
+                let height = if row + tall <= row_end {
+                    tall
+                } else if row + 2 <= row_end {
+                    2
+                } else {
+                    1
+                };
+                let mut column = 0;
+                while column < columns {
+                    let xp = x.as_ptr().add(column * row_bytes);
+                    let op = out.add(column * out_stride);
+                    let width = match columns - column {
+                        4.. => 4,
+                        2..=3 => 2,
+                        _ => 1,
+                    };
+                    macro_rules! tile {
+                        ($r:literal) => {
+                            match width {
+                                4 => q8_columns4_tile::<L, $r>(
+                                    layout, xp, row_bytes, row, op, out_stride,
+                                ),
+                                2 => q8_columns_tile::<L, $r, 2>(
+                                    layout, xp, row_bytes, row, op, out_stride,
+                                ),
+                                _ => q8_columns_tile::<L, $r, 1>(
+                                    layout, xp, row_bytes, row, op, out_stride,
+                                ),
+                            }
+                        };
+                    }
+                    match height {
+                        4 => tile!(4),
+                        2 => tile!(2),
+                        _ => tile!(1),
+                    }
+                    column += width;
+                }
+                row += height;
+            }
+        }
+    }
+
     /// Decode four adjacent outputs from the packed four-row weight stripes.
     ///
     /// # Safety
@@ -2629,8 +2846,9 @@ impl Q8DecodeWeight<'_> {
     /// Weight rows `row_start..row_end` against `columns` activation rows,
     /// writing column `c` row `r` to `out[c * out_stride + r]`.
     ///
-    /// Runs the single-row kernel once per column over the (then
-    /// cache-resident) weight rows.
+    /// ARM reuses each loaded weight block across up to four columns with the
+    /// single-row arithmetic; other targets run the single-row kernel once per
+    /// column over the (now cache-resident) weight rows.
     ///
     /// # Safety
     /// `out` must be valid for those writes and no other thread may access
@@ -2647,6 +2865,42 @@ impl Q8DecodeWeight<'_> {
     ) {
         let blocks_per_row = self.in_features() / Q8_0_BLOCK_SIZE;
         let row_bytes = blocks_per_row * Q8_0_TYPE_SIZE;
+        #[cfg(target_arch = "aarch64")]
+        if is_aarch64_feature_detected!("dotprod") && is_aarch64_feature_detected!("fp16") {
+            match self {
+                Self::Rows(w) => {
+                    let layout = aarch64::RowsBlocks {
+                        data: w.data().as_ptr(),
+                        blocks: blocks_per_row,
+                    };
+                    // SAFETY: features checked above; the layout addresses
+                    // rows below `out_features` of a validated weight, and
+                    // the caller guarantees the output writes.
+                    unsafe {
+                        aarch64::matmul_q8_0_decode_columns_dotprod(
+                            &layout, x, row_bytes, columns, row_start, row_end, out, out_stride,
+                        );
+                    }
+                    return;
+                }
+                Self::Interleaved(w) => {
+                    let layout = aarch64::InterleavedBlocks {
+                        quants: w.quants().as_ptr(),
+                        scales: w.scales().as_ptr(),
+                        blocks: blocks_per_row,
+                    };
+                    // SAFETY: as above; interleaved stripes are padded to a
+                    // multiple of four rows.
+                    unsafe {
+                        aarch64::matmul_q8_0_decode_columns_dotprod(
+                            &layout, x, row_bytes, columns, row_start, row_end, out, out_stride,
+                        );
+                    }
+                    return;
+                }
+                Self::Packed16(_) => {}
+            }
+        }
         for column in 0..columns {
             // SAFETY: the caller guarantees exclusive access to these writes.
             let out = unsafe {
