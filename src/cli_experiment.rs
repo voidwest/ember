@@ -1,5 +1,5 @@
 //! Ember v0.5 experiment CLI driver: validate, run, inspect, verify,
-//! compare, reproduce, tokenize.
+//! compare, reproduce, tokenize (and `lens`, in `cli_experiment_lens`).
 //!
 //! The run path loads the model and tokenizer, drives every input through
 //! the existing generation machinery with a v0.5 experiment attached, and
@@ -57,6 +57,9 @@ pub(crate) enum ExperimentSubcommand {
     Reproduce(ReproduceArgs),
     /// Inspect tokenization and span matching.
     Tokenize(TokenizeArgs),
+    /// Logit lens: project each captured residual-stream row through the
+    /// model's final norm and LM head.
+    Lens(crate::cli_experiment_lens::LensArgs),
 }
 
 #[derive(ClapArgs)]
@@ -90,9 +93,41 @@ pub(crate) struct RunArgs {
     /// bit-identical to running it alone; runtime.json records the path.
     #[arg(long = "variant", value_name = "spec.toml")]
     pub variants: Vec<PathBuf>,
+    /// Sign the bundle's manifest.json with this private key (from
+    /// `ember evidence init`) and write the signed-evidence-v2 envelope next
+    /// to the bundle as `<bundle>.evidence.json`. Defaults to the
+    /// `EMBER_SIGN_KEY` environment variable when set.
+    #[arg(long, value_name = "key", conflicts_with = "no_sign")]
+    pub sign_key: Option<PathBuf>,
+    /// Do not sign, even when `EMBER_SIGN_KEY` is set.
+    #[arg(long)]
+    pub no_sign: bool,
     /// Machine-readable output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Environment variable naming the default signing key for
+/// `experiment run`.
+pub(crate) const SIGN_KEY_ENV: &str = "EMBER_SIGN_KEY";
+
+/// Where `experiment run --sign-key` writes a bundle's evidence envelope,
+/// and where `--trusted-key` looks for one without `--expect-evidence`:
+/// `<bundle>.evidence.json`, a sibling of the bundle directory. It lives
+/// outside the bundle because a file inside would change the bundle's
+/// inventory (and so fail verification of the very bundle it signs).
+pub(crate) fn bundle_evidence_path(bundle: &std::path::Path) -> PathBuf {
+    let named = bundle
+        .file_name()
+        .map(|_| bundle.to_path_buf())
+        .or_else(|| bundle.canonicalize().ok())
+        .unwrap_or_else(|| bundle.to_path_buf());
+    let mut name = named
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "bundle".into());
+    name.push(".evidence.json");
+    named.with_file_name(name)
 }
 
 #[derive(ClapArgs)]
@@ -137,17 +172,32 @@ pub(crate) struct AnchorArgs {
     pub expect_semantic_hash: Option<String>,
     /// Require a signed evidence envelope over the bundle's manifest.json
     /// (`ember evidence sign --manifest <bundle>/manifest.json`) whose signed
-    /// semantic and payload hashes equal the bundle's.
+    /// semantic and payload hashes equal the bundle's. `experiment run
+    /// --sign-key` writes one as `<bundle>.evidence.json`, the default when
+    /// only `--trusted-key` is given.
     #[arg(long, value_name = "envelope.json", requires = "trusted_key")]
     pub expect_evidence: Option<PathBuf>,
     /// The envelope signer's public key (`.pub` file or hex fingerprint).
-    #[arg(long, value_name = "key.pub", requires = "expect_evidence")]
+    /// Without `--expect-evidence` the envelope is looked up next to the
+    /// bundle as `<bundle>.evidence.json`.
+    #[arg(long, value_name = "key.pub")]
     pub trusted_key: Option<String>,
 }
 
 impl AnchorArgs {
-    fn is_anchored(&self) -> bool {
-        self.expect_semantic_hash.is_some() || self.expect_evidence.is_some()
+    pub(crate) fn is_anchored(&self) -> bool {
+        self.expect_semantic_hash.is_some() || self.trusted_key.is_some()
+    }
+
+    /// The envelope to check for `bundle` and its trusted key: the explicit
+    /// `--expect-evidence`, else the sibling `<bundle>.evidence.json`.
+    fn evidence_for(&self, bundle: &std::path::Path) -> Option<(PathBuf, &str)> {
+        let trusted_key = self.trusted_key.as_deref()?;
+        let envelope = self
+            .expect_evidence
+            .clone()
+            .unwrap_or_else(|| bundle_evidence_path(bundle));
+        Some((envelope, trusted_key))
     }
 }
 
@@ -375,6 +425,7 @@ pub(crate) fn execute_resolved(
                 spec_text,
                 output_directory,
                 retain_incomplete,
+                None,
             )
         })
 }
@@ -513,6 +564,12 @@ pub(crate) fn prepare_run(
 /// Execute a resolved experiment against an already-loaded session:
 /// build the plan, run every input through generation with the v0.5
 /// experiment attached, assemble + write the bundle, and self-verify it.
+///
+/// `cancel` follows the generation contract in `docs/cancellation.md`: it is
+/// checked before prefill and at every decode step of every input, and once
+/// more before the bundle is written. A cancelled run returns
+/// [`ember::cancel::Cancelled`] and writes nothing -- no bundle and no staging
+/// directory -- so there is nothing partial to clean up.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_prepared(
     prepared: &mut PreparedRun,
@@ -520,6 +577,7 @@ pub(crate) fn execute_prepared(
     spec_text: &str,
     output_directory: &std::path::Path,
     retain_incomplete: bool,
+    cancel: Option<&ember::cancel::CancelToken>,
 ) -> anyhow::Result<(
     PathBuf,
     BundleIdentity,
@@ -534,6 +592,7 @@ pub(crate) fn execute_prepared(
             spec_text,
             output_directory,
             retain_incomplete,
+            cancel,
         );
     }
     rayon::ThreadPoolBuilder::new()
@@ -547,6 +606,7 @@ pub(crate) fn execute_prepared(
                 spec_text,
                 output_directory,
                 retain_incomplete,
+                cancel,
             )
         })
 }
@@ -557,6 +617,7 @@ fn execute_prepared_inner(
     spec_text: &str,
     output_directory: &std::path::Path,
     retain_incomplete: bool,
+    cancel: Option<&ember::cancel::CancelToken>,
 ) -> anyhow::Result<(
     PathBuf,
     BundleIdentity,
@@ -569,7 +630,7 @@ fn execute_prepared_inner(
     for index in 0..resolved.inputs.len() {
         let started = std::time::Instant::now();
         let experiment = new_input_experiment(prepared, resolved, &active.bundle_sources, index)?;
-        let result = run_input(prepared, resolved, &active, &experiment, None, None)?;
+        let result = run_input(prepared, resolved, &active, &experiment, None, None, cancel)?;
         timing.add(started.elapsed(), &result);
         results.push(result);
     }
@@ -585,6 +646,7 @@ fn execute_prepared_inner(
         results,
         timing,
         None,
+        cancel,
     )?;
     Ok((
         outcome.path,
@@ -743,6 +805,7 @@ pub(crate) fn run_input(
     experiment: &Arc<Mutex<V05Experiment>>,
     pass: Option<crate::cli_experiment_shared::SharedPass>,
     role: Option<crate::cli_generation::PrefixRole<'_>>,
+    cancel: Option<&ember::cancel::CancelToken>,
 ) -> anyhow::Result<InputResult> {
     let backend = ember::backend::CpuBackend;
     let model = &prepared.model;
@@ -795,7 +858,9 @@ pub(crate) fn run_input(
                 active.threads,
                 context_limit,
                 seed,
-                None, // experiment runs are not signal-cancellable yet
+                // The CLI passes no token (experiment runs are not signal-
+                // cancellable yet); the native console passes its Cancel token.
+                cancel,
             )?
         }
         Some(role) => crate::cli_generation::generate_with_experiment_prefix(
@@ -811,6 +876,7 @@ pub(crate) fn run_input(
             context_limit,
             seed,
             role,
+            cancel,
         )?,
     };
     let mut experiment = experiment.lock().expect("v05 experiment lock");
@@ -826,7 +892,13 @@ pub(crate) fn finish_bundle(
     results: Vec<InputResult>,
     timing: RunTiming,
     prefix: Option<ember::v05::prefix::PrefixReuseRecord>,
+    cancel: Option<&ember::cancel::CancelToken>,
 ) -> anyhow::Result<RunOutcome> {
+    // Last check point: a cancel that lands after the final decode step must
+    // still leave no bundle behind.
+    if cancel.is_some_and(ember::cancel::CancelToken::is_cancelled) {
+        return Err(anyhow::Error::new(ember::cancel::Cancelled));
+    }
     let resolved = target.resolved;
     let wall_clock_ms = timing.elapsed.as_secs_f64() * 1000.0;
     let runtime = RuntimeMetrics {
@@ -995,6 +1067,11 @@ pub(crate) fn run_experiment_command(
             report.checks.iter().filter(|check| !check.ok).count()
         );
     }
+    let sign_key = resolve_sign_key(command);
+    let evidence = match &sign_key {
+        Some(key) => Some(sign_bundle(&path, key)?),
+        None => None,
+    };
     if command.json {
         println!(
             "{}",
@@ -1003,6 +1080,10 @@ pub(crate) fn run_experiment_command(
                 "bundle": path.display().to_string(),
                 "semantic_hash": identity.semantic_hash,
                 "payload_hash": identity.payload_hash,
+                "evidence": evidence.as_ref().map(|(envelope, signer)| serde_json::json!({
+                    "path": envelope.display().to_string(),
+                    "signer_fingerprint": signer,
+                })),
                 "verification": report,
             }))?
         );
@@ -1011,6 +1092,16 @@ pub(crate) fn run_experiment_command(
         println!("  semantic hash: {}", identity.semantic_hash);
         println!("  payload hash:  {}", identity.payload_hash);
         println!("  verification: {} check(s) passed", report.checks.len());
+        if let Some((envelope, signer)) = &evidence {
+            println!(
+                "  signed evidence: {} (signer {signer})",
+                envelope.display()
+            );
+            println!(
+                "    check with: ember experiment verify {} --trusted-key <key.pub>",
+                path.display()
+            );
+        }
     }
     Ok(())
 }
@@ -1053,6 +1144,7 @@ fn run_with_variants(
         },
         &[],
         &targets,
+        None,
     )?;
     let all: Vec<&RunOutcome> = std::iter::once(&base).chain(outcomes.iter()).collect();
     for outcome in &all {
@@ -1069,15 +1161,28 @@ fn run_with_variants(
             );
         }
     }
+    let mut evidence = Vec::new();
+    if let Some(key) = resolve_sign_key(command) {
+        for outcome in &all {
+            evidence.push(Some(sign_bundle(&outcome.path, &key)?));
+        }
+    } else {
+        evidence.resize(all.len(), None);
+    }
     if command.json {
         let bundles: Vec<serde_json::Value> = all
             .iter()
-            .map(|outcome| {
+            .zip(&evidence)
+            .map(|(outcome, evidence)| {
                 serde_json::json!({
                     "bundle": outcome.path.display().to_string(),
                     "semantic_hash": outcome.identity.semantic_hash,
                     "payload_hash": outcome.identity.payload_hash,
                     "prefix_reuse": outcome.prefix.as_ref().map(|record| record.to_json()),
+                    "evidence": evidence.as_ref().map(|(envelope, signer)| serde_json::json!({
+                        "path": envelope.display().to_string(),
+                        "signer_fingerprint": signer,
+                    })),
                     "verification": outcome.report,
                 })
             })
@@ -1087,8 +1192,14 @@ fn run_with_variants(
             serde_json::to_string_pretty(&serde_json::json!({"ok": true, "bundles": bundles}))?
         );
     } else {
-        for outcome in all {
+        for (outcome, evidence) in all.into_iter().zip(&evidence) {
             println!("bundle written to {}", outcome.path.display());
+            if let Some((envelope, signer)) = evidence {
+                println!(
+                    "  signed evidence: {} (signer {signer})",
+                    envelope.display()
+                );
+            }
             println!("  semantic hash: {}", outcome.identity.semantic_hash);
             println!("  payload hash:  {}", outcome.identity.payload_hash);
             println!(
@@ -1130,6 +1241,40 @@ pub(crate) fn describe_prefix(record: &ember::v05::prefix::PrefixReuseRecord) ->
         })
         .collect();
     format!("{}: {}", record.role, parts.join("; "))
+}
+
+/// The signing key a run uses: `--sign-key`, else `EMBER_SIGN_KEY`, unless
+/// `--no-sign`.
+pub(crate) fn resolve_sign_key(command: &RunArgs) -> Option<PathBuf> {
+    if command.no_sign {
+        None
+    } else {
+        command.sign_key.clone().or_else(|| {
+            std::env::var_os(SIGN_KEY_ENV)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+    }
+}
+
+/// Sign `<bundle>/manifest.json` into `<bundle>.evidence.json`. Returns the
+/// envelope path and the signer fingerprint.
+pub(crate) fn sign_bundle(
+    bundle: &std::path::Path,
+    key: &std::path::Path,
+) -> anyhow::Result<(PathBuf, String)> {
+    let envelope_path = bundle_evidence_path(bundle);
+    let envelope = crate::cli_evidence::sign_record_file(
+        &bundle.join("manifest.json"),
+        &key.to_string_lossy(),
+        &envelope_path,
+    )
+    .with_context(|| format!("failed to sign bundle '{}'", bundle.display()))?;
+    let signer = envelope["signer_fingerprint"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    Ok((envelope_path, signer))
 }
 
 pub(crate) fn run_inspect_command(command: &InspectArgs) -> anyhow::Result<()> {
@@ -1279,7 +1424,7 @@ fn evidence_anchor(
 }
 
 /// Load and verify a bundle with its anchors; fails on any failed check.
-fn load_anchored_bundle(
+pub(crate) fn load_anchored_bundle(
     bundle: &std::path::Path,
     anchor: &AnchorArgs,
 ) -> anyhow::Result<LoadedBundle> {
@@ -1288,9 +1433,9 @@ fn load_anchored_bundle(
         ..VerifyOptions::default()
     };
     let loaded = load_verified_bundle(bundle, &options).map_err(anyhow::Error::msg)?;
-    if let (Some(envelope), Some(trusted_key)) = (&anchor.expect_evidence, &anchor.trusted_key) {
+    if let Some((envelope, trusted_key)) = anchor.evidence_for(bundle) {
         let (ok, detail) = evidence_anchor(
-            envelope,
+            &envelope,
             trusted_key,
             &loaded.semantic_hash,
             &loaded.payload_hash,
@@ -1347,9 +1492,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
         );
     }
     let mut report = verify_bundle(&command.bundle, &options).map_err(anyhow::Error::msg)?;
-    if let (Some(envelope), Some(trusted_key)) =
-        (&command.anchor.expect_evidence, &command.anchor.trusted_key)
-    {
+    if let Some((envelope, trusted_key)) = command.anchor.evidence_for(&command.bundle) {
         let (ok, detail) = if report.semantic_hash.is_empty() {
             (
                 false,
@@ -1357,7 +1500,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
             )
         } else {
             evidence_anchor(
-                envelope,
+                &envelope,
                 trusted_key,
                 &report.semantic_hash,
                 &report.payload_hash,
@@ -1443,8 +1586,11 @@ pub(crate) fn run_compare_command(command: &CompareArgs) -> anyhow::Result<()> {
     let bundle_a = load_anchored_bundle(&command.a, &anchor(&command.expect_a_semantic_hash))?;
     let bundle_b = load_anchored_bundle(&command.b, &anchor(&command.expect_b_semantic_hash))?;
     let result = compare_loaded(&bundle_a, &bundle_b).map_err(anyhow::Error::msg)?;
+    let host = host_differences(&bundle_a, &bundle_b);
     if command.json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        let mut value = serde_json::to_value(&result)?;
+        value["host_differences"] = serde_json::to_value(&host)?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
     let identity = &result.identity;
@@ -1537,7 +1683,46 @@ pub(crate) fn run_compare_command(command: &CompareArgs) -> anyhow::Result<()> {
         fmt_opt_u64(result.runtime.peak_rss_kb_a),
         fmt_opt_u64(result.runtime.peak_rss_kb_b)
     );
+    if results_differ(&result) {
+        println!("host (why the numbers may differ):");
+        for line in ember::v05::host_profile::report_lines(&host) {
+            println!("{line}");
+        }
+    } else if !host.differences.is_empty() {
+        println!(
+            "host: {} difference(s), none of which changed the results",
+            host.differences.len()
+        );
+    }
     Ok(())
+}
+
+/// Host differences between two bundles, from their runtime.json files.
+fn host_differences(
+    a: &LoadedBundle,
+    b: &LoadedBundle,
+) -> ember::v05::host_profile::HostDifferenceReport {
+    let runtime = |bundle: &LoadedBundle| {
+        bundle
+            .file("runtime.json")
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+    };
+    ember::v05::host_profile::explain_host_differences(runtime(a).as_ref(), runtime(b).as_ref())
+}
+
+/// Whether any output or capture differs between the compared bundles.
+fn results_differ(result: &ember::v05::compare::CompareResult) -> bool {
+    result
+        .outputs
+        .iter()
+        .any(|output| !output.generated_tokens_equal || !output.generated_text_equal)
+        || result.captures.iter().any(|capture| {
+            capture
+                .metrics
+                .as_ref()
+                .map(|metrics| !metrics.exact)
+                .unwrap_or(true)
+        })
 }
 
 fn yesno(value: bool) -> &'static str {
@@ -1692,10 +1877,12 @@ pub(crate) fn run_reproduce_command(
     } else {
         "failed"
     };
+    let host = host_differences(&original, &reproduction);
     if command.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "host_differences": host,
                 "verdict": verdict,
                 "original": command.bundle.display().to_string(),
                 "reproduction": path.display().to_string(),
@@ -1731,6 +1918,12 @@ pub(crate) fn run_reproduce_command(
                 "not anchored: self-consistent only"
             }
         );
+        if !matches!(verdict, "exact-semantic" | "exact") {
+            println!("  host (why the numbers may differ):");
+            for line in ember::v05::host_profile::report_lines(&host) {
+                println!("  {line}");
+            }
+        }
     }
     if verdict == "failed" || verdict == "captures-misaligned" {
         return Err(crate::cli_support::VerificationFailed.into());
@@ -1801,4 +1994,26 @@ pub(crate) fn run_tokenize_command(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundle_evidence_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn evidence_envelope_sits_next_to_the_bundle_not_inside_it() {
+        assert_eq!(
+            bundle_evidence_path(Path::new("runs/probe")),
+            PathBuf::from("runs/probe.evidence.json")
+        );
+        assert_eq!(
+            bundle_evidence_path(Path::new("runs/probe/")),
+            PathBuf::from("runs/probe.evidence.json")
+        );
+        assert_eq!(
+            bundle_evidence_path(Path::new("probe.v1")),
+            PathBuf::from("probe.v1.evidence.json")
+        );
+    }
 }

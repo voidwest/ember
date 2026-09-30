@@ -120,17 +120,7 @@ impl Console {
         };
         self.reference = Some(Reference {
             label: format!("Run #{number} \u{00b7} {}", change_summary(&values)),
-            layers: result
-                .layers
-                .iter()
-                .map(|layer| LayerMetric {
-                    layer: layer.layer,
-                    relative_l2_difference: layer.relative_l2,
-                    cosine_distance: layer.cosine,
-                    maximum_absolute_difference: None,
-                    exact: layer.relative_l2 == Some(0.0),
-                })
-                .collect(),
+            layers: super::history::record_series(&result),
             first_layer: result.first_layer_divergence,
             peak: result.peak_relative_l2.zip(result.peak_layer),
             text_equal: record.outputs_equal,
@@ -138,6 +128,16 @@ impl Console {
         });
         self.goto(super::View::Experiment, cx);
         cx.notify();
+    }
+
+    /// Make sure the console's shortcuts reach it after a mouse-started
+    /// run. The key handler lives on the window's root and only hears keys
+    /// while something inside it has focus; a click on a button leaves focus
+    /// nowhere, and Esc would then have nothing to cancel.
+    pub(super) fn claim_keyboard(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.focused(cx).is_none() {
+            self.focus_handle.focus(window, cx);
+        }
     }
 
     pub(super) fn clear_reference(&mut self, cx: &mut Context<Self>) {
@@ -452,6 +452,7 @@ impl Console {
             Status::Preparing => "Loading model\u{2026}",
             Status::Running => "Running\u{2026}",
             Status::Restoring => "Verifying restore\u{2026}",
+            Status::Cancelling => "Cancelling\u{2026}",
             Status::Idle if self.baseline.is_some() && !self.sample => "Run again",
             Status::Idle => "Run experiment",
         };
@@ -476,10 +477,33 @@ impl Console {
                     .label(run_label)
                     .disabled(!can_run)
                     .accessibility_label(run_label)
-                    .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                    .on_click(cx.listener(|console, _: &ClickEvent, window, cx| {
+                        console.claim_keyboard(window, cx);
                         console.run_now();
                         cx.notify();
                     })),
+            )
+            // Stopping a run sits under the button that started it, for as
+            // long as there is something to stop.
+            .when(
+                self.can_cancel() || self.status == Status::Cancelling,
+                |footer| {
+                    footer.child(
+                        Button::new("setup-cancel")
+                            .w_full()
+                            .label(if self.status == Status::Cancelling {
+                                "Cancelling\u{2026}"
+                            } else {
+                                "Cancel run"
+                            })
+                            .tooltip("Stop the run in flight (Esc). Nothing is recorded.")
+                            .accessibility_label("Cancel the run in flight")
+                            .disabled(self.status == Status::Cancelling)
+                            .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                console.cancel_run(cx);
+                            })),
+                    )
+                },
             )
             .children(self.can_sweep().then(|| {
                 if self.sweep_running() {
@@ -501,7 +525,8 @@ impl Console {
                         .tooltip("Run this experiment at every layer and plot the effect of each")
                         .accessibility_label("Sweep the change across every layer")
                         .disabled(!can_run)
-                        .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                        .on_click(cx.listener(|console, _: &ClickEvent, window, cx| {
+                            console.claim_keyboard(window, cx);
                             console.start_sweep(cx);
                             cx.notify();
                         }))

@@ -29,6 +29,10 @@ pub(super) struct RunsDelegate {
     /// How many times `rows` was rebuilt from the store. Tests read it to
     /// prove a render without a store change rebuilds nothing.
     pub(super) rebuilds: usize,
+    /// Rows built by `render_td` since tests last reset it. The table is a
+    /// virtual list; tests read this to prove a frame builds only the rows
+    /// on screen, not all 500.
+    pub(super) rows_built: usize,
     /// Display order: indices into `rows`, sorted by `sort` when one is set.
     order: Vec<usize>,
     /// The column sort the user chose, re-applied to every new snapshot:
@@ -38,6 +42,8 @@ pub(super) struct RunsDelegate {
     /// The run whose Delete was clicked once and now asks for confirmation.
     /// Deleting is permanent, so it takes a second, deliberate click.
     confirm_delete: Option<u64>,
+    /// Runs selected for comparison, mirrored from the console on sync.
+    picks: Vec<u64>,
     colors: Colors,
     /// The owning console, so row actions can mutate the store they
     /// snapshot. Weak: the table must not keep the console alive.
@@ -108,9 +114,11 @@ impl RunsDelegate {
             rows: Vec::new(),
             synced: None,
             rebuilds: 0,
+            rows_built: 0,
             order: Vec::new(),
             sort: None,
             confirm_delete: None,
+            picks: Vec::new(),
             colors,
             console: None,
         };
@@ -136,7 +144,7 @@ impl RunsDelegate {
 
     /// Remember a column sort and apply it. `ColumnSort::Default` returns to
     /// store order.
-    fn set_sort(&mut self, col_ix: usize, sort: ColumnSort) {
+    pub(super) fn set_sort(&mut self, col_ix: usize, sort: ColumnSort) {
         self.sort = (!matches!(sort, ColumnSort::Default)).then_some((col_ix, sort));
         self.apply_sort();
     }
@@ -160,7 +168,7 @@ impl RunsDelegate {
     }
 
     /// The run shown at a display row.
-    fn row(&self, row_ix: usize) -> Option<&RunRow> {
+    pub(super) fn row(&self, row_ix: usize) -> Option<&RunRow> {
         self.order.get(row_ix).and_then(|&ix| self.rows.get(ix))
     }
 
@@ -189,11 +197,15 @@ impl RunsDelegate {
     pub(super) fn sync(
         &mut self,
         store: &AppStore,
+        picks: &[u64],
         colors: Colors,
         console: WeakEntity<Console>,
         cx: &mut Context<TableState<Self>>,
     ) {
         self.refresh_rows(store);
+        if self.picks != picks {
+            self.picks = picks.to_vec();
+        }
         self.colors = colors;
         self.console = Some(console);
         cx.notify();
@@ -241,9 +253,9 @@ impl TableDelegate for RunsDelegate {
             4 => Column::new(run_col::RESULT, "Result").width(px(96.0)),
             5 => Column::new(run_col::DURATION, "Duration").width(px(96.0)),
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
-            // Wide enough for Reuse + Pin + Delete, the fullest lane a row
-            // can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(340.0)),
+            // Wide enough for Select + Open + Pin + Reuse + Star + Delete,
+            // the fullest lane a row can carry.
+            _ => Column::new(run_col::ACTIONS, "").width(px(520.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -272,6 +284,9 @@ impl TableDelegate for RunsDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let colors = self.colors;
+        if col_ix == 0 {
+            self.rows_built += 1;
+        }
         // The action lane: pin and delete, as quiet text commands. They talk
         // to the console through the weak entity the snapshot came from, so
         // the store, the snapshot and the screen stay one system.
@@ -326,6 +341,46 @@ impl TableDelegate for RunsDelegate {
             let reuse = run.can_reuse.then(|| self.console.clone());
             let console = self.console.clone();
             let mut lane = div().flex().flex_row().gap(px(Space::SM));
+            // Any row can be selected for comparison; one that kept no
+            // result is refused by the selection bar with the reason.
+            let picked = self.picks.contains(&number);
+            let select_console = self.console.clone();
+            lane = lane.child(
+                Button::new(SharedString::from(format!("run-select:{number}")))
+                    .ghost()
+                    .compact()
+                    .selected(picked)
+                    .label(if picked {
+                        "\u{2713} Selected"
+                    } else {
+                        "Select"
+                    })
+                    .tooltip("Select two runs to compare them side by side")
+                    .on_click(move |_, _, cx| {
+                        if let Some(console) = select_console.as_ref() {
+                            let _ = console.update(cx, |console, cx| {
+                                console.toggle_compare_pick(number, cx);
+                            });
+                        }
+                    }),
+            );
+            // Every row exports: Markdown always, and its bundle when it is
+            // on disk or can be re-run.
+            let export_console = self.console.clone();
+            lane = lane.child(
+                Button::new(SharedString::from(format!("run-export:{number}")))
+                    .ghost()
+                    .compact()
+                    .label("Export")
+                    .tooltip("Copy as Markdown, or get this run's verifiable bundle")
+                    .on_click(move |_, _, cx| {
+                        if let Some(console) = export_console.as_ref() {
+                            let _ = console.update(cx, |console, cx| {
+                                console.toggle_export(number, cx);
+                            });
+                        }
+                    }),
+            );
             // Open appears only where the run kept its result.
             if run.can_open {
                 let console = self.console.clone();
@@ -348,8 +403,8 @@ impl TableDelegate for RunsDelegate {
                     Button::new(SharedString::from(format!("run-compare:{number}")))
                         .ghost()
                         .compact()
-                        .label("Compare")
-                        .tooltip("Pin this run as the reference and go back to the workspace")
+                        .label("Pin")
+                        .tooltip("Pin this run as the reference for your next run, and go back to the workspace")
                         .on_click(move |_, _, cx| {
                             if let Some(console) = console.as_ref() {
                                 let _ = console.update(cx, |console, cx| {
@@ -588,6 +643,7 @@ mod tests {
             prompt: String::new(),
             config: None,
             result: None,
+            bundles: None,
         }
     }
 

@@ -42,7 +42,40 @@ To bind a bundle to an identity obtained elsewhere, anchor it:
   envelope over the bundle's `manifest.json` (`ember evidence sign --manifest
   <bundle>/manifest.json`) must verify against the trusted key, and its
   signed semantic and payload hashes must equal the recomputed ones. See
-  [attested execution](embersec/attested-execution.md).
+  [attested execution](embersec/attested-execution.md). With only
+  `--trusted-key <key.pub>`, the envelope is looked up next to the bundle as
+  `<bundle>.evidence.json`; a missing envelope fails the anchor.
+
+### Signed bundles
+
+`ember experiment run` signs the bundle it writes when given a key:
+
+```bash
+ember evidence init --key ~/.ember/sign.key          # once; writes sign.key + sign.pub
+ember experiment run spec.toml --sign-key ~/.ember/sign.key
+export EMBER_SIGN_KEY=~/.ember/sign.key              # or sign every run by default
+ember experiment run spec.toml                       # --no-sign opts out
+```
+
+After the bundle is written and self-verified, its `manifest.json` (which
+carries the semantic and payload hashes) is signed into a
+`signed-evidence-v2` envelope written **next to** the bundle as
+`<bundle>.evidence.json`, never inside it: a file inside would change the
+bundle's inventory and fail verification of the bundle it signs. Anyone
+holding the public key checks it with
+
+```bash
+ember experiment verify runs/probe --trusted-key sign.pub
+```
+
+which finds `runs/probe.evidence.json` on its own (pass `--expect-evidence
+<path>` if the envelope was moved). `experiment reproduce` takes the same
+options for the original bundle. Publish the `.pub` file (or its
+fingerprint) somewhere independent of the bundle, such as a paper or a
+repository README: an envelope checked against a key shipped alongside it
+proves nothing about who signed. `experiment reproduce` does not sign the
+reproduction bundle; sign it with `ember evidence sign --manifest
+<reproduction>/manifest.json --key <key> --out <reproduction>.evidence.json`.
 
 `experiment reproduce` accepts the same options for the original bundle,
 and `experiment compare` accepts `--expect-a-semantic-hash` and
@@ -114,6 +147,39 @@ hostnames, timing, local paths, RSS, and process IDs live in
 produce identical semantic manifests and identical semantic hashes
 (Gate E); the reference example reproduces `exact-semantic` on this
 machine.
+
+### Cross-machine differences: the host profile
+
+The same experiment on two machines has the same semantic identity, but
+its numbers can differ in the last bits: SIMD tiers accumulate dot
+products and norms in different orders. `runtime.json` therefore records a
+`host_profile` (`ember.host-profile.v1`, never part of either hash) with
+everything that decides reduction order:
+
+- `op_tiers`: the tier each op family dispatches to on that host
+  (`q8_0_matvec`: `x86-avx512-vnni` / `x86-avx2` / `arm-neon-dotprod` /
+  `scalar`; `k_quant_matvec`: including the `EMBER_K_AVX512` opt-in tier;
+  `elementwise` RMSNorm/SiLU/softmax; `f32_matmul`);
+- `plan_kernels` (kernel per matvec operator) and `kernel_fallbacks`;
+- `cpu`: architecture, OS, model name, runtime-detected features;
+- `threads`: requested workers, rayon pool size, available parallelism,
+  the plan's thread strategy;
+- `env`: dispatch knobs that were set (`EMBER_K_AVX512`,
+  `EMBER_LLAMA_PACKED_Q8`, `RAYON_NUM_THREADS`, ...);
+- `build`: Ember version and commit, debug/release, opt level, rustc,
+  target, compile-time target features.
+
+When outputs or captures differ, `experiment compare` prints which of
+these fields differ between the two bundles, ranked `likely` /
+`possible` / `unlikely` to change numbers, and a likely explanation (for
+example, "different Q8_0 matvec execution tier (x86-avx512-vnni vs
+x86-avx2): the tiers accumulate products in a different reduction
+order..."). `experiment reproduce` prints the same report whenever its
+verdict is not `exact` or `exact-semantic`. Both include it as
+`host_differences` in `--json`. If no field differs, the report says the
+difference is not explained by the host. Bundles written before the host
+profile fall back to comparing the legacy `os`, `cpu_features`, `threads`
+and `compiler_version` fields, with a note.
 
 ## Security assumptions
 

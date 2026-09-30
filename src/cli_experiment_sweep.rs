@@ -164,6 +164,7 @@ pub(crate) fn run_sweep(
         },
         &[],
         &targets,
+        None,
     )?;
     let compute_ms = started.elapsed().as_secs_f64() * 1000.0;
     for outcome in std::iter::once(&base).chain(outcomes.iter()) {
@@ -235,6 +236,12 @@ pub(crate) fn run_sweep(
     let mut runtime_bytes = serde_json::to_vec_pretty(&runtime)?;
     runtime_bytes.push(b'\n');
     write(SWEEP_RUNTIME_FILE, &runtime_bytes)?;
+    let mut signed = Vec::new();
+    if let Some(key) = crate::cli_experiment::resolve_sign_key(command) {
+        for outcome in std::iter::once(&base).chain(outcomes.iter()) {
+            signed.push(crate::cli_experiment::sign_bundle(&outcome.path, &key)?);
+        }
+    }
     // The manifest last: its presence marks a complete sweep.
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
     manifest_bytes.push(b'\n');
@@ -261,6 +268,12 @@ pub(crate) fn run_sweep(
             load_ms / 1000.0
         );
         println!("  sweep hash: {}", manifest.sweep_hash);
+        if let Some((_, signer)) = signed.first() {
+            println!(
+                "  signed evidence: {} bundle(s), <bundle>.evidence.json (signer {signer})",
+                signed.len()
+            );
+        }
         println!("  baseline: {}", describe_prefix_of(&base));
         let resumed = outcomes
             .iter()
@@ -494,6 +507,8 @@ mod tests {
             output,
             retain_incomplete: false,
             variants: Vec::new(),
+            sign_key: None,
+            no_sign: true,
             json: false,
         }
     }
@@ -566,6 +581,7 @@ kind = "prompt-final"
                 &point.text,
                 &model.dir.join(format!("alone-{}", point.id)),
                 false,
+                None,
             )
             .unwrap();
             assert_eq!(

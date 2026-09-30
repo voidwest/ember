@@ -8,7 +8,7 @@
 
 use crate::extraction::sha256_file_result;
 use crate::llama::Llama;
-use crate::loader::{ggml_dtype_name, load_gguf_with_k_strategy, GgufValue};
+use crate::loader::{ggml_dtype_name, load_gguf_header, load_gguf_with_k_strategy, GgufValue};
 use crate::plan::{ExecutionMode, ExecutionPlan, HookMode};
 use crate::tokenizer::EmberTokenizer;
 use anyhow::Context;
@@ -191,8 +191,11 @@ fn gguf_value_summary(value: &GgufValue) -> String {
 fn inspect_gguf(path: &Path) -> anyhow::Result<(GgufDigest, Vec<String>)> {
     // Structural validation happens inside the hardened loader (T0-T6 trust
     // boundary): magic, counts, string bounds, tensor records, offsets.
-    // Inspect never parses GGUF bytes itself.
-    let loader = load_gguf_with_k_strategy(path, crate::quant_k::KStrategy::Auto, true)
+    // Inspect never parses GGUF bytes itself. The digest needs only the
+    // metadata, the tensor table and the K-strategy decisions, so the
+    // header-only load runs every structural check without decoding or
+    // converting a single tensor payload.
+    let loader = load_gguf_header(path, crate::quant_k::KStrategy::Auto, true)
         .map_err(|error| anyhow::anyhow!("GGUF failed structural validation: {error}"))?;
     let mut notes = Vec::new();
     let architecture = loader

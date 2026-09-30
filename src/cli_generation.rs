@@ -874,7 +874,7 @@ impl GenerationExecution<CpuBackend, ember::llama::Llama<CpuBackend>>
 }
 
 /// `generate_with_experiment` with a shared-prefix role (experiment runs
-/// only: greedy or seeded sampling, no tracing, no cancellation).
+/// only: greedy or seeded sampling, no tracing).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_with_experiment_prefix(
     backend: &CpuBackend,
@@ -889,6 +889,7 @@ pub(crate) fn generate_with_experiment_prefix(
     context_limit: usize,
     rng_seed: Option<u64>,
     role: PrefixRole<'_>,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<String> {
     let mut execution = PrefixGeneration {
         active: ActiveGeneration {
@@ -916,7 +917,7 @@ pub(crate) fn generate_with_experiment_prefix(
         thread_count,
         context_limit,
         rng_seed,
-        None,
+        cancel,
     )
 }
 

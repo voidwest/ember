@@ -49,6 +49,9 @@ fn main() {
     if let Ok(target) = std::env::var("TARGET") {
         println!("cargo:rustc-env=EMBER_TARGET={target}");
     }
+    if let Ok(opt_level) = std::env::var("OPT_LEVEL") {
+        println!("cargo:rustc-env=EMBER_OPT_LEVEL={opt_level}");
+    }
     if let Some(commit) = command_stdout("git", &["rev-parse", "HEAD"]) {
         println!("cargo:rustc-env=EMBER_GIT_COMMIT={commit}");
     }

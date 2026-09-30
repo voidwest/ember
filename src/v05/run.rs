@@ -279,6 +279,12 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
         "first_token_latency_ms": materials.runtime.first_token_latency_ms,
         "peak_rss_kb": materials.runtime.peak_rss_kb,
         "scratch_bytes": materials.plan.scratch.total_bytes,
+        // What decided reduction order on this host (not semantic).
+        "host_profile": crate::v05::host_profile::HostProfile::detect(
+            &materials.plan,
+            materials.runtime.threads,
+        )
+        .to_json(),
         "compiler_version": materials.plan.provenance.rustc_version,
         "process_id": std::process::id(),
         "model_path": materials.resolved.model.path.display().to_string(),
@@ -742,6 +748,13 @@ directory = "runs/bundle-test"
             .as_object()
             .expect("runtime.json is an object");
         assert_eq!(runtime["wall_clock_ms"], serde_json::json!(12.5));
+        // ...and the host profile that explains cross-machine differences.
+        let host = &runtime[crate::v05::host_profile::RUNTIME_KEY];
+        assert_eq!(
+            host["schema"],
+            crate::v05::host_profile::HOST_PROFILE_SCHEMA
+        );
+        assert!(host["op_tiers"]["q8_0_matvec"].is_string());
         // manifest payload hash covers semantic files.
         assert!(
             !bundle.semantic_manifest.payloads.is_empty(),

@@ -85,6 +85,9 @@ ember experiment verify runs/morphology-layer-sweep
 # reproduction
 ember experiment reproduce runs/morphology-baseline --model Llama-3.2-1B-Instruct-Q8_0.gguf
 
+# logit lens: per-layer next-token predictions from the captured residual stream
+ember experiment lens runs/morphology-baseline --model Llama-3.2-1B-Instruct-Q8_0.gguf --top-k 5
+
 # token alignment diagnostics
 ember experiment tokenize --model Llama-3.2-1B-Instruct-Q8_0.gguf \
   --arch llama --tokenizer tokenizer.json \

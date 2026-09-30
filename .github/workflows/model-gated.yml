@@ -1,0 +1,119 @@
+# Model-gated test suites, run fail-closed against pinned public weights.
+#
+# Several integration suites load real GGUFs and skip silently when their
+# fixtures are absent, so per-PR CI reports them green without running them.
+# This workflow downloads the pinned fixtures and sets each suite's
+# `EMBER_*_REQUIRED=1` flag (tests/common/mod.rs), which turns a skip into a
+# failure: a green run here is evidence the suites actually executed.
+#
+# ENABLED (fixtures from pinned URLs in scripts/download_models.sh, verified
+# by size + SHA-256 there):
+#   agent_e2e                          EMBER_AGENT_E2E_REQUIRED=1
+#     Llama-3.2-1B-Instruct-Q8_0.gguf (bartowski @ 067b946, 432f310a...)
+#     + the tracked tokenizer.json (6b9e4e7f..., same pin as the fallback)
+#   integration::test_model_forward_pass   EMBER_FORWARD_REQUIRED=1
+#     same Llama GGUF (the test used to need an unpinned gpt2.Q8_0.gguf; it
+#     now takes EMBER_FORWARD_MODEL and covers gpt2 and llama families)
+#
+# NOT ENABLED, and why:
+#   voice_session / arabic_s2s_vits (EMBER_VOICE_E2E): Ultravox text +
+#     audio-projector GGUFs and an Arabic VITS GGUF; no pinned public source.
+#   voice_session TTS (EMBER_TTS_E2E): OuteTTS GGUF + tokenizer + WavTokenizer
+#     codec; no pinned public source.
+#   voice_converse_e2e (EMBER_CONVERSE_E2E): the union of the two above.
+#   arabic_tokenizer / arabic_chat_template (EMBER_TOK_PARITY /
+#     EMBER_CHAT_PARITY): need reference dumps generated with Hugging Face
+#     transformers (scripts/ref_tokenizer_ar.py, ref_chat_template_ar.py)
+#     from a tokenizer directory including tokenizer_config.json (the chat
+#     template). Only tokenizer.json has a SHA-256 pin and no transformers
+#     version is pinned; pin both before enabling.
+#   k_parity (EMBER_PARITY_REQUIRED): already runs fail-closed in
+#     numerical-gates.yml from the pinned, freshly quantized ladder.
+#   six_site_observer (#[ignore], EMBER_SIX_SITE_BASELINE): needs a captured
+#     real-model baseline matrix, not a public fixture.
+#   quant_k unit tests (EMBER_K_TEST_GGUF / EMBER_F16_TEST_GGUF): have no
+#     fail-closed flag yet; their K-quant + F16 inputs are pinned only via
+#     the ladder build in numerical-gates.yml.
+
+name: model-gated
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Tuesday 06:43 UTC (off the hour, and off numerical-gates' day).
+    - cron: "43 6 * * 2"
+
+concurrency:
+  group: model-gated
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MODEL_DIR: ${{ github.workspace }}/.models
+
+jobs:
+  model-gated:
+    name: model-gated suites (fail-closed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: resolve pinned fixture identities
+        # The cache key is the fixtures' pinned SHA-256s, read from
+        # scripts/download_models.sh, so a pin change is a cache miss.
+        id: pins
+        run: |
+          set -euo pipefail
+          sha_of() {
+            grep -o "|$1|[0-9a-f]\{64\}|" scripts/download_models.sh | head -n1 | cut -d'|' -f3
+          }
+          model_sha="$(sha_of Llama-3.2-1B-Instruct-Q8_0.gguf)"
+          tokenizer_sha="$(sha_of tokenizer.json)"
+          [[ ${#model_sha} -eq 64 && ${#tokenizer_sha} -eq 64 ]] || {
+            echo "::error::could not read fixture pins from scripts/download_models.sh"; exit 1; }
+          echo "model_sha=$model_sha" >> "$GITHUB_OUTPUT"
+          echo "tokenizer_sha=$tokenizer_sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.MODEL_DIR }}
+          key: ember-models-${{ steps.pins.outputs.model_sha }}-${{ steps.pins.outputs.tokenizer_sha }}
+
+      - name: download pinned fixtures
+        # download_models.sh re-verifies size + SHA-256 of cached files and
+        # refuses any that differ, so a poisoned cache cannot pass.
+        run: bash scripts/download_models.sh research-example
+
+      - name: check the tracked tokenizer against its pin
+        run: |
+          set -euo pipefail
+          echo "${{ steps.pins.outputs.tokenizer_sha }}  tokenizer.json" | sha256sum --check -
+          cmp tokenizer.json "$MODEL_DIR/tokenizer.json"
+
+      - name: install Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-model-gated-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-model-gated-
+
+      - name: run model-gated suites (fail-closed)
+        env:
+          EMBER_AGENT_E2E: "1"
+          EMBER_AGENT_E2E_REQUIRED: "1"
+          EMBER_AGENT_MODEL: ${{ env.MODEL_DIR }}/Llama-3.2-1B-Instruct-Q8_0.gguf
+          EMBER_AGENT_TOKENIZER: ${{ github.workspace }}/tokenizer.json
+          EMBER_FORWARD_REQUIRED: "1"
+          EMBER_FORWARD_MODEL: ${{ env.MODEL_DIR }}/Llama-3.2-1B-Instruct-Q8_0.gguf
+        run: |
+          cargo test --locked --release --no-default-features \
+            --test agent_e2e --test integration -- --nocapture

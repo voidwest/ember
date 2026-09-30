@@ -189,6 +189,9 @@ impl Console {
         };
         sweep.finished = true;
         let layer_before = sweep.layer_before.clone();
+        // The worker drops the sweep's shared pass and the baselines of any
+        // layers a Stop left unrun.
+        let _ = self.worker_tx.send(super::WorkerMsg::EndSweep);
         // Open the point that moved the model most: it is the one worth
         // reading first. With no points (stopped immediately) there is
         // nothing to open.

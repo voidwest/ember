@@ -7,6 +7,7 @@ static GLOBAL_ALLOCATOR: ember::alloc_counter::CountingAllocator =
 mod cli_diff;
 mod cli_diff_corpus;
 mod cli_experiment;
+mod cli_experiment_lens;
 mod cli_experiment_shared;
 mod cli_experiment_sweep;
 mod cli_inspect;
@@ -866,6 +867,13 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
                 }
                 cli_experiment::ExperimentSubcommand::Tokenize(command) => {
                     cli_experiment::run_tokenize_command(command, k_strategy, args.k_allow_fallback)
+                }
+                cli_experiment::ExperimentSubcommand::Lens(command) => {
+                    cli_experiment_lens::run_lens_command(
+                        command,
+                        k_strategy,
+                        args.k_allow_fallback,
+                    )
                 }
             },
             #[cfg(feature = "gui")]

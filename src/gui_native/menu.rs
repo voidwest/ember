@@ -25,6 +25,7 @@ pub(super) fn app_menus() -> Vec<Menu> {
         Menu::new("Experiment").items([
             MenuItem::action("New Experiment", StartExperiment),
             MenuItem::action("Rerun Last Run", ReplayLastRun),
+            MenuItem::action("Cancel Run", CancelRun),
             MenuItem::separator(),
             MenuItem::action("Open Sample Result", OpenSampleResult),
         ]),
@@ -68,6 +69,7 @@ pub(super) fn register_menu_actions(
     route!(HideShowSidebar, |c, cx| c.toggle_sidebar(cx));
     route!(EnterPresentation, |c, cx| c.toggle_presentation(cx));
     route!(OpenSampleResult, |c, cx| c.show_sample(cx));
+    route!(CancelRun, |c, cx| c.cancel_run(cx));
     route!(StartExperiment, |c, cx| {
         c.goto(View::Experiment, cx);
         c.step = WorkspaceStep::Prompt;

@@ -306,3 +306,121 @@ pub fn _use_types() {
     let _: BundleIdentity;
     let _ = SemanticHookSite::Logits;
 }
+
+/// Minimal GGUF v3 writer for a tiny deterministic Llama (f32 tensors):
+/// embed 16, 4 heads (2 KV), `layers` blocks, vocab 64, intermediate 48,
+/// context 64. With `tied`, `output.weight` is omitted so the LM head is
+/// the token embedding table. Mirrors `tests/embedding_parity.rs`.
+pub fn tiny_llama_gguf(layers: usize, tied: bool) -> Vec<u8> {
+    const ALIGNMENT: usize = 32;
+    let embed = 16usize;
+    let vocab = 64usize;
+    let interm = 48usize;
+    let kv_dim = 2 * (embed / 4);
+    let mut state = 0x5EED_CAFE_u64;
+    let mut fill = |count: usize| -> Vec<f32> {
+        (0..count)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((state >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+            })
+            .collect()
+    };
+    // (name, gguf dims, row-major data)
+    let mut tensors: Vec<(String, Vec<u64>, Vec<f32>)> = vec![(
+        "token_embd.weight".into(),
+        vec![embed as u64, vocab as u64],
+        fill(vocab * embed),
+    )];
+    for l in 0..layers {
+        for (name, in_f, out_f) in [
+            ("attn_q.weight", embed, embed),
+            ("attn_k.weight", embed, kv_dim),
+            ("attn_v.weight", embed, kv_dim),
+            ("attn_output.weight", embed, embed),
+            ("ffn_gate.weight", embed, interm),
+            ("ffn_up.weight", embed, interm),
+            ("ffn_down.weight", interm, embed),
+        ] {
+            tensors.push((
+                format!("blk.{l}.{name}"),
+                vec![in_f as u64, out_f as u64],
+                fill(out_f * in_f),
+            ));
+        }
+        for name in ["attn_norm.weight", "ffn_norm.weight"] {
+            tensors.push((format!("blk.{l}.{name}"), vec![embed as u64], fill(embed)));
+        }
+    }
+    tensors.push(("output_norm.weight".into(), vec![embed as u64], fill(embed)));
+    if !tied {
+        tensors.push((
+            "output.weight".into(),
+            vec![embed as u64, vocab as u64],
+            fill(vocab * embed),
+        ));
+    }
+
+    let string = |out: &mut Vec<u8>, s: &str| {
+        out.extend((s.len() as u64).to_le_bytes());
+        out.extend(s.as_bytes());
+    };
+    // (key, type, value bytes): 4 = u32, 6 = f32, 8 = string
+    let mut arch = Vec::new();
+    string(&mut arch, "llama");
+    let mut kvs: Vec<(&str, u32, Vec<u8>)> = vec![("general.architecture", 8, arch)];
+    for (key, value) in [
+        ("llama.block_count", layers as u32),
+        ("llama.attention.head_count", 4),
+        ("llama.attention.head_count_kv", 2),
+        ("llama.embedding_length", embed as u32),
+        ("llama.context_length", 64),
+        ("llama.vocab_size", vocab as u32),
+    ] {
+        kvs.push((key, 4, value.to_le_bytes().to_vec()));
+    }
+    kvs.push((
+        "llama.rope.freq_base",
+        6,
+        10_000.0f32.to_le_bytes().to_vec(),
+    ));
+    kvs.push((
+        "llama.attention.layer_norm_rms_epsilon",
+        6,
+        1e-5f32.to_le_bytes().to_vec(),
+    ));
+
+    let mut out = Vec::new();
+    out.extend(0x4655_4747u32.to_le_bytes());
+    out.extend(3u32.to_le_bytes());
+    out.extend((tensors.len() as u64).to_le_bytes());
+    out.extend((kvs.len() as u64).to_le_bytes());
+    for (key, ty, value) in &kvs {
+        string(&mut out, key);
+        out.extend(ty.to_le_bytes());
+        out.extend(value);
+    }
+    let mut offset = 0u64;
+    for (name, dims, data) in &tensors {
+        string(&mut out, name);
+        out.extend((dims.len() as u32).to_le_bytes());
+        for dim in dims {
+            out.extend(dim.to_le_bytes());
+        }
+        out.extend(0u32.to_le_bytes()); // F32
+        out.extend(offset.to_le_bytes());
+        offset += ((data.len() * 4).div_ceil(ALIGNMENT) * ALIGNMENT) as u64;
+    }
+    out.resize(out.len().div_ceil(ALIGNMENT) * ALIGNMENT, 0);
+    for (_, _, data) in &tensors {
+        let start = out.len();
+        for value in data {
+            out.extend(value.to_le_bytes());
+        }
+        let written = out.len() - start;
+        out.resize(start + written.div_ceil(ALIGNMENT) * ALIGNMENT, 0);
+    }
+    out
+}

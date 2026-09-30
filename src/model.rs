@@ -455,6 +455,25 @@ impl<B: Backend> Linear<B> {
         Ok(out)
     }
 
+    /// [`Linear::forward`] written into `out`, reusing its storage where the
+    /// backend supports it. Bit-identical to `forward`.
+    pub(crate) fn forward_reusing(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        out: &mut B::Tensor,
+    ) -> Result<(), B::Error> {
+        match &self.weight {
+            WeightKind::F32(w) => *out = backend.matmul(x, w)?,
+            WeightKind::Q8_0(qw) => backend.matmul_q8_0_reusing(x, qw, out)?,
+            WeightKind::KQuant(qw) => backend.matmul_k_reusing(x, qw, out)?,
+        }
+        if let Some(ref b) = self.bias {
+            backend.add_broadcast_in_place(out, b)?;
+        }
+        Ok(())
+    }
+
     /// Apply this layer and `other` to the same input.
     ///
     /// When both weights are Q8_0 the backend can quantize the activations

@@ -66,6 +66,30 @@ pub(super) fn layer_divergence_chart(
     height: f32,
     colors: &Colors,
 ) -> Div {
+    layer_divergence_chart_with(
+        entity,
+        metrics,
+        reference.map(|series| (series, SharedString::from("pinned reference"))),
+        marks,
+        height,
+        colors,
+    )
+}
+
+/// The chart with a named second series: the dashed line's legend says what
+/// it is (a pinned reference, or the other run of a comparison).
+pub(super) fn layer_divergence_chart_with(
+    entity: Entity<Console>,
+    metrics: Arc<[LayerMetric]>,
+    reference: Option<(Arc<[LayerMetric]>, SharedString)>,
+    marks: LayerMarks,
+    height: f32,
+    colors: &Colors,
+) -> Div {
+    let (reference, reference_label) = match reference {
+        Some((series, name)) => (Some(series), Some(name)),
+        None => (None, None),
+    };
     let LayerMarks {
         intervention: intervention_layer,
         selected: selected_layer,
@@ -331,10 +355,13 @@ pub(super) fn layer_divergence_chart(
                     },
                 ))
                 .child(div().w_full())
-                .children(
-                    has_reference
-                        .then(|| mono("dashed: pinned reference   ", 13.0, colors.text_muted)),
-                )
+                .children(has_reference.then(|| {
+                    mono(
+                        format!("dashed: {}   ", reference_label.clone().unwrap_or_default()),
+                        13.0,
+                        colors.text_muted,
+                    )
+                }))
                 .children(intervention_layer.map(|layer| {
                     mono(
                         format!("Intervention \u{00b7} L{layer}"),

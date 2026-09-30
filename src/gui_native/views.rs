@@ -458,6 +458,7 @@ impl Console {
             Status::Preparing => (colors.warn, "Loading the model…"),
             Status::Running => (colors.busy, "Running baseline and intervention…"),
             Status::Restoring => (colors.busy, "Checking exact restoration…"),
+            Status::Cancelling => (colors.warn, "Cancelling the run…"),
         };
         let (line, line_color) = if let Some((text, color)) = store_line.map(|t| (t, store_color)) {
             (text, color)
@@ -718,7 +719,27 @@ impl Console {
     /// the delegate holds a snapshot, so a run finishing while Runs is on screen
     /// has to push new rows in rather than expect the table to notice. The
     /// sync is cheap: rows are rebuilt only when the store's generation moved.
-    fn runs_view(&mut self, colors: &Colors, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn runs_view(
+        &mut self,
+        colors: &Colors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if self.comparing.is_some() {
+            return div()
+                .id("compare-scroll")
+                .test_support()
+                .flex_1()
+                .min_w(px(0.0))
+                .h_full()
+                .overflow_y_scroll()
+                .overflow_x_hidden()
+                .px_5()
+                .pt_6()
+                .pb_6()
+                .child(self.compare_view(colors, cx))
+                .into_any_element();
+        }
         let row_count = self.store.runs.len();
         let store = &self.store;
         // Row actions mutate the store through the owning console, so the
@@ -727,8 +748,11 @@ impl Console {
         let table = match &self.runs_table {
             Some(state) => {
                 let console = console.clone();
+                let picks = &self.compare_picks;
                 state.update(cx, |state, cx| {
-                    state.delegate_mut().sync(store, *colors, console, cx);
+                    state
+                        .delegate_mut()
+                        .sync(store, picks, *colors, console, cx);
                 });
                 state.clone()
             }
@@ -740,7 +764,10 @@ impl Console {
             }
         };
 
-        let mut body: Div = div().flex().flex_col();
+        // The table's region may shrink to whatever the page has left: the
+        // kit table is a virtual list, so it builds only the rows it shows
+        // and scrolls the rest. Everything else on the page keeps its size.
+        let mut body: Div = div().flex().flex_col().min_h(px(0.0));
         if row_count == 0 {
             body = body.child(
                 div()
@@ -766,20 +793,21 @@ impl Console {
             );
         } else {
             // Header plus one row band per record, measured off a render rather
-            // than guessed: a fixed 420px left a void under a short history, and
-            // asking for less than the rows need silently dropped the last one.
-            //
-            // `flex_none` matters as much as the number. In a flex column this
-            // wrapper was being compressed to fit the page, so it rendered
-            // shorter than it was asked for -- 194pt for a 230pt request -- and
-            // the shortfall came straight out of the last row.
+            // than guessed: a fixed 420px left a void under a short history.
+            // That is the most the region asks for, not what it gets: with
+            // 500 runs it used to be 16,000px tall, the table's virtual list
+            // saw every row as visible, and every frame built all of them.
+            // Now the region shrinks to the page (and the table scrolls), so
+            // a frame builds only the rows on screen. A short history still
+            // gets exactly its height, with no void under it.
             let height = 34.0 + row_count as f32 * 32.0;
             body = body.child(
                 div()
                     .id("runs-table-scroll")
                     .w_full()
-                    .flex_none()
                     .h(px(height))
+                    .flex_shrink(1.0)
+                    .min_h(px(0.0))
                     // The table is the region that overflows: at the minimum
                     // window the eight columns do not all fit, and the action
                     // lane must be reachable by scrolling this region rather
@@ -794,24 +822,44 @@ impl Console {
             .flex_col()
             .gap(px(Space::XL))
             .w_full()
+            // Never wider than the window: the table scrolls sideways in its
+            // own region instead of widening the page (and every bar on it).
+            .flex_1()
+            .min_w(px(0.0))
+            // Exactly the window's height, so the table region is bounded.
+            .h_full()
+            .min_h(px(0.0))
             .px_5()
             .pt_6()
-            .child(self.section_header(
-                colors,
-                "Runs",
-                &format!(
-                    "{row_count} recorded experiment{}.",
-                    if row_count == 1 { "" } else { "s" }
-                ),
-            ))
+            .pb_4()
+            .child(
+                self.section_header(
+                    colors,
+                    "Runs",
+                    &format!(
+                        "{row_count} recorded experiment{}.",
+                        if row_count == 1 { "" } else { "s" }
+                    ),
+                )
+                .flex_none(),
+            )
+            .children(
+                self.compare_bar(colors, cx)
+                    .map(|bar| div().flex_none().child(bar)),
+            )
+            .children(
+                self.export_bar(colors, cx)
+                    .map(|bar| div().flex_none().child(bar)),
+            )
             .child(body)
             .when(row_count > 0, |page| {
                 page.child(label(
-                    "Open shows a run's comparison, Reuse loads its settings, and Compare pins it as the reference for the next run. Star keeps a run at the top.",
+                    "Select two runs to compare them side by side. Export copies a run as Markdown or gets its verifiable bundle. Open shows a run's result, Pin makes it the reference for your next run, and Reuse loads its settings. Star keeps a run at the top.",
                     Type::LABEL,
                     colors.text_faint,
-                ))
+                ).flex_none())
             })
+            .into_any_element()
     }
 
     /// One segment of the theme segmented control on the Settings page.
@@ -1439,7 +1487,35 @@ impl Console {
                 .rounded(px(Radius::MD))
                 .child(label(error.clone(), Type::LABEL, colors.err))
         });
-        div().flex().flex_col().gap(px(Space::SM)).children(error)
+        // A cancelled run is a choice, not a failure: it is said plainly and
+        // in neutral colours, with what it did and did not leave behind.
+        let cancelled = (self.cancelled && !self.busy()).then(|| {
+            div()
+                .id("run-cancelled")
+                .test_support()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(Space::XS))
+                .px(px(Space::MD))
+                .py(px(Space::SM))
+                .rounded(px(Radius::MD))
+                .border_l_2()
+                .border_color(colors.border_strong)
+                .bg(colors.surface)
+                .child(label("Run cancelled", Type::LABEL, colors.text))
+                .child(label(
+                    "Nothing was recorded and no bundle was kept. The model is still loaded, so the next run starts straight away.",
+                    Type::LABEL,
+                    colors.text_muted,
+                ))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(Space::SM))
+            .children(error)
+            .children(cancelled)
     }
 
     pub(super) fn layer_stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -1513,6 +1589,7 @@ impl Console {
                 ("Compare the results", 0),
             ],
             Status::Restoring => vec![("Replay the baseline and check it matches exactly", 1)],
+            Status::Cancelling => vec![("Stop at the next decode step", 1)],
             Status::Idle => Vec::new(),
         };
         let note = match self.status {
@@ -1520,7 +1597,10 @@ impl Console {
                 "The first run loads the model, so it takes longer. Later runs start straight away."
             }
             Status::Running => {
-                "Ember is running your prompt twice, once untouched and once with your change."
+                "Ember is running your prompt twice, once untouched and once with your change. Esc cancels."
+            }
+            Status::Cancelling => {
+                "Nothing from this run will be recorded, and the model stays loaded."
             }
             _ => "",
         };
@@ -2218,6 +2298,32 @@ impl Console {
                     })
                     // A sample offers neither; a run reopened from History offers
                     // both, since the banner says Duplicate branches from it.
+                    // The run's verified bundle, when it is on disk: a live
+                    // result, or a reopened run whose bundle was kept.
+                    .when(
+                        has_results
+                            && self.intervention.as_ref().is_some_and(|output| {
+                                std::path::Path::new(&output.bundle_dir).is_dir()
+                            }),
+                        |header| {
+                            let dir = self
+                                .intervention
+                                .as_ref()
+                                .map(|output| output.bundle_dir.clone())
+                                .unwrap_or_default();
+                            header.child(text_button(
+                                "review-bundle",
+                                "Reveal bundle",
+                                cx.listener(move |console, _: &ClickEvent, _window, cx| {
+                                    if let Err(error) = reveal_in_finder(&dir) {
+                                        console.error =
+                                            Some(format!("Could not reveal the bundle: {error}"));
+                                        cx.notify();
+                                    }
+                                }),
+                            ))
+                        },
+                    )
                     .when(has_results && (!self.sample || self.saved_run.is_some()), |header| {
                         header
                             .child(text_button(
@@ -2612,7 +2718,7 @@ impl Render for Console {
         let content: AnyElement = match self.view {
             View::Home => self.home_view(&colors, cx).into_any_element(),
             View::Models => self.models_view(&colors, cx).into_any_element(),
-            View::Runs => self.runs_view(&colors, window, cx).into_any_element(),
+            View::Runs => self.runs_view(&colors, window, cx),
             View::Settings => self.settings_view(&colors, cx).into_any_element(),
             // The workspace: setup and results side by side. It is the only
             // page with two panes of its own, so it fills the content region.
@@ -2697,7 +2803,7 @@ fn fmt_tps(tps: Option<f64>) -> String {
 ///
 /// One command per platform, spawned detached: the file manager is not ours
 /// to wait on, and a failure is a banner, not a crash.
-fn reveal_in_finder(path: &str) -> Result<(), String> {
+pub(super) fn reveal_in_finder(path: &str) -> Result<(), String> {
     let result = if cfg!(target_os = "macos") {
         std::process::Command::new("open")
             .arg("-R")

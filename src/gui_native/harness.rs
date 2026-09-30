@@ -167,21 +167,54 @@ pub(super) fn seed_store() -> AppStore {
             verified: row.verified,
             pinned: row.pinned,
             prompt: "\u{0627}\u{0643}\u{062a}\u{0628} \u{062c}\u{0645}\u{0644}\u{0629}".to_string(),
-            result: (index <= 1).then(|| app_store::RecordResult {
-                baseline_text: "Paris. The Eiffel Tower is located in Paris.".to_string(),
-                intervention_text: "covered in a thick layer of fog.".to_string(),
-                layers: (0..16)
-                    .map(|layer| app_store::RecordLayer {
-                        layer,
-                        relative_l2: Some(if layer < 7 { 0.0 } else { 1.1 }),
-                        cosine: Some(if layer < 7 { 0.0 } else { 0.9 }),
-                    })
-                    .collect(),
-                tokens: Vec::new(),
-                first_layer_divergence: Some(7),
-                peak_layer: Some(10),
-                peak_relative_l2: Some(1.187),
-                tokens_equal: false,
+            // The two newest runs kept their results, and differ from each
+            // other, so the comparison page has something to show.
+            result: (index <= 1).then(|| {
+                let baseline = " Paris. The Eiffel Tower is located in Paris.";
+                let intervention = if index == 0 {
+                    " covered in a thick layer of fog."
+                } else {
+                    " covered in a layer of morning mist."
+                };
+                let (start, height) = if index == 0 { (7, 1.1) } else { (4, 0.7) };
+                let pieces = |text: &str| -> Vec<String> {
+                    text.split_inclusive(' ')
+                        .filter(|piece| !piece.trim().is_empty())
+                        .map(|piece| format!(" {}", piece.trim()))
+                        .collect()
+                };
+                let (base, changed) = (pieces(baseline), pieces(intervention));
+                app_store::RecordResult {
+                    baseline_text: baseline.to_string(),
+                    intervention_text: intervention.to_string(),
+                    layers: (0..16)
+                        .map(|layer| {
+                            let value = if layer < start {
+                                0.0
+                            } else {
+                                height * (1.0 + 0.08 * (layer - start) as f64)
+                                    / (1.0 + 0.02 * ((layer as f64 - 10.0).powi(2)))
+                            };
+                            app_store::RecordLayer {
+                                layer,
+                                relative_l2: Some(value),
+                                cosine: Some(value * 0.8),
+                            }
+                        })
+                        .collect(),
+                    tokens: (0..base.len().max(changed.len()))
+                        .map(|position| app_store::RecordToken {
+                            position: position + 1,
+                            baseline: base.get(position).cloned(),
+                            intervention: changed.get(position).cloned(),
+                            differs: base.get(position) != changed.get(position),
+                        })
+                        .collect(),
+                    first_layer_divergence: Some(start),
+                    peak_layer: Some(10),
+                    peak_relative_l2: Some(if index == 0 { 1.187 } else { 0.812 }),
+                    tokens_equal: false,
+                }
             }),
             // Only recent rows carry a configuration: the Reuse action must
             // be shown and hidden in the same render.
@@ -192,12 +225,13 @@ pub(super) fn seed_store() -> AppStore {
                 layer: row.layer.map(|layer| layer.to_string()).unwrap_or_default(),
                 op: "scale".to_string(),
                 value: "0.5".to_string(),
-                source: "live".to_string(),
-                source_layer: String::new(),
+                source: "capture".to_string(),
+                source_layer: "0".to_string(),
                 token: "prompt-final".to_string(),
                 span: String::new(),
                 max_tokens: "48".to_string(),
             }),
+            bundles: None,
         });
         store.touch_model(
             &format!("/models/{}.gguf", row.model),
@@ -837,6 +871,110 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                     .capture_screenshot(handle.into())?
                     .save(directory.join(format!("{name}-{appearance}-{file}.png")))?;
             }
+            // Two saved runs side by side (only the seeded store has any).
+            if seed_runs_requested() {
+                let numbers: Vec<u64> = console.read_with(&context, |console, _| {
+                    console
+                        .store
+                        .runs
+                        .iter()
+                        .filter(|run| run.result.is_some())
+                        .map(|run| run.number)
+                        .collect()
+                });
+                if let [right, left, ..] = numbers[..] {
+                    for (file, comparing, export) in [
+                        ("runs-select", None, None),
+                        ("runs-export", None, Some(right)),
+                        ("runs-compare", Some((left, right)), None),
+                    ] {
+                        context.update_window(handle.into(), |_, window, cx| {
+                            console.update(cx, |console, cx| {
+                                console.appearance = mode;
+                                console.view = View::Runs;
+                                console.compare_picks = if export.is_some() {
+                                    Vec::new()
+                                } else {
+                                    vec![left, right]
+                                };
+                                console.comparing = comparing;
+                                console.export_run = export;
+                                console.sync_kit_theme(cx);
+                                cx.notify();
+                            });
+                            window.draw(cx).clear(cx);
+                        })?;
+                        context.run_until_parked();
+                        context.update_window(handle.into(), |_, window, cx| {
+                            window.draw(cx).clear(cx);
+                        })?;
+                        context
+                            .capture_screenshot(handle.into())?
+                            .save(directory.join(format!("{name}-{appearance}-{file}.png")))?;
+                    }
+                    // The lower half of the comparison: the token diff and
+                    // the two curves on one chart.
+                    context.update_window(handle.into(), |_, window, cx| {
+                        use gpui_kit::test::TestWindowExt as _;
+                        window.scroll("compare-scroll", harness_scroll(-9.0), cx);
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.run_until_parked();
+                    context.update_window(handle.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.capture_screenshot(handle.into())?.save(
+                        directory.join(format!("{name}-{appearance}-runs-compare-lower.png")),
+                    )?;
+                    context.update_window(handle.into(), |_, window, cx| {
+                        use gpui_kit::test::TestWindowExt as _;
+                        window.scroll("compare-scroll", harness_scroll(9.0), cx);
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.update_window(handle.into(), |_, _, cx| {
+                        console.update(cx, |console, _| {
+                            console.compare_picks.clear();
+                            console.comparing = None;
+                            console.export_run = None;
+                        });
+                    })?;
+                }
+            }
+            // A full history (the store's 500-run cap): the table fills the
+            // page and scrolls, building only the rows on screen.
+            if seed_runs_requested() {
+                let saved = context.update_window(handle.into(), |_, window, cx| {
+                    let saved = console.update(cx, |console, cx| {
+                        let saved = console.store.clone();
+                        let template = saved.runs.first().cloned();
+                        if let Some(template) = template {
+                            for number in 8..=app_store::MAX_RUNS as u64 {
+                                let mut run = template.clone();
+                                run.number = number;
+                                run.finished_at -= number as i64 * 600;
+                                console.store.push_run(run);
+                            }
+                        }
+                        console.appearance = mode;
+                        console.view = View::Runs;
+                        console.sync_kit_theme(cx);
+                        cx.notify();
+                        saved
+                    });
+                    window.draw(cx).clear(cx);
+                    saved
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!("{name}-{appearance}-runs-full.png")))?;
+                context.update_window(handle.into(), |_, _, cx| {
+                    console.update(cx, |console, _| console.store = saved);
+                })?;
+            }
             // The command palette overlays every page; capture it once per
             // theme so the dim backdrop and the floating panel are reviewed
             // against both canvases.
@@ -933,7 +1071,10 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                                     scrolled += 1;
                                 }
                                 window.click(target, cx);
-                            } else {
+                            } else if window.try_find(SharedString::from(id.clone())).is_some() {
+                                // The sidebar gives way below 1240px, so at
+                                // the standard size there is no nav row to
+                                // hover; the scene then shows the page as is.
                                 window.hover(SharedString::from(id.clone()), cx);
                             }
                         }
@@ -965,13 +1106,19 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
             }
         }
         // A run in flight: the progress steps a first-time user waits on.
-        for (label_name, status) in [("loading", Status::Preparing), ("running", Status::Running)] {
+        for (label_name, status) in [
+            ("loading", Status::Preparing),
+            ("running", Status::Running),
+            ("cancelling", Status::Cancelling),
+            ("cancelled", Status::Idle),
+        ] {
             context.update_window(handle.into(), |_, window, cx| {
                 console.update(cx, |console, cx| {
                     console.appearance = AppearanceMode::Dark;
                     console.view = View::Experiment;
                     console.step = WorkspaceStep::Review;
                     console.status = status;
+                    console.cancelled = label_name == "cancelled";
                     console.sync_kit_theme(cx);
                 });
                 window.draw(cx).clear(cx);
@@ -985,7 +1132,10 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                 .save(directory.join(format!("{name}-progress-{label_name}.png")))?;
         }
         context.update_window(handle.into(), |_, _, cx| {
-            console.update(cx, |console, _| console.status = Status::Idle);
+            console.update(cx, |console, _| {
+                console.status = Status::Idle;
+                console.cancelled = false;
+            });
         })?;
         // The built-in sample result, which needs no model.
         for (appearance, mode) in [
@@ -1049,7 +1199,7 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                         .as_ref()
                         .map_err(|error| anyhow::anyhow!(error.clone()))?;
                 }
-                worker.send(WorkerMsg::Run(config))?;
+                worker.send(WorkerMsg::Run(config, ember::cancel::CancelToken::new()))?;
                 let completed = receiver
                     .lock()
                     .unwrap()

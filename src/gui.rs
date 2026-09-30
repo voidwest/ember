@@ -74,6 +74,10 @@ pub(crate) struct GuiSession {
     /// The shared pass of the layer sweep in progress (see
     /// `run_sweep_point`).
     sweep_cache: Option<SweepCache>,
+    /// Cooperative cancellation for the run in flight (native console only;
+    /// the web console never sets it). Checked at every decode step of each
+    /// leg, between the legs, and before a bundle is written.
+    cancel: Option<ember::cancel::CancelToken>,
 }
 
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
@@ -221,7 +225,20 @@ impl GuiSession {
             run_counter: 0,
             output_root: "runs/gui".to_string(),
             sweep_cache: None,
+            cancel: None,
         }
+    }
+
+    /// Attach (or clear) the cancel token the next runs honour.
+    #[cfg(feature = "gui")]
+    pub(crate) fn set_cancel(&mut self, token: Option<ember::cancel::CancelToken>) {
+        self.cancel = token;
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(ember::cancel::CancelToken::is_cancelled)
     }
 
     /// Load (or reuse) the model for `model_path`.
@@ -241,7 +258,7 @@ impl GuiSession {
         self.load_error = None;
         self.prepared = Some(prepared);
         // A recorded prefix belongs to the model that computed it.
-        self.sweep_cache = None;
+        self.end_sweep();
         Ok(())
     }
 
@@ -278,6 +295,7 @@ impl GuiSession {
             build_and_resolve_spec(cfg, RunKind::Baseline, &baseline_dir)?;
         let (intervention_text, intervention_spec) =
             build_and_resolve_spec(cfg, RunKind::Intervention, &intervention_dir)?;
+        let cancel = self.cancel.clone();
         let prepared = self
             .prepared
             .as_mut()
@@ -297,11 +315,26 @@ impl GuiSession {
             },
             &[],
             &[&intervention_spec],
+            cancel.as_ref(),
         )
         .map_err(|error| format!("baseline run failed: {error:#}"))?;
         let (baseline, _baseline_report) = run_output(prepared, base)?;
         let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
-        let intervention = run_variant(
+        // A cancelled pair leaves nothing behind, like a cancelled CLI run:
+        // the finished baseline bundle is half an experiment, so it goes too.
+        let discard_baseline = || {
+            let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+        };
+        if self.cancelled() {
+            discard_baseline();
+            return Err("cancelled".to_string());
+        }
+        let cancel = self.cancel.clone();
+        let prepared = self
+            .prepared
+            .as_mut()
+            .ok_or_else(|| "model session is not prepared".to_string())?;
+        let intervention = match run_variant(
             prepared,
             &mut prefix,
             0,
@@ -311,8 +344,17 @@ impl GuiSession {
                 output_directory: Path::new(&intervention_dir),
                 retain_incomplete: false,
             },
-        )
-        .map_err(|error| format!("intervention run failed: {error:#}"))?;
+            cancel.as_ref(),
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if self.cancelled() {
+                    discard_baseline();
+                    return Err("cancelled".to_string());
+                }
+                return Err(format!("intervention run failed: {error:#}"));
+            }
+        };
         let (intervention, intervention_report) = run_output(prepared, intervention)?;
         let raw_comparison = ember::v05::compare::compare_bundles(
             Path::new(&baseline.bundle_dir),
@@ -367,7 +409,7 @@ impl GuiSession {
                 && cache.variants.contains_key(&layer)
         });
         if !reusable {
-            self.sweep_cache = None;
+            self.end_sweep();
             let mut layers: Vec<usize> = planned.to_vec();
             if !layers.contains(&layer) {
                 layers.insert(0, layer);
@@ -380,10 +422,33 @@ impl GuiSession {
             .ok_or_else(|| "the sweep pass is missing".to_string())?;
         let pass_ms = std::mem::take(&mut cache.pass_ms);
         let result = self.finish_sweep_point(cfg, layer, &mut cache, started, pass_ms);
+        if self.cancelled() {
+            // Nothing of a cancelled sweep is kept: this point's baseline
+            // (the worker discards a finished pair) and every layer's
+            // baseline that will now never be shown.
+            if let Some((baseline, _)) = cache.baselines.get(&layer)
+                && result.is_err()
+            {
+                let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+            }
+            discard_unused_baselines(&cache);
+            return result.and(Err("cancelled".to_string()));
+        }
         if !cache.variants.is_empty() && result.is_ok() {
             self.sweep_cache = Some(cache);
+        } else {
+            discard_unused_baselines(&cache);
         }
         result
+    }
+
+    /// The sweep is over (finished, stopped or abandoned): remove the
+    /// baseline bundles of layers that never ran.
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    pub(crate) fn end_sweep(&mut self) {
+        if let Some(cache) = self.sweep_cache.take() {
+            discard_unused_baselines(&cache);
+        }
     }
 
     #[cfg_attr(not(feature = "gui"), allow(dead_code))]
@@ -428,6 +493,7 @@ impl GuiSession {
             .position(|entry| entry.0 == first)
             .ok_or_else(|| "the sweep has no runnable layer".to_string())?;
         built.swap(0, first_index);
+        let cancel = self.cancel.clone();
         let prepared = self
             .prepared
             .as_mut()
@@ -446,9 +512,14 @@ impl GuiSession {
         let co: Vec<RunTarget<'_>> = baselines.iter().skip(1).map(run_target).collect();
         let variant_specs: Vec<&ember::v05::spec::ExperimentSpecV1> =
             interventions.iter().map(|(spec, _, _)| spec).collect();
-        let BasePass { base, co, prefix } =
-            run_base_pass(prepared, run_target(&baselines[0]), &co, &variant_specs)
-                .map_err(|error| format!("baseline run failed: {error:#}"))?;
+        let BasePass { base, co, prefix } = run_base_pass(
+            prepared,
+            run_target(&baselines[0]),
+            &co,
+            &variant_specs,
+            cancel.as_ref(),
+        )
+        .map_err(|error| format!("baseline run failed: {error:#}"))?;
         let mut outputs = std::collections::BTreeMap::new();
         for (entry, outcome) in built.iter().zip(std::iter::once(base).chain(co)) {
             let (output, _) = run_output(prepared, outcome)?;
@@ -489,6 +560,10 @@ impl GuiSession {
             .remove(&layer)
             .ok_or_else(|| format!("layer {layer} has already run in this sweep"))?;
         let elapsed_ms_baseline = if pass_ms > 0.0 { pass_ms } else { 0.0 };
+        if self.cancelled() {
+            return Err("cancelled".to_string());
+        }
+        let cancel = self.cancel.clone();
         let prepared = self
             .prepared
             .as_mut()
@@ -503,6 +578,7 @@ impl GuiSession {
                 output_directory: Path::new(&dir),
                 retain_incomplete: false,
             },
+            cancel.as_ref(),
         )
         .map_err(|error| format!("intervention run failed: {error:#}"))?;
         let (intervention, intervention_report) = run_output(prepared, outcome)?;
@@ -558,6 +634,16 @@ impl GuiSession {
 }
 
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+/// Remove the baseline bundles of sweep layers whose intervention never ran.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+fn discard_unused_baselines(cache: &SweepCache) {
+    for layer in cache.variants.keys() {
+        if let Some((baseline, _)) = cache.baselines.get(layer) {
+            let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+        }
+    }
+}
+
 /// A GUI run's (spec, text, output directory) as a shared-pass target.
 fn run_target(
     (spec, text, dir): &(ember::v05::spec::ExperimentSpecV1, String, String),
@@ -1244,6 +1330,7 @@ fn run_one(
             RunKind::Restore => "restore",
         },
     );
+    let cancel = session.cancel.clone();
     let prepared = session
         .prepared
         .as_mut()
@@ -1255,6 +1342,7 @@ fn run_one(
         &spec_text,
         Path::new(&output_dir),
         false,
+        cancel.as_ref(),
     )
     .map_err(|error| format!("{error:#}"))?;
     run_output(

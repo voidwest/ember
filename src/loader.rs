@@ -535,6 +535,42 @@ pub fn load_gguf_with_k_strategy_report<P: AsRef<Path>>(
     strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
 ) -> Result<(GgufLoader, LoadTimings)> {
+    load_gguf_mapped(path, strategy, allow_fallback, LoadMode::Full)
+}
+
+/// Parse and validate a GGUF file without loading tensor payloads.
+///
+/// Runs the same header, metadata, tensor-table, range and per-tensor
+/// structural validation as [`load_gguf_with_k_strategy`] (a file this
+/// accepts is one the full loader accepts, and rejected files fail with the
+/// same errors) and records the same `k_decisions`, but never decodes
+/// tensor data: F32/F16/BF16 tensors are not read and eager-f32 K tensors
+/// are not dequantized. The returned loader's `tensors` map is empty;
+/// `metadata`, `tensor_meta` and `k_decisions` are complete. Meant for
+/// inventory/metadata consumers such as `ember inspect`.
+pub fn load_gguf_header<P: AsRef<Path>>(
+    path: P,
+    strategy: crate::quant_k::KStrategy,
+    allow_fallback: bool,
+) -> Result<GgufLoader> {
+    load_gguf_mapped(path, strategy, allow_fallback, LoadMode::HeaderOnly).map(|(loader, _)| loader)
+}
+
+/// Whether the loader materializes tensor payloads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoadMode {
+    /// Validate and load every tensor.
+    Full,
+    /// Validate every tensor record; load no payload (`tensors` stays empty).
+    HeaderOnly,
+}
+
+fn load_gguf_mapped<P: AsRef<Path>>(
+    path: P,
+    strategy: crate::quant_k::KStrategy,
+    allow_fallback: bool,
+    mode: LoadMode,
+) -> Result<(GgufLoader, LoadTimings)> {
     let total_start = Instant::now();
     let f = File::open(&path).map_err(|error| {
         LoaderError::malformed(format!(
@@ -570,6 +606,7 @@ pub fn load_gguf_with_k_strategy_report<P: AsRef<Path>>(
         Some(Arc::clone(&mmap)),
         strategy,
         allow_fallback,
+        mode,
     )?;
     timings.mmap_ns = mmap_ns;
     timings.total_ns = ns_since(total_start);
@@ -667,8 +704,14 @@ pub(crate) fn gguf_content_identity(path: &Path) -> anyhow::Result<u64> {
 /// useful for testing with in-memory buffers (`std::io::Cursor<Vec<u8>>`).
 /// Uses the eager-f32 K strategy (reference behavior).
 pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoader> {
-    load_gguf_from_reader_impl(reader, None, crate::quant_k::KStrategy::EagerF32, true)
-        .map(|(loader, _)| loader)
+    load_gguf_from_reader_impl(
+        reader,
+        None,
+        crate::quant_k::KStrategy::EagerF32,
+        true,
+        LoadMode::Full,
+    )
+    .map(|(loader, _)| loader)
 }
 
 /// reader variant of [`load_gguf_with_k_strategy`]; see its docs.
@@ -677,7 +720,8 @@ pub fn load_gguf_from_reader_with_k_strategy<R: Read + Seek>(
     strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
 ) -> Result<GgufLoader> {
-    load_gguf_from_reader_impl(reader, None, strategy, allow_fallback).map(|(loader, _)| loader)
+    load_gguf_from_reader_impl(reader, None, strategy, allow_fallback, LoadMode::Full)
+        .map(|(loader, _)| loader)
 }
 
 fn load_gguf_from_reader_impl<R: Read + Seek>(
@@ -685,7 +729,9 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     mmap: Option<Arc<memmap2::Mmap>>,
     k_strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
+    mode: LoadMode,
 ) -> Result<(GgufLoader, LoadTimings)> {
+    let header_only = mode == LoadMode::HeaderOnly;
     let load_start = Instant::now();
     let initial_position = reader.stream_position()?;
     let file_len = reader.seek(SeekFrom::End(0))?;
@@ -927,7 +973,13 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     let mut eager_dequant_ns = 0u64;
     let mut eager_tensors = 0usize;
     let mut tensors = HashMap::new();
-    tensors.try_reserve(tensor_info.len()).map_err(|error| {
+    let mut header_names = std::collections::HashSet::new();
+    if header_only {
+        header_names.try_reserve(tensor_info.len())
+    } else {
+        tensors.try_reserve(tensor_info.len())
+    }
+    .map_err(|error| {
         LoaderError::reservation(format!("failed to reserve GGUF tensor table: {error}"))
     })?;
     for info in tensor_info.drain(..) {
@@ -951,16 +1003,19 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         );
         let tensor_start = Instant::now();
         let loaded = match info.dtype {
+            // Header-only loads skip float decoding: the payload range was
+            // validated against the file above, so decoding cannot fail.
+            0 | 1 | 30 if header_only => None,
             0 => {
                 let data = read_float_values(reader, element_count, f32::from_le_bytes)?;
-                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
             }
             1 => {
                 // Keep the logical GGUF shape; model builders transpose weights.
                 let data = read_float_values(reader, element_count, |bytes| {
                     half::f16::from_bits(u16::from_le_bytes(bytes)).to_f32()
                 })?;
-                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
             }
             8 => {
                 // q8_0: store raw, dequantize on the fly during matmul.
@@ -1008,7 +1063,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                     QuantizedWeight::try_new(raw, dims)
                         .map_err(|error| LoaderError::malformed(format!("{error:#}")))?
                 };
-                LoadedTensor::Q8_0(weight)
+                Some(LoadedTensor::Q8_0(weight))
             }
             10..=14 => {
                 // K-family super-blocks (Q2_K/Q3_K/Q4_K/Q5_K/Q6_K).
@@ -1043,6 +1098,9 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                     },
                 );
                 match execution {
+                    // Eager-f32 dequantization cannot fail once the
+                    // block-aligned byte length above is established.
+                    crate::quant_k::KExecution::EagerF32 if header_only => None,
                     crate::quant_k::KExecution::EagerF32 => {
                         // The mapped payload already owns the compressed bytes.
                         // Borrow it instead of allocating a second full tensor
@@ -1076,7 +1134,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                         crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data).map_err(
                             |e| LoaderError::malformed(format!("tensor '{}': {e}", info.name)),
                         )?;
-                        LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                        Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
                     }
                     crate::quant_k::KExecution::CompressedScalar
                     | crate::quant_k::KExecution::CompressedX86
@@ -1134,7 +1192,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                             )
                             .map_err(|error| LoaderError::malformed(format!("{error:#}")))?
                         };
-                        LoadedTensor::KQuant(weight)
+                        Some(LoadedTensor::KQuant(weight))
                     }
                 }
             }
@@ -1142,7 +1200,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 let data = read_float_values(reader, element_count, |bytes| {
                     f32::from_bits(u32::from(u16::from_le_bytes(bytes)) << 16)
                 })?;
-                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
             }
             _ => {
                 return Err(LoaderError::malformed(format!(
@@ -1162,7 +1220,14 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             eager_dequant_ns = eager_dequant_ns.saturating_add(ns_since(tensor_start));
             eager_tensors += 1;
         }
-        if tensors.insert(info.name.clone(), loaded).is_some() {
+        // Header-only loads still build (and then drop) the zero-copy
+        // Q8_0/K views so their shape validation runs; names are recorded
+        // either way for duplicate detection.
+        let duplicate = match loaded {
+            Some(loaded) if !header_only => tensors.insert(info.name.clone(), loaded).is_some(),
+            _ => !header_names.insert(info.name.clone()),
+        };
+        if duplicate {
             return Err(LoaderError::malformed(format!(
                 "duplicate GGUF tensor name '{}'",
                 info.name
@@ -2394,6 +2459,145 @@ mod tests {
         out
     }
 
+    /// GGUF v3 with two metadata keys and the given `(name, dims, dtype)`
+    /// tensors, each payload zero-filled and 32-byte aligned.
+    fn write_gguf_with_tensors(tensors: &[(&str, &[u64], u32)]) -> Vec<u8> {
+        let mut out = gguf_header(tensors.len() as u64, 2);
+        push_gguf_string(&mut out, b"general.architecture");
+        out.extend_from_slice(&8u32.to_le_bytes());
+        push_gguf_string(&mut out, b"llama");
+        push_gguf_string(&mut out, b"llama.block_count");
+        out.extend_from_slice(&4u32.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        let mut offset = 0u64;
+        let mut payload_lens = Vec::new();
+        for &(name, dims, dtype) in tensors {
+            push_gguf_string(&mut out, name.as_bytes());
+            out.extend_from_slice(&(dims.len() as u32).to_le_bytes());
+            for &dim in dims {
+                out.extend_from_slice(&dim.to_le_bytes());
+            }
+            out.extend_from_slice(&dtype.to_le_bytes());
+            out.extend_from_slice(&offset.to_le_bytes());
+            let elements = dims.iter().product::<u64>() as usize;
+            let len = gguf_dtype_byte_len(dtype, elements).unwrap_or(elements * 4);
+            payload_lens.push(len);
+            offset += (len as u64).div_ceil(32) * 32;
+        }
+        for len in payload_lens {
+            while !out.len().is_multiple_of(32) {
+                out.push(0);
+            }
+            out.resize(out.len() + len, 0);
+        }
+        while !out.len().is_multiple_of(32) {
+            out.push(0);
+        }
+        out
+    }
+
+    fn write_temp_gguf(label: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ember-header-{label}-{}-{}.gguf",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn sorted_debug<V: std::fmt::Debug>(map: &HashMap<String, V>) -> Vec<String> {
+        let mut entries: Vec<String> = map.iter().map(|(k, v)| format!("{k}={v:?}")).collect();
+        entries.sort();
+        entries
+    }
+
+    /// The header-only load (used by `ember inspect`) reports exactly the
+    /// metadata, tensor inventory and K decisions of the full load, across
+    /// every loadable dtype (f32/f16/bf16/q8_0, native and fallback K), but
+    /// materializes no tensor.
+    #[test]
+    fn header_only_load_matches_full_load_inventory() {
+        let bytes = write_gguf_with_tensors(&[
+            ("norm.weight", &[64], 0),
+            ("f16.weight", &[64, 2], 1),
+            ("bf16.weight", &[64, 2], 30),
+            ("q8.weight", &[64, 4], 8),
+            ("q4k.weight", &[256, 2], 12),
+            ("q6k.weight", &[256, 2], 14),
+            ("q5k.weight", &[256, 2], 13),
+        ]);
+        let path = write_temp_gguf("inventory", &bytes);
+        for strategy in [
+            crate::quant_k::KStrategy::Auto,
+            crate::quant_k::KStrategy::EagerF32,
+            crate::quant_k::KStrategy::Scalar,
+        ] {
+            let full = load_gguf_with_k_strategy(&path, strategy, true).unwrap();
+            let header = load_gguf_header(&path, strategy, true).unwrap();
+            assert_eq!(full.tensors.len(), 7);
+            assert!(
+                header.tensors.is_empty(),
+                "header-only load decoded tensors"
+            );
+            assert_eq!(sorted_debug(&header.metadata), sorted_debug(&full.metadata));
+            assert_eq!(
+                sorted_debug(&header.tensor_meta),
+                sorted_debug(&full.tensor_meta)
+            );
+            assert_eq!(
+                sorted_debug(&header.k_decisions),
+                sorted_debug(&full.k_decisions)
+            );
+            assert_eq!(header.k_strategy, full.k_strategy);
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// Structural rejections are identical: the header-only load runs the
+    /// same per-tensor checks (duplicate names, block alignment, shape and
+    /// strict-strategy decisions) without decoding payloads.
+    #[test]
+    fn header_only_load_rejects_what_the_full_load_rejects() {
+        let cases: [(&str, Vec<u8>, bool); 4] = [
+            (
+                "duplicate",
+                write_gguf_with_tensors(&[("a.weight", &[64], 0), ("a.weight", &[64], 1)]),
+                true,
+            ),
+            (
+                "q8-misaligned",
+                write_gguf_with_tensors(&[("q8.weight", &[48, 1], 8)]),
+                true,
+            ),
+            (
+                "q8-not-2d",
+                write_gguf_with_tensors(&[("q8.weight", &[64], 8)]),
+                true,
+            ),
+            (
+                "strict-no-fallback",
+                write_gguf_with_tensors(&[("q5k.weight", &[256, 2], 13)]),
+                false,
+            ),
+        ];
+        for (label, bytes, allow_fallback) in cases {
+            let path = write_temp_gguf(label, &bytes);
+            let strategy = crate::quant_k::KStrategy::Scalar;
+            let full = load_gguf_with_k_strategy(&path, strategy, allow_fallback)
+                .err()
+                .unwrap_or_else(|| panic!("{label}: full load accepted a malformed file"));
+            let header = load_gguf_header(&path, strategy, allow_fallback)
+                .err()
+                .unwrap_or_else(|| panic!("{label}: header load accepted a malformed file"));
+            assert_eq!(header.to_string(), full.to_string(), "{label}");
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+
     #[test]
     fn tensor_meta_records_original_gguf_dtype() {
         let bytes = write_minimal_gguf_with_k_tensor(12, 128);
@@ -2634,6 +2838,7 @@ mod tests {
                 Some(mapped),
                 crate::quant_k::KStrategy::EagerF32,
                 false,
+                LoadMode::Full,
             )
             .unwrap();
             let owned_loader = load_gguf_from_reader_with_k_strategy(

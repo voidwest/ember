@@ -52,12 +52,76 @@ ember experiment compare <bundle-a> <bundle-b> [--json]
 ember experiment reproduce <bundle> --model <model.gguf> [--output <dir>] [--json]
 ember experiment tokenize --model <model.gguf> --arch <arch> --tokenizer <tokenizer.json>
                           --text "<text>" [--match-span "<span>"] [--json]
+ember experiment lens <bundle> --model <model.gguf> [--tokenizer <tokenizer.json>]
+                            [--top-k <n>] [--json] [--out <lens.json>]
 ```
 
 CLI output states the experiment schema, model and tokenizer identity,
 execution mode, plan hash, capture/intervention counts, output directory,
 semantic hash, and the verification result. Per-tensor detail lives in
 the bundle and is exposed through `inspect`.
+
+## Logit lens
+
+`ember experiment lens` reads the residual-stream captures of a bundle and
+asks, for every captured row, which next token the model would predict if
+the network stopped at that depth. Each row goes through the model's own
+final RMS norm and LM head (untied `output.weight` or tied embeddings); the
+lens calls the same `Llama::final_norm` / `Llama::lm_head` functions the
+forward pass uses, so it is not a re-implementation.
+
+```bash
+ember experiment run examples/experiments/morphology-layerwise-capture.toml
+ember experiment lens runs/morphology-baseline \
+  --model Llama-3.2-1B-Instruct-Q8_0.gguf --top-k 5
+ember experiment lens runs/morphology-baseline \
+  --model Llama-3.2-1B-Instruct-Q8_0.gguf --json --out /tmp/lens.json
+```
+
+Fail-closed rules (the same as `reproduce`):
+
+- The bundle is fully verified first; the anchors `--expect-semantic-hash`
+  and `--trusted-key` (with `--expect-evidence`, or the sibling
+  `<bundle>.evidence.json`) are accepted.
+- The model must hash to the bundle's recorded model SHA-256, and its
+  layer count, width and vocabulary must match the manifest.
+- The tokenizer (`--tokenizer`, else the path the bundle's bound spec
+  names) must hash to the recorded tokenizer SHA-256; it is hashed and
+  parsed from one read.
+- Nothing is written into the bundle. `--out` must point outside it.
+
+Per captured `(capture, input, position)` the report gives the token at the
+position and the token that actually followed it (the next prompt token, or
+the model's generated token), then for every captured layer: the top-k
+tokens with probabilities, the rank (1-based, ties to the lower id as in
+greedy argmax) and probability of the actual next token, the entropy (nats),
+and `KL(final || layer)` (nats) against the final-depth row of the same
+position.
+
+Sites: only residual-stream sites are projected. `residual-post-mlp` at
+layer `L` is the stream after `L + 1` blocks (reported as `depth`);
+`residual-pre-attention` at layer `L` is the stream after `L` blocks.
+`attention-output` and `mlp-output` (projections before their residual
+add), `final-norm-output` and `logits` are listed as skipped with the
+reason. KL needs the final-depth row, i.e. a `residual-post-mlp` capture of
+the last layer.
+
+Final-layer equality: the last layer's lens *is* the model's final-logits
+computation. A unit test (`v05::lens::tests::final_layer_lens_equals_model_logits`)
+runs a synthetic Llama (untied and tied heads) through the experiment
+execution path and checks that the captured last-layer row, projected by
+the lens, is bit-identical to the logits the model produced, for prefill
+and for a decode step. The report's `final_layer_check` counts final-depth
+rows whose next token was generated and how many have that token as lens
+top-1 (all of them for a greedy run).
+
+Limits: rows at prompt positions reproduce the prefill route exactly. Rows
+at generated positions were produced by the decode route, which for Q8_0
+models uses fused single-token kernels (and, in planned modes, the plan
+interpreter); these agree with the lens projection within kernel
+tolerance, not bit-for-bit. F16 captures are a rounded stream. The lens is
+a read-out of the as-run stream: with interventions in the bundle it
+projects the intervened state.
 
 ## Workflow semantics
 

@@ -142,7 +142,11 @@ fn native_worker_runs_and_restores_real_model() {
     };
     let info = info.unwrap();
     assert!(info.n_layers > 8);
-    tx.send(WorkerMsg::Run(config)).unwrap();
+    tx.send(WorkerMsg::Run(
+        config.clone(),
+        ember::cancel::CancelToken::new(),
+    ))
+    .unwrap();
     let WorkerReply::RunDone(result) = receive() else {
         panic!("expected run reply")
     };
@@ -161,8 +165,11 @@ fn native_worker_runs_and_restores_real_model() {
     request.factor = None;
     request.alpha = None;
     request.source_layer = None;
-    tx.send(WorkerMsg::Restore(parse_run_request(&request).unwrap()))
-        .unwrap();
+    tx.send(WorkerMsg::Restore(
+        parse_run_request(&request).unwrap(),
+        ember::cancel::CancelToken::new(),
+    ))
+    .unwrap();
     let WorkerReply::RestoreDone(result) = receive() else {
         panic!("expected restore reply")
     };
@@ -175,6 +182,76 @@ fn native_worker_runs_and_restores_real_model() {
         run.baseline.generated_token_ids
     );
     println!("restoration bundle: {}", restored.output.bundle_dir);
+}
+
+#[test]
+#[ignore = "requires EMBER_GUI_TEST_MODEL; runs the real model"]
+fn native_worker_cancels_a_run_promptly_and_keeps_nothing() {
+    use super::{spawn_worker, WorkerMsg, WorkerReply};
+    use ember::quant_k::KStrategy;
+    use std::time::{Duration, Instant};
+    let model = std::env::var("EMBER_GUI_TEST_MODEL").expect("set EMBER_GUI_TEST_MODEL");
+    let mut values = form();
+    values.model_path = model.clone();
+    values.prompt = "Write a long story about a lighthouse keeper".into();
+    values.max_tokens = "64".into();
+    let config = parse_run_request(&values.build_run_request().unwrap()).unwrap();
+    let bundles = || -> std::collections::BTreeSet<std::path::PathBuf> {
+        std::fs::read_dir("runs/gui")
+            .map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default()
+    };
+    let (tx, rx) = spawn_worker(KStrategy::Auto, false);
+    let receive = || {
+        rx.lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(300))
+            .unwrap()
+    };
+    tx.send(WorkerMsg::Prepare(model)).unwrap();
+    assert!(matches!(receive(), WorkerReply::Prepared(info) if info.is_ok()));
+    let before = bundles();
+    // Cancel twice: once in the baseline leg, once in the intervention leg
+    // (after the baseline bundle was written, which must then be removed).
+    for in_intervention in [false, true] {
+        let token = ember::cancel::CancelToken::new();
+        tx.send(WorkerMsg::Run(config.clone(), token.clone()))
+            .unwrap();
+        if in_intervention {
+            // Wait for the baseline bundle to be published.
+            let deadline = Instant::now() + Duration::from_secs(600);
+            while bundles().len() == before.len() {
+                assert!(Instant::now() < deadline, "the baseline never finished");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        } else {
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        let fired = Instant::now();
+        token.cancel();
+        let reply = receive();
+        let waited = fired.elapsed();
+        assert!(matches!(reply, WorkerReply::Cancelled), "{reply:?}");
+        println!("cancel (intervention leg: {in_intervention}) honoured in {waited:?}");
+        // A decode step, or at worst the prefill it landed in.
+        assert!(
+            waited < Duration::from_secs(5),
+            "cancellation took {waited:?}"
+        );
+        assert_eq!(bundles(), before, "a cancelled run leaves no bundle");
+    }
+    // The model stayed loaded: a short run afterwards completes.
+    let mut short = values.clone();
+    short.max_tokens = "2".into();
+    let config = parse_run_request(&short.build_run_request().unwrap()).unwrap();
+    tx.send(WorkerMsg::Run(config, ember::cancel::CancelToken::new()))
+        .unwrap();
+    let WorkerReply::RunDone(result) = receive() else {
+        panic!("expected run reply")
+    };
+    let run = result.unwrap();
+    super::worker::discard_run_bundles(&run);
 }
 
 #[test]

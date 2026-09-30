@@ -24,6 +24,7 @@ use crate::cli_experiment::{
 use crate::cli_generation::PrefixRole;
 use anyhow::Context;
 use ember::artifact::ActivationStage;
+use ember::cancel::CancelToken;
 use ember::experiments::{
     ExecutionContext, ExecutionPhase, Experiment, ExperimentError, GenerationContext, LayerContext,
     ModelContext, TensorAccess,
@@ -362,6 +363,7 @@ pub(crate) fn run_base_pass(
     base: RunTarget<'_>,
     co: &[RunTarget<'_>],
     variants: &[&ExperimentSpecV1],
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<BasePass> {
     ensure_same_session(prepared, base.resolved)?;
     for target in co {
@@ -372,7 +374,7 @@ pub(crate) fn run_base_pass(
     }
     let threads = pool_threads(base.resolved)?;
     in_pool(prepared, threads, |prepared| {
-        run_base_pass_inner(prepared, base, co, variants)
+        run_base_pass_inner(prepared, base, co, variants, cancel)
     })
 }
 
@@ -381,6 +383,7 @@ fn run_base_pass_inner(
     base: RunTarget<'_>,
     co: &[RunTarget<'_>],
     variants: &[&ExperimentSpecV1],
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<BasePass> {
     let prepared = &*prepared_mut;
     let n_layers = prepared.n_layers;
@@ -474,6 +477,7 @@ fn run_base_pass_inner(
             &base_experiment,
             Some(pass),
             role,
+            cancel,
         )?;
         let elapsed = started.elapsed();
         timing.add(elapsed, &result);
@@ -553,6 +557,7 @@ fn run_base_pass_inner(
                  {co_shared} co-baseline(s)"
             )),
         }),
+        cancel,
     )?;
 
     let mut co_outcomes = Vec::with_capacity(co.len());
@@ -572,6 +577,7 @@ fn run_base_pass_inner(
                         "observed the base run's generation instead of running its own".into(),
                     ),
                 }),
+                cancel,
             )?,
             (reason, _) => {
                 let reason = reason
@@ -579,7 +585,7 @@ fn run_base_pass_inner(
                     .unwrap_or_else(|| "no execution plan was built".into());
                 let mut record = full_record(target.resolved, &reason);
                 record.role = "co-baseline";
-                run_full(prepared, target, record)?
+                run_full(prepared, target, record, cancel)?
             }
         };
         co_outcomes.push(outcome);
@@ -613,6 +619,7 @@ fn run_full(
     prepared: &mut PreparedRun,
     target: &RunTarget<'_>,
     record: PrefixReuseRecord,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<RunOutcome> {
     in_pool(prepared, pool_threads(target.resolved)?, |prepared| {
         let prepared = &*prepared;
@@ -623,11 +630,27 @@ fn run_full(
             let started = std::time::Instant::now();
             let experiment =
                 new_input_experiment(prepared, target.resolved, &active.bundle_sources, index)?;
-            let result = run_input(prepared, target.resolved, &active, &experiment, None, None)?;
+            let result = run_input(
+                prepared,
+                target.resolved,
+                &active,
+                &experiment,
+                None,
+                None,
+                cancel,
+            )?;
             timing.add(started.elapsed(), &result);
             results.push(result);
         }
-        finish_bundle(prepared, target, &active, results, timing, Some(record))
+        finish_bundle(
+            prepared,
+            target,
+            &active,
+            results,
+            timing,
+            Some(record),
+            cancel,
+        )
     })
 }
 
@@ -638,6 +661,7 @@ pub(crate) fn run_variant(
     prefix: &mut SharedPrefix,
     variant_index: usize,
     target: RunTarget<'_>,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<RunOutcome> {
     ensure_same_session(prepared, target.resolved)?;
     let plans = prefix
@@ -653,7 +677,7 @@ pub(crate) fn run_variant(
     }
     let inputs = &prefix.inputs;
     in_pool(prepared, pool_threads(target.resolved)?, |prepared| {
-        run_variant_inner(prepared, inputs, plans, &target)
+        run_variant_inner(prepared, inputs, plans, &target, cancel)
     })
 }
 
@@ -662,6 +686,7 @@ fn run_variant_inner(
     inputs: &[InputPrefix],
     plans: Vec<InputPlan>,
     target: &RunTarget<'_>,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<RunOutcome> {
     let spec = target.resolved;
     let active = activate_spec(prepared, spec)?;
@@ -706,7 +731,15 @@ fn run_variant_inner(
                     cache,
                     outcome: &mut outcome,
                 };
-                match run_input(prepared, spec, &active, &experiment, None, Some(role)) {
+                match run_input(
+                    prepared,
+                    spec,
+                    &active,
+                    &experiment,
+                    None,
+                    Some(role),
+                    cancel,
+                ) {
                     Ok(result) => match outcome {
                         Some(Ok(resume_layer)) => (result, PrefixPath::Resumed { resume_layer }),
                         _ => anyhow::bail!(
@@ -722,7 +755,8 @@ fn run_variant_inner(
                                 &active.bundle_sources,
                                 index,
                             )?;
-                            let result = run_input(prepared, spec, &active, &fresh, None, None)?;
+                            let result =
+                                run_input(prepared, spec, &active, &fresh, None, None, cancel)?;
                             (result, PrefixPath::FullRecompute { reason })
                         }
                         _ => return Err(error),
@@ -730,7 +764,7 @@ fn run_variant_inner(
                 }
             }
             Err(reason) => {
-                let result = run_input(prepared, spec, &active, &experiment, None, None)?;
+                let result = run_input(prepared, spec, &active, &experiment, None, None, cancel)?;
                 (result, PrefixPath::FullRecompute { reason })
             }
         };
@@ -749,6 +783,7 @@ fn run_variant_inner(
             inputs: records,
             note: None,
         }),
+        cancel,
     )
 }
 
@@ -758,16 +793,17 @@ pub(crate) fn execute_shared(
     base: RunTarget<'_>,
     co: &[RunTarget<'_>],
     variants: &[RunTarget<'_>],
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<(RunOutcome, Vec<RunOutcome>, Vec<RunOutcome>)> {
     let specs: Vec<&ExperimentSpecV1> = variants.iter().map(|target| target.resolved).collect();
     let BasePass {
         base,
         co,
         mut prefix,
-    } = run_base_pass(prepared, base, co, &specs)?;
+    } = run_base_pass(prepared, base, co, &specs, cancel)?;
     let mut outcomes = Vec::with_capacity(variants.len());
     for (index, target) in variants.iter().enumerate() {
-        outcomes.push(run_variant(prepared, &mut prefix, index, *target)?);
+        outcomes.push(run_variant(prepared, &mut prefix, index, *target, cancel)?);
     }
     Ok((base, co, outcomes))
 }
@@ -886,6 +922,7 @@ kind = "prompt-final"
                 text,
                 &out_dir(dir, &format!("{mode}-{temperature}-full-{index}")),
                 false,
+                None,
             )
             .unwrap();
             assert!(report.ok);
@@ -910,6 +947,7 @@ kind = "prompt-final"
             },
             &co_targets,
             &variant_targets,
+            None,
         )
         .unwrap();
         let shared: Vec<&RunOutcome> = std::iter::once(&base)
@@ -1175,6 +1213,7 @@ kind = "prompt-final"
                     text,
                     &out(&format!("separate-{index}")),
                     false,
+                    None,
                 )
                 .unwrap();
                 hashes.push(identity.semantic_hash);
@@ -1205,6 +1244,7 @@ kind = "prompt-final"
                 },
                 &[],
                 &targets,
+                None,
             )
             .unwrap();
             let shared_ms = started.elapsed().as_secs_f64() * 1000.0;

@@ -778,9 +778,13 @@ python3 probes/test_probe_workflows.py
 
 the integration suite covers tensor operations, sampling, tokenizer loading,
 in-memory and mmap-backed gguf fixtures, grouped q8_0 projections, and f16
-cache attention. the model smoke test also runs a gpt-2 forward pass when
-`gpt2.Q8_0.gguf` is present locally; otherwise it skips so ci does not need to
-download large model weights.
+cache attention. the model smoke test also runs a single-token forward pass on
+the gguf named by `EMBER_FORWARD_MODEL` (gpt-2 or llama family), or on a local
+`gpt2.Q8_0.gguf`; otherwise it skips so per-PR ci does not need to download
+large model weights. the weekly `model-gated` workflow runs it, and the agent
+end-to-end suite, against the pinned Llama-3.2-1B-Instruct Q8_0 with
+`EMBER_FORWARD_REQUIRED=1` / `EMBER_AGENT_E2E_REQUIRED=1`, so a missing model
+fails instead of skipping.
 
 ### experiment (v0.5)
 
@@ -788,14 +792,23 @@ download large model weights.
 ember experiment validate <spec.toml> [--json]
 ember experiment run <spec.toml> [--execution reference|planned|planned-fused]
                                 [--threads <n>] [--output <dir>] [--retain-incomplete]
-                                [--json]
+                                [--sign-key <key> | --no-sign] [--json]
 ember experiment inspect <bundle> [--json]
-ember experiment verify <bundle> [--model <model.gguf>] [--tokenizer <tokenizer.json>] [--json]
+ember experiment verify <bundle> [--model <model.gguf>] [--tokenizer <tokenizer.json>]
+                                 [--trusted-key <key.pub> [--expect-evidence <envelope>]] [--json]
 ember experiment compare <bundle-a> <bundle-b> [--json]
 ember experiment reproduce <bundle> --model <model.gguf> [--output <dir>] [--json]
 ember experiment tokenize --model <model.gguf> --arch <arch> --tokenizer <tokenizer.json>
                           --text "<text>" [--match-span "<span>"] [--json]
+ember experiment lens <bundle> --model <model.gguf> [--tokenizer <tokenizer.json>]
+                            [--top-k <n>] [--json] [--out <lens.json>]
 ```
+
+`experiment lens` projects every captured residual-stream row of a verified
+bundle through the model's own final norm and LM head (a logit lens) and
+reports per-layer top-k tokens, the rank and probability of the actual next
+token, entropy, and KL to the final layer; see "Logit lens" in
+`docs/experiments.md`.
 
 See `docs/experiments.md` (quick start), `docs/experiment-schema-v1.md`
 (specification), `docs/bundle-schema-v1.md` (bundle layout),

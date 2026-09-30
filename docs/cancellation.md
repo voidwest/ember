@@ -24,6 +24,7 @@ first stable surface that exposes it is the planned `ember::cancel` module.
 | Interactive mode | No (yet) | Not wired; Ctrl-C still terminates the process |
 | `demo` mode | No (yet) | Inline loop; not wired |
 | Experiment runs (`ember experiment run`) | No (yet) | Not wired |
+| Native console runs (`ember gui`) | Yes | Cancel button, Esc, or the palette: checked before prefill, at every decode step of both legs, between the legs, and before each bundle is written |
 | `score-batch` generation lines | No (yet) | Not wired |
 
 ## Second Ctrl-C
@@ -40,3 +41,9 @@ the caller: the CLI drops it; the agent and voice sessions roll back with
 `docs/agent-runtime.md`). Trace files written up to the cancellation remain
 valid: the JSONL writer flushes per event, so a cancelled run has a complete
 prefix.
+
+The native console keeps nothing from a cancelled run: no history row, and no
+bundle. The token is checked before `write_bundle`, so the cancelled leg never
+stages a directory; if the baseline leg had already published its bundle, the
+console removes it, since half a pair is not an experiment. The resident model
+is kept, so the next run starts without a reload.
