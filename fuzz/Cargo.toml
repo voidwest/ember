@@ -11,6 +11,11 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+# Own workspace root: the repository root already excludes `fuzz`, but a
+# checkout nested inside another one (a git worktree under `.claude/`, say)
+# would otherwise resolve the outer checkout's workspace and refuse to build.
+[workspace]
+
 [dependencies]
 libfuzzer-sys = "0.4"
 ember = { path = "..", default-features = false }
