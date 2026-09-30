@@ -60,9 +60,7 @@ async fn page_bottom_is_reachable_by_scrolling(cx: &mut TestAppContext) {
             let control = window
                 .find(SharedString::from("generation-length:24"))
                 .bounds();
-            let action = window
-                .find(SharedString::from("setup-run"))
-                .bounds();
+            let action = window.find(SharedString::from("setup-run")).bounds();
             let bottom: f32 = (control.origin.y + control.size.height).into();
             let top: f32 = action.origin.y.into();
             (bottom, top)
@@ -159,9 +157,10 @@ fn populated_chart_registers_handlers_during_paint(cx: &mut TestAppContext) {
                     exact: false,
                 }]),
                 None,
-                Some(8),
-                None,
-                None,
+                super::chart::LayerMarks {
+                    intervention: Some(8),
+                    ..Default::default()
+                },
                 160.,
                 &super::theme::light(),
             )
@@ -498,9 +497,15 @@ async fn editing_a_setting_marks_the_result_stale_and_a_result_can_be_pinned(
             console.show_sample(cx);
             // Treat it as a live result of these settings.
             console.sample = false;
-            assert!(!console.results_stale(), "a fresh result matches its settings");
+            assert!(
+                !console.results_stale(),
+                "a fresh result matches its settings"
+            );
             console.layer = "9".into();
-            assert!(console.results_stale(), "editing a setting must mark the result stale");
+            assert!(
+                console.results_stale(),
+                "editing a setting must mark the result stale"
+            );
             console.layer = "8".into();
             assert!(!console.results_stale(), "restoring the setting clears it");
 
@@ -607,7 +612,9 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
     cx.update_window(handle.into(), |_, window, cx| {
         window.draw(cx).clear(cx);
         window.click(SharedString::from("nav:experiments"), cx);
-        console.update(cx, |console, cx| console.select_combo(super::ComboId::Op, "zero", cx));
+        console.update(cx, |console, cx| {
+            console.select_combo(super::ComboId::Op, "zero", cx)
+        });
         assert_eq!(console.read(cx).op, "zero");
         console.update(cx, |console, cx| {
             console.apply_preset(Preset::ArabicMorphology, cx)

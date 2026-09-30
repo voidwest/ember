@@ -90,9 +90,9 @@ impl Console {
     fn run_prepare_for_sweep(&mut self) {
         self.status = Status::Preparing;
         self.error = None;
-        let _ = self
-            .worker_tx
-            .send(super::WorkerMsg::Prepare(self.model_path.trim().to_string()));
+        let _ = self.worker_tx.send(super::WorkerMsg::Prepare(
+            self.model_path.trim().to_string(),
+        ));
     }
 
     /// Ask the running sweep to stop after the run in flight.
@@ -296,9 +296,17 @@ impl Console {
                     colors.text_muted,
                 )))
                 .child(div().flex_1().child(label(
-                    if words_changed { "words changed" } else { "words unchanged" },
+                    if words_changed {
+                        "words changed"
+                    } else {
+                        "words unchanged"
+                    },
                     Type::LABEL,
-                    if words_changed { colors.accent } else { colors.text_faint },
+                    if words_changed {
+                        colors.accent
+                    } else {
+                        colors.text_faint
+                    },
                 )))
                 .child(text_button(
                     SharedString::from(format!("sweep-open:{}", point.layer)),
@@ -328,11 +336,7 @@ impl Console {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .child(label(
-                                "Sweep across layers",
-                                Type::SUBSECTION,
-                                colors.text,
-                            ))
+                            .child(label("Sweep across layers", Type::SUBSECTION, colors.text))
                             .child(div().flex_1())
                             .child(text_button(
                                 "sweep-csv",
@@ -346,7 +350,10 @@ impl Console {
                         label(
                             format!(
                                 "{} \u{00b7} run once per layer",
-                                change_summary(values).split(" \u{00b7} layer").next().unwrap_or("")
+                                change_summary(values)
+                                    .split(" \u{00b7} layer")
+                                    .next()
+                                    .unwrap_or("")
                             ),
                             Type::META,
                             colors.text_faint,
@@ -357,9 +364,11 @@ impl Console {
                         entity,
                         chart_series,
                         None,
-                        None,
-                        self.selected_layer,
-                        self.hovered_layer,
+                        super::chart::LayerMarks {
+                            intervention: None,
+                            selected: self.selected_layer,
+                            hovered: self.hovered_layer,
+                        },
                         260.0,
                         colors,
                     )),
@@ -398,7 +407,11 @@ impl Console {
                         "Sweep: {} of {} layers{}",
                         (done + 1).min(sweep.total.max(1)),
                         sweep.total,
-                        if sweep.stop { " \u{00b7} stopping after this run" } else { "" }
+                        if sweep.stop {
+                            " \u{00b7} stopping after this run"
+                        } else {
+                            ""
+                        }
                     ),
                     Type::LABEL,
                     colors.text,

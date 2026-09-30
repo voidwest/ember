@@ -589,7 +589,11 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
             });
         })?;
         let (done, error) = console.read_with(&context, |c, _| {
-            (c.status == Status::Idle && c.result_context.as_ref().is_some_and(|x| x.op == "zero"), c.error.clone())
+            (
+                c.status == Status::Idle
+                    && c.result_context.as_ref().is_some_and(|x| x.op == "zero"),
+                c.error.clone(),
+            )
         });
         if let Some(error) = error {
             anyhow::bail!("the second run reported an error: {error}");
@@ -597,9 +601,15 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
         if done {
             break;
         }
-        anyhow::ensure!(started_again.elapsed() < Duration::from_secs(400), "second run timed out");
+        anyhow::ensure!(
+            started_again.elapsed() < Duration::from_secs(400),
+            "second run timed out"
+        );
     }
-    eprintln!("second run (same loaded model) finished in {:.1}s", started_again.elapsed().as_secs_f32());
+    eprintln!(
+        "second run (same loaded model) finished in {:.1}s",
+        started_again.elapsed().as_secs_f32()
+    );
     shot(&mut context, "compare-with-reference")?;
     click(&mut context, "result:layers")?;
     shot(&mut context, "compare-layers")?;
@@ -645,10 +655,18 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
         if finished {
             break;
         }
-        anyhow::ensure!(sweep_started.elapsed() < Duration::from_secs(600), "sweep timed out");
+        anyhow::ensure!(
+            sweep_started.elapsed() < Duration::from_secs(600),
+            "sweep timed out"
+        );
     }
-    let points = console.read_with(&context, |c, _| c.sweep.as_ref().map_or(0, |s| s.points.len()));
-    eprintln!("sweep of {points} layers finished in {:.1}s", sweep_started.elapsed().as_secs_f32());
+    let points = console.read_with(&context, |c, _| {
+        c.sweep.as_ref().map_or(0, |s| s.points.len())
+    });
+    eprintln!(
+        "sweep of {points} layers finished in {:.1}s",
+        sweep_started.elapsed().as_secs_f32()
+    );
     anyhow::ensure!(points >= 14, "the sweep produced too few points: {points}");
     shot(&mut context, "sweep-result")?;
     click(&mut context, "sweep-open:8")?;
@@ -662,7 +680,10 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
     shot(&mut context, "runs")?;
     click(&mut context, "run-compare:1")?;
     anyhow::ensure!(
-        console.read_with(&context, |c, _| c.reference.as_ref().is_some_and(|r| r.label.starts_with("Run #1"))),
+        console.read_with(&context, |c, _| c
+            .reference
+            .as_ref()
+            .is_some_and(|r| r.label.starts_with("Run #1"))),
         "Compare on a saved run did not pin it"
     );
     anyhow::ensure!(

@@ -63,11 +63,11 @@ mod palette;
 mod picker;
 mod runs_table;
 mod store_writer;
-mod theme;
 mod sweep;
+mod theme;
 mod views;
-mod workspace;
 mod worker;
+mod workspace;
 
 use components::*;
 use form::{FormValues, Inputs};
@@ -81,10 +81,10 @@ use input::{InputEvent, InputId, InputKind, TextInput};
 use menu::{app_menus, register_menu_actions};
 use palette::Command;
 use runs_table::{fmt_bytes, quant_of, relative_time, truncate_path_start, RunsDelegate};
-use theme::{AppearanceMode, Colors, Radius, Space, Type};
 use sweep::Sweep;
-use workspace::Reference;
+use theme::{AppearanceMode, Colors, Radius, Space, Type};
 use worker::{spawn_worker, WorkerMsg, WorkerReply};
+use workspace::Reference;
 
 // ---------------------------------------------------------------------------
 // embedded fonts (SIL OFL 1.1, see src/gui_fonts/LICENSE.txt)
@@ -1026,35 +1026,37 @@ impl Console {
                         // user chose to make.
                         let in_sweep = self.sweep_running();
                         if !in_sweep {
-                        let number = self.store.next_run_number();
-                        let now = unix_now();
-                        self.store.push_run(RunRecord {
-                            number,
-                            finished_at: now,
-                            model: model_display_name(&sent.model_path),
-                            intervention: operation_label(&sent.op).to_string(),
-                            hook: site_label(&sent.site).to_string(),
-                            layer: per_layer(&sent.site)
-                                .then(|| sent.layer.parse::<u32>().ok())
-                                .flatten(),
-                            duration_ms: Some(bundle.elapsed_ms_total.max(0.0).round() as u64),
-                            baseline_tokens: Some(bundle.baseline.generated_tokens as u32),
-                            intervention_tokens: Some(bundle.intervention.generated_tokens as u32),
-                            diverged_at_step: bundle
-                                .comparison
-                                .first_token_divergence
-                                .map(|step| step as u32),
-                            outputs_equal: bundle.comparison.generated_text_equal,
-                            verified: bundle.verification.ok,
-                            pinned: false,
-                            prompt: sent.prompt.clone(),
-                            config: Some(sent.record_config()),
-                            result: Some(record_result(&bundle)),
-                        });
-                        self.store.touch_model(&sent.model_path, now);
-                        // The state that produced this run is the resume point.
-                        self.save_draft();
-                        self.persist();
+                            let number = self.store.next_run_number();
+                            let now = unix_now();
+                            self.store.push_run(RunRecord {
+                                number,
+                                finished_at: now,
+                                model: model_display_name(&sent.model_path),
+                                intervention: operation_label(&sent.op).to_string(),
+                                hook: site_label(&sent.site).to_string(),
+                                layer: per_layer(&sent.site)
+                                    .then(|| sent.layer.parse::<u32>().ok())
+                                    .flatten(),
+                                duration_ms: Some(bundle.elapsed_ms_total.max(0.0).round() as u64),
+                                baseline_tokens: Some(bundle.baseline.generated_tokens as u32),
+                                intervention_tokens: Some(
+                                    bundle.intervention.generated_tokens as u32,
+                                ),
+                                diverged_at_step: bundle
+                                    .comparison
+                                    .first_token_divergence
+                                    .map(|step| step as u32),
+                                outputs_equal: bundle.comparison.generated_text_equal,
+                                verified: bundle.verification.ok,
+                                pinned: false,
+                                prompt: sent.prompt.clone(),
+                                config: Some(sent.record_config()),
+                                result: Some(record_result(&bundle)),
+                            });
+                            self.store.touch_model(&sent.model_path, now);
+                            // The state that produced this run is the resume point.
+                            self.save_draft();
+                            self.persist();
                         }
                         self.status = Status::Idle;
                         if in_sweep {

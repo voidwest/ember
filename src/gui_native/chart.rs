@@ -47,18 +47,30 @@ fn readout_metric_label(value: f64) -> String {
     }
 }
 
+/// The layers the chart marks: where the change was applied, and the layer
+/// the reader selected or is hovering.
+#[derive(Clone, Copy, Default)]
+pub(super) struct LayerMarks {
+    pub intervention: Option<usize>,
+    pub selected: Option<usize>,
+    pub hovered: Option<usize>,
+}
+
 pub(super) fn layer_divergence_chart(
     entity: Entity<Console>,
     metrics: Arc<[LayerMetric]>,
     // A pinned earlier result, drawn as a quiet second line so a change can be
     // judged against something.
     reference: Option<Arc<[LayerMetric]>>,
-    intervention_layer: Option<usize>,
-    selected_layer: Option<usize>,
-    hovered_layer: Option<usize>,
+    marks: LayerMarks,
     height: f32,
     colors: &Colors,
 ) -> Div {
+    let LayerMarks {
+        intervention: intervention_layer,
+        selected: selected_layer,
+        hovered: hovered_layer,
+    } = marks;
     let min_layer = metrics.first().map_or(0, |metric| metric.layer);
     let max_layer = metrics.last().map_or(min_layer, |metric| metric.layer);
     let y_max = nice_max(
@@ -319,9 +331,10 @@ pub(super) fn layer_divergence_chart(
                     },
                 ))
                 .child(div().w_full())
-                .children(has_reference.then(|| {
-                    mono("dashed: pinned reference   ", 13.0, colors.text_muted)
-                }))
+                .children(
+                    has_reference
+                        .then(|| mono("dashed: pinned reference   ", 13.0, colors.text_muted)),
+                )
                 .children(intervention_layer.map(|layer| {
                     mono(
                         format!("Intervention \u{00b7} L{layer}"),

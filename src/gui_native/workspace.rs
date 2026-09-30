@@ -92,7 +92,13 @@ impl Console {
     /// Pin a saved run as the reference and return to the workspace, so the
     /// next run is judged against it. Needs a run that kept its result.
     pub(super) fn compare_with_run(&mut self, number: u64, cx: &mut Context<Self>) {
-        let Some(record) = self.store.runs.iter().find(|run| run.number == number).cloned() else {
+        let Some(record) = self
+            .store
+            .runs
+            .iter()
+            .find(|run| run.number == number)
+            .cloned()
+        else {
             return;
         };
         let (Some(result), Some(config)) = (record.result, record.config) else {
@@ -207,27 +213,36 @@ impl Console {
                     )))
                     .child(chip(
                         if model_ready { "Ready" } else { "Not loaded" },
-                        if model_ready { colors.ok } else { colors.text_faint },
+                        if model_ready {
+                            colors.ok
+                        } else {
+                            colors.text_faint
+                        },
                     )),
             )
             .child(label(
                 match &self.session {
-                    Some(info) => format!("{} \u{00b7} {} layers", info.architecture, info.n_layers),
+                    Some(info) => {
+                        format!("{} \u{00b7} {} layers", info.architecture, info.n_layers)
+                    }
                     None => "Loads automatically on the first run.".to_string(),
                 },
                 Type::META,
                 colors.text_faint,
             ))
-            .when(self.advanced_open || self.model_options.is_empty(), |section| {
-                section.child(text_input(
-                    colors,
-                    self.inputs.model.clone(),
-                    super::FONT_MONO_NAME,
-                    Type::META,
-                    None,
-                    cx,
-                ))
-            });
+            .when(
+                self.advanced_open || self.model_options.is_empty(),
+                |section| {
+                    section.child(text_input(
+                        colors,
+                        self.inputs.model.clone(),
+                        super::FONT_MONO_NAME,
+                        Type::META,
+                        None,
+                        cx,
+                    ))
+                },
+            );
 
         let prompt = div()
             .flex()
@@ -253,8 +268,7 @@ impl Console {
                 "op-picker",
                 ComboId::Op,
                 &self.op,
-                &["replace", "zero", "scale", "interpolate", "add-delta"]
-                    .map(str::to_string),
+                &["replace", "zero", "scale", "interpolate", "add-delta"].map(str::to_string),
                 cx,
             ))
             .child(label(
@@ -288,17 +302,20 @@ impl Console {
                     .items_start()
                     .gap(px(Space::MD))
                     .when(per_layer(&self.site), |row| {
-                        row.child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .child(field(colors, "Layer", self.layer_stepper(colors, cx))),
-                        )
+                        row.child(div().flex_1().min_w(px(0.0)).child(field(
+                            colors,
+                            "Layer",
+                            self.layer_stepper(colors, cx),
+                        )))
                     })
                     .when(needs_value, |row| {
                         row.child(div().w(px(104.0)).flex_none().child(field(
                             colors,
-                            if self.op == "interpolate" { "Blend 0\u{2013}1" } else { "Strength" },
+                            if self.op == "interpolate" {
+                                "Blend 0\u{2013}1"
+                            } else {
+                                "Strength"
+                            },
                             text_input(
                                 colors,
                                 self.inputs.value.clone(),
@@ -448,9 +465,10 @@ impl Console {
             .border_t_1()
             .border_color(colors.border)
             .bg(colors.canvas)
-            .children(self.validation_error().map(|error| {
-                label(error, Type::META, colors.warn)
-            }))
+            .children(
+                self.validation_error()
+                    .map(|error| label(error, Type::META, colors.warn)),
+            )
             .child(
                 Button::new("setup-run")
                     .primary()
@@ -641,10 +659,16 @@ impl Console {
             _ => String::new(),
         };
         let cell = |text: String, color: Rgba| {
-            div().flex_1().min_w(px(0.0)).child(label(text, Type::LABEL, color))
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(label(text, Type::LABEL, color))
         };
         let head = |text: &'static str| {
-            div().flex_1().min_w(px(0.0)).child(label(text, Type::META, colors.text_faint))
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(label(text, Type::META, colors.text_faint))
         };
         let row = |name: &'static str, before: String, after: String| {
             div()
@@ -674,11 +698,15 @@ impl Console {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .child(label("Compared with pinned reference", Type::LABEL, colors.text))
+                        .child(label(
+                            "Compared with pinned reference",
+                            Type::LABEL,
+                            colors.text,
+                        ))
                         .child(div().flex_1())
-                        .children((!delta.is_empty()).then(|| {
-                            label(delta, Type::LABEL, colors.accent)
-                        }))
+                        .children(
+                            (!delta.is_empty()).then(|| label(delta, Type::LABEL, colors.accent)),
+                        )
                         .child(text_button(
                             "reference-clear",
                             "Clear",
@@ -714,7 +742,11 @@ impl Console {
                     layer_text(reference.first_layer),
                     layer_text(comparison.landmarks.first_layer_divergence),
                 ))
-                .child(row("Peak divergence", peak_text(reference.peak), peak_text(now_peak)))
+                .child(row(
+                    "Peak divergence",
+                    peak_text(reference.peak),
+                    peak_text(now_peak),
+                ))
                 .child(label(
                     format!(
                         "Pinned run wrote: {}",

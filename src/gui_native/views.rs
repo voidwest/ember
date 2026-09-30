@@ -356,7 +356,6 @@ impl Console {
         row
     }
 
-
     /// Home: a landing surface with something to do, not a form in waiting.
     fn section_header(&self, colors: &Colors, title: &'static str, hint: &str) -> Div {
         div()
@@ -1277,8 +1276,6 @@ impl Console {
 
 // -- experiment steps -----------------------------------------------------
 impl Console {
-
-
     /// Starting points for a new experiment.
     ///
     /// These were in the left rail, which made them look like a mode switch.
@@ -1430,7 +1427,6 @@ impl Console {
             .child(self.generation_option(colors, 96, "Long", cx))
     }
 
-
     fn feedback_banners(&self, colors: &Colors) -> Div {
         // Errors only. An unchanged output is a result, not a caution, so it
         // lives on the result status row instead of ever appearing here.
@@ -1445,7 +1441,6 @@ impl Console {
         });
         div().flex().flex_col().gap(px(Space::SM)).children(error)
     }
-
 
     pub(super) fn layer_stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         let n_layers = self.session.as_ref().map(|session| session.n_layers);
@@ -1501,7 +1496,6 @@ impl Console {
             )
             .child(label(position, Type::LABEL, colors.text_faint))
     }
-
 
     /// What a run is doing right now, as steps. A first run loads the model
     /// before it computes anything, and a silent wait there looks like a hang.
@@ -1900,10 +1894,14 @@ impl Console {
                 .child(chart::layer_divergence_chart(
                     cx.entity(),
                     self.layer_series.clone(),
-                    self.reference.as_ref().map(|reference| reference.layers.clone()),
-                    self.intervention_layer_for_result(),
-                    self.selected_layer,
-                    self.hovered_layer,
+                    self.reference
+                        .as_ref()
+                        .map(|reference| reference.layers.clone()),
+                    chart::LayerMarks {
+                        intervention: self.intervention_layer_for_result(),
+                        selected: self.selected_layer,
+                        hovered: self.hovered_layer,
+                    },
                     height,
                     colors,
                 )),
