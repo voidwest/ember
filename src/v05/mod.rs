@@ -11,6 +11,7 @@ pub mod bundle;
 pub mod capture;
 pub mod compare;
 pub mod hook;
+pub mod host_profile;
 pub mod intervention;
 pub mod manifest;
 pub mod run;

@@ -148,6 +148,39 @@ produce identical semantic manifests and identical semantic hashes
 (Gate E); the reference example reproduces `exact-semantic` on this
 machine.
 
+### Cross-machine differences: the host profile
+
+The same experiment on two machines has the same semantic identity, but
+its numbers can differ in the last bits: SIMD tiers accumulate dot
+products and norms in different orders. `runtime.json` therefore records a
+`host_profile` (`ember.host-profile.v1`, never part of either hash) with
+everything that decides reduction order:
+
+- `op_tiers`: the tier each op family dispatches to on that host
+  (`q8_0_matvec`: `x86-avx512-vnni` / `x86-avx2` / `arm-neon-dotprod` /
+  `scalar`; `k_quant_matvec`: including the `EMBER_K_AVX512` opt-in tier;
+  `elementwise` RMSNorm/SiLU/softmax; `f32_matmul`);
+- `plan_kernels` (kernel per matvec operator) and `kernel_fallbacks`;
+- `cpu`: architecture, OS, model name, runtime-detected features;
+- `threads`: requested workers, rayon pool size, available parallelism,
+  the plan's thread strategy;
+- `env`: dispatch knobs that were set (`EMBER_K_AVX512`,
+  `EMBER_LLAMA_PACKED_Q8`, `RAYON_NUM_THREADS`, ...);
+- `build`: Ember version and commit, debug/release, opt level, rustc,
+  target, compile-time target features.
+
+When outputs or captures differ, `experiment compare` prints which of
+these fields differ between the two bundles, ranked `likely` /
+`possible` / `unlikely` to change numbers, and a likely explanation (for
+example, "different Q8_0 matvec execution tier (x86-avx512-vnni vs
+x86-avx2): the tiers accumulate products in a different reduction
+order..."). `experiment reproduce` prints the same report whenever its
+verdict is not `exact` or `exact-semantic`. Both include it as
+`host_differences` in `--json`. If no field differs, the report says the
+difference is not explained by the host. Bundles written before the host
+profile fall back to comparing the legacy `os`, `cpu_features`, `threads`
+and `compiler_version` fields, with a note.
+
 ## Security assumptions
 
 Experiment files and bundles are treated as untrusted input: path

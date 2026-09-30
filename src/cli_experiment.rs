@@ -1206,8 +1206,11 @@ pub(crate) fn run_compare_command(command: &CompareArgs) -> anyhow::Result<()> {
     let bundle_a = load_anchored_bundle(&command.a, &anchor(&command.expect_a_semantic_hash))?;
     let bundle_b = load_anchored_bundle(&command.b, &anchor(&command.expect_b_semantic_hash))?;
     let result = compare_loaded(&bundle_a, &bundle_b).map_err(anyhow::Error::msg)?;
+    let host = host_differences(&bundle_a, &bundle_b);
     if command.json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        let mut value = serde_json::to_value(&result)?;
+        value["host_differences"] = serde_json::to_value(&host)?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
     let identity = &result.identity;
@@ -1300,7 +1303,46 @@ pub(crate) fn run_compare_command(command: &CompareArgs) -> anyhow::Result<()> {
         fmt_opt_u64(result.runtime.peak_rss_kb_a),
         fmt_opt_u64(result.runtime.peak_rss_kb_b)
     );
+    if results_differ(&result) {
+        println!("host (why the numbers may differ):");
+        for line in ember::v05::host_profile::report_lines(&host) {
+            println!("{line}");
+        }
+    } else if !host.differences.is_empty() {
+        println!(
+            "host: {} difference(s), none of which changed the results",
+            host.differences.len()
+        );
+    }
     Ok(())
+}
+
+/// Host differences between two bundles, from their runtime.json files.
+fn host_differences(
+    a: &LoadedBundle,
+    b: &LoadedBundle,
+) -> ember::v05::host_profile::HostDifferenceReport {
+    let runtime = |bundle: &LoadedBundle| {
+        bundle
+            .file("runtime.json")
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+    };
+    ember::v05::host_profile::explain_host_differences(runtime(a).as_ref(), runtime(b).as_ref())
+}
+
+/// Whether any output or capture differs between the compared bundles.
+fn results_differ(result: &ember::v05::compare::CompareResult) -> bool {
+    result
+        .outputs
+        .iter()
+        .any(|output| !output.generated_tokens_equal || !output.generated_text_equal)
+        || result.captures.iter().any(|capture| {
+            capture
+                .metrics
+                .as_ref()
+                .map(|metrics| !metrics.exact)
+                .unwrap_or(true)
+        })
 }
 
 fn yesno(value: bool) -> &'static str {
@@ -1455,10 +1497,12 @@ pub(crate) fn run_reproduce_command(
     } else {
         "failed"
     };
+    let host = host_differences(&original, &reproduction);
     if command.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "host_differences": host,
                 "verdict": verdict,
                 "original": command.bundle.display().to_string(),
                 "reproduction": path.display().to_string(),
@@ -1494,6 +1538,12 @@ pub(crate) fn run_reproduce_command(
                 "not anchored: self-consistent only"
             }
         );
+        if !matches!(verdict, "exact-semantic" | "exact") {
+            println!("  host (why the numbers may differ):");
+            for line in ember::v05::host_profile::report_lines(&host) {
+                println!("  {line}");
+            }
+        }
     }
     if verdict == "failed" || verdict == "captures-misaligned" {
         return Err(crate::cli_support::VerificationFailed.into());
