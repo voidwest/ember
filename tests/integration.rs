@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use ember::backend::{Backend, CpuBackend};
 use ember::tensor::CpuTensor;
 
@@ -290,24 +293,44 @@ fn test_assign_row() {
     assert_eq!(&t.data()[4..8], src.data());
 }
 
+/// Single-token forward pass through a real GGUF.
+///
+/// `EMBER_FORWARD_MODEL` names any gpt2- or llama-family GGUF (the scheduled
+/// model-gated workflow points it at the pinned Llama-3.2-1B-Instruct Q8_0
+/// from `scripts/download_models.sh`). Without it, a local `gpt2.Q8_0.gguf`
+/// is used when present, as before; otherwise the test skips.
+/// `EMBER_FORWARD_REQUIRED=1` turns the skip into a failure.
 #[test]
 fn test_model_forward_pass() {
-    if !std::path::Path::new("gpt2.Q8_0.gguf").exists() {
-        eprintln!("skipping model test: no gguf file found");
-        return;
-    }
-
     use ember::backend::{Backend, CpuBackend};
     use ember::loader::load_gguf;
     use ember::model::Gpt2;
 
-    let loader = load_gguf("gpt2.Q8_0.gguf").expect("failed to load model");
-    let model = Gpt2::from_loader(loader).expect("failed to build model");
-    let backend = CpuBackend;
+    let path = match common::gate("EMBER_FORWARD_REQUIRED", None, &["EMBER_FORWARD_MODEL"]) {
+        Err(why) => panic!("ember forward pass: {why}"),
+        Ok(Some(paths)) => paths[0].clone(),
+        Ok(None) if std::path::Path::new("gpt2.Q8_0.gguf").exists() => "gpt2.Q8_0.gguf".into(),
+        Ok(None) => {
+            eprintln!("skipping model test: set EMBER_FORWARD_MODEL (or add gpt2.Q8_0.gguf)");
+            return;
+        }
+    };
 
-    let logits = model
-        .forward(&backend, &[15496])
-        .expect("forward pass failed");
+    let loader = load_gguf(&path).expect("failed to load model");
+    let architecture = ember::loader::resolve_generation_architecture("auto", &loader)
+        .expect("unsupported architecture");
+    let backend = CpuBackend;
+    // Token 15496 is in range for both the GPT-2 and Llama-3 vocabularies.
+    let logits = match architecture.as_str() {
+        "gpt2" => Gpt2::from_loader(loader)
+            .expect("failed to build model")
+            .forward(&backend, &[15496]),
+        "llama" | "qwen3" => ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(64))
+            .expect("failed to build model")
+            .forward(&backend, &[15496]),
+        other => panic!("test_model_forward_pass does not cover architecture '{other}'"),
+    }
+    .expect("forward pass failed");
 
     let shape = backend.shape(&logits);
     assert_eq!(shape.len(), 2, "logits should be 2D [seq_len, vocab]");
@@ -316,7 +339,7 @@ fn test_model_forward_pass() {
     let vocab_size = shape[1];
     assert!(
         vocab_size > 50000,
-        "gpt2 vocab should be ~50257, got {}",
+        "vocab should be GPT-2 sized (~50257) or larger, got {}",
         vocab_size
     );
 

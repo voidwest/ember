@@ -778,9 +778,13 @@ python3 probes/test_probe_workflows.py
 
 the integration suite covers tensor operations, sampling, tokenizer loading,
 in-memory and mmap-backed gguf fixtures, grouped q8_0 projections, and f16
-cache attention. the model smoke test also runs a gpt-2 forward pass when
-`gpt2.Q8_0.gguf` is present locally; otherwise it skips so ci does not need to
-download large model weights.
+cache attention. the model smoke test also runs a single-token forward pass on
+the gguf named by `EMBER_FORWARD_MODEL` (gpt-2 or llama family), or on a local
+`gpt2.Q8_0.gguf`; otherwise it skips so per-PR ci does not need to download
+large model weights. the weekly `model-gated` workflow runs it, and the agent
+end-to-end suite, against the pinned Llama-3.2-1B-Instruct Q8_0 with
+`EMBER_FORWARD_REQUIRED=1` / `EMBER_AGENT_E2E_REQUIRED=1`, so a missing model
+fails instead of skipping.
 
 ### experiment (v0.5)
 

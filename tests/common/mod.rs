@@ -27,6 +27,11 @@
 //! | `EMBER_CONVERSE_E2E` | `EMBER_CONVERSE_E2E_REQUIRED=1` |
 //! | `EMBER_TOK_PARITY`   | `EMBER_TOK_PARITY_REQUIRED=1`   |
 //! | (dump only)          | `EMBER_CHAT_PARITY_REQUIRED=1`  |
+//! | (model path only)    | `EMBER_FORWARD_REQUIRED=1`      |
+//!
+//! `.github/workflows/model-gated.yml` runs the suites whose fixtures come
+//! from pinned public URLs weekly with their flags set; its header lists
+//! the others and why they are not run there.
 //!
 //! `tests/k_parity.rs` keeps its own inline `EMBER_PARITY_REQUIRED` check
 //! rather than importing this module; the naming convention is what must
