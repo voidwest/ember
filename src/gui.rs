@@ -633,7 +633,6 @@ impl GuiSession {
     }
 }
 
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 /// Remove the baseline bundles of sweep layers whose intervention never ran.
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 fn discard_unused_baselines(cache: &SweepCache) {
