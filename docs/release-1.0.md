@@ -7,6 +7,31 @@ reports `version = "1.0.0"` (rebuilt binary
 version-string-only delta). The `v1.0.0` tag is deliberately held until the
 external gates below close, per [the roadmap](road-to-1.0.md) gate 7.
 
+## Drift since the candidate (recorded 2026-09-30)
+
+The evidence in this document is for the candidate above, not for `main`.
+
+- The `v1.0.0-rc.1` tag points at `0ea407d`, which is not an ancestor of
+  `main`: history was rewritten after the tag was pushed. `665d60c` on `main`
+  has the identical tree.
+- As of `a5971db`, 93 commits follow `665d60c` on `main` (34 `feat`, 22 `fix`,
+  9 `perf`): 187 files, +35,049 / -4,504 lines.
+- They change the numerical path, not only the consoles: new ARM prefill
+  kernels (`src/q8_gemm.rs`, `src/attention_kernels.rs`,
+  `src/k_quant_matmul/arm_tiles.rs`) and edits to `src/simd.rs`,
+  `src/backend.rs`, `src/llama.rs`, `src/tensor.rs`, `src/kv_cache.rs`,
+  `src/quant.rs` and `src/loader.rs`.
+
+So cut step 2 below is a full rerun on a new candidate, not a formality, and
+every further feature or kernel commit enlarges it. The next candidate should
+get a new tag (`v1.0.0-rc.2`) on `main`; moving `rc.1` would rewrite a
+published tag.
+
+A development-tree rerun on 2026-09-30 (K-parity, the golden ladder and the
+golden path on the ARM host) found the ladder numbers unchanged; see the
+[record](audits/1.0-current-validation.md). It does not replace the candidate
+rerun.
+
 ## Gate status
 
 | Roadmap gate | Status | Evidence |
@@ -68,5 +93,6 @@ limits.
 - `qwen3` and `gemma4` remain experimental; see [support](support.md).
 - The Rust library API has no stable subset; only the serialized anchors and
   documented CLI/Python surfaces are the 1.x promise.
-- macOS/Windows have no CI tier; local macOS ARM validation is documented in
-  [ARM kernels](arm-kernels.md).
+- Windows has no CI tier. macOS has a headless build/test/lint tier and a GUI
+  compile check on both architectures, but no model-level CI gate; local macOS
+  ARM validation is documented in [ARM kernels](arm-kernels.md).
