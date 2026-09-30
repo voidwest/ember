@@ -55,6 +55,7 @@ const REPOSITORY_URL: &str = "https://github.com/voidwest/ember";
 mod chart;
 mod compare;
 mod components;
+mod export;
 mod form;
 mod harness;
 mod history;
@@ -78,7 +79,7 @@ use harness::seed_comparison;
 #[cfg(all(target_os = "macos", feature = "gui-tests"))]
 use harness::{probe_examples, render_live_flow, render_test_artifacts};
 use harness::{seed_runs_requested, seed_store};
-use history::{open_store, record_result};
+use history::{open_store, record_bundles, record_result};
 use input::{InputEvent, InputId, InputKind, TextInput};
 use menu::{app_menus, register_menu_actions};
 use palette::Command;
@@ -544,6 +545,12 @@ struct Console {
     compare_picks: Vec<u64>,
     /// The two runs the comparison page is showing, when it is open.
     comparing: Option<(u64, u64)>,
+    /// The history row whose export strip is open.
+    export_run: Option<u64>,
+    /// A history run being re-run to write its bundle again.
+    rebundle: Option<u64>,
+    /// The outcome of the last export action, shown in the strip.
+    export_note: Option<String>,
 }
 
 impl Console {
@@ -802,6 +809,9 @@ impl Console {
             cancelled: false,
             compare_picks: Vec::new(),
             comparing: None,
+            export_run: None,
+            rebundle: None,
+            export_note: None,
         }
     }
 
@@ -967,6 +977,11 @@ impl Console {
 
     /// The worker confirmed a cancellation: back to idle, nothing kept.
     fn run_cancelled(&mut self, cx: &mut Context<Self>) {
+        if let Some(number) = self.rebundle.take() {
+            self.export_note = Some(format!(
+                "Re-run of run #{number} cancelled; its record is unchanged."
+            ));
+        }
         self.run_cancel = None;
         self.pending_context = None;
         self.pending_run = false;
@@ -1026,6 +1041,7 @@ impl Console {
                 WorkerReply::Cancelled => self.run_cancelled(cx),
                 WorkerReply::Failed(error) => {
                     self.run_cancel = None;
+                    self.rebundle = None;
                     self.pending_run = false;
                     self.pending_context = None;
                     self.session = None;
@@ -1080,6 +1096,23 @@ impl Console {
                     }
                 },
                 WorkerReply::RunDone(result) => match *result {
+                    // A re-run for History's export: its bundles go to the
+                    // record it re-ran, and nothing on screen changes.
+                    Ok(bundle) if self.rebundle.is_some() => {
+                        self.run_cancel = None;
+                        self.status = Status::Idle;
+                        if let Some(number) = self.rebundle.take() {
+                            self.rebundle_done(number, &bundle);
+                        }
+                    }
+                    Err(error) if self.rebundle.is_some() => {
+                        self.run_cancel = None;
+                        self.status = Status::Idle;
+                        if let Some(number) = self.rebundle.take() {
+                            self.export_note =
+                                Some(format!("Re-run of run #{number} failed: {error}"));
+                        }
+                    }
                     Ok(bundle) => {
                         self.run_cancel = None;
                         self.sample = false;
@@ -1150,6 +1183,7 @@ impl Console {
                                 prompt: sent.prompt.clone(),
                                 config: Some(sent.record_config()),
                                 result: Some(record_result(&bundle)),
+                                bundles: Some(record_bundles(&bundle)),
                             });
                             self.store.touch_model(&sent.model_path, now);
                             // The state that produced this run is the resume point.
@@ -1347,66 +1381,21 @@ impl Console {
             self.comparison.as_ref()?,
             self.result_context.as_ref()?,
         );
-        let mut out = String::new();
-        out.push_str("# Ember experiment\n\n");
-        if let Some(number) = self.saved_run {
-            out.push_str(&format!("> Run #{number}, reopened from history.\n\n"));
+        let note = if let Some(number) = self.saved_run {
+            Some(format!("Run #{number}, reopened from history."))
         } else if self.sample {
-            out.push_str("> Sample result: illustrative data, not a measurement.\n\n");
-        }
-        out.push_str(&format!(
-            "- **Model:** {}\n",
-            model_display_name(&context.model_path)
-        ));
-        out.push_str(&format!("- **Prompt:** {}\n", context.prompt.trim()));
-        out.push_str(&format!(
-            "- **Change:** {} at layer {} ({}), affecting {}\n",
-            operation_label(&context.op),
-            context.layer,
-            site_label(&context.site),
-            token_label(&context.token),
-        ));
-        out.push_str(&format!(
-            "- **Generation:** up to {} tokens, seed 0\n\n",
-            context.max_tokens
-        ));
-        out.push_str("## Result\n\n");
-        out.push_str(&format!(
-            "- **Text output:** {}\n",
-            if comparison.generated_text_equal {
-                "unchanged"
-            } else {
-                "changed"
-            }
-        ));
-        if let Some(layer) = comparison.landmarks.first_layer_divergence {
-            out.push_str(&format!("- **First internal divergence:** layer {layer}\n"));
-        }
-        if let (Some(value), Some(layer)) = (
-            comparison.landmarks.peak_relative_l2,
-            comparison.landmarks.peak_layer,
-        ) {
-            out.push_str(&format!(
-                "- **Peak divergence:** {value:.3} (relative L2) at layer {layer}\n"
-            ));
-        }
-        out.push_str(&format!("\n**Baseline:** {}\n\n", baseline.text.trim()));
-        out.push_str(&format!("**Intervention:** {}\n", intervention.text.trim()));
-        if !self.layer_series.is_empty() {
-            out.push_str("\n## Divergence by layer\n\n| layer | relative L2 | cosine distance |\n|---|---|---|\n");
-            for metric in self.layer_series.iter() {
-                let cell = |value: Option<f64>| {
-                    value.map_or_else(|| "n/a".to_string(), |value| format!("{value:.4}"))
-                };
-                out.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    metric.layer,
-                    cell(metric.relative_l2_difference),
-                    cell(metric.cosine_distance)
-                ));
-            }
-        }
-        Some(out)
+            Some("Sample result: illustrative data, not a measurement.".to_string())
+        } else {
+            None
+        };
+        Some(export::experiment_markdown(
+            note.as_deref(),
+            baseline,
+            intervention,
+            comparison,
+            context,
+            &self.layer_series,
+        ))
     }
 
     /// Open Review on the built-in sample: a finished comparison a newcomer

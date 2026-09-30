@@ -937,3 +937,137 @@ async fn two_saved_runs_can_be_compared_and_old_records_say_they_cannot(cx: &mut
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn any_history_row_exports_markdown_and_its_bundle(cx: &mut TestAppContext) {
+    let (handle, console, worker_rx, reply_tx) = console_with_worker(cx).await;
+    let root = std::env::temp_dir().join(format!("ember-kit-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (kept_base, kept_int) = (root.join("kept-base"), root.join("kept-int"));
+    std::fs::create_dir_all(&kept_base).unwrap();
+    std::fs::create_dir_all(&kept_int).unwrap();
+    let bundles = |base: &std::path::Path, int: &std::path::Path| super::app_store::RecordBundles {
+        baseline: base.display().to_string(),
+        intervention: int.display().to_string(),
+    };
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // Seeded: #7 kept result and config, #6 a result only, #5 neither.
+            console.store = super::seed_store();
+            let seven = console
+                .store
+                .runs
+                .iter_mut()
+                .find(|r| r.number == 7)
+                .unwrap();
+            seven.bundles = Some(bundles(&kept_base, &kept_int));
+            let six = console
+                .store
+                .runs
+                .iter_mut()
+                .find(|r| r.number == 6)
+                .unwrap();
+            six.bundles = Some(bundles(&root.join("gone-a"), &root.join("gone-b")));
+            console.goto(View::Runs, cx);
+        });
+        window.draw(cx).clear(cx);
+
+        // A run whose bundle is on disk: Markdown, reveal, verify command.
+        window.click(SharedString::from("run-export:7"), cx);
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_some());
+        assert!(window
+            .try_find(SharedString::from("export-rebundle"))
+            .is_none());
+        window.click(SharedString::from("export-markdown"), cx);
+    })
+    .unwrap();
+    let copied = cx.read_from_clipboard().and_then(|i| i.text()).unwrap();
+    assert!(copied.starts_with("# Ember experiment"));
+    assert!(copied.contains("Run #7, from history"));
+    assert!(copied.contains("## Divergence by layer"));
+    assert!(copied.contains(&format!(
+        "ember experiment verify '{}'",
+        kept_base.display()
+    )));
+    cx.update_window(handle, |_, window, cx| {
+        window.click(SharedString::from("export-verify"), cx);
+    })
+    .unwrap();
+    let command = cx.read_from_clipboard().and_then(|i| i.text()).unwrap();
+    assert!(command.contains(&kept_int.display().to_string()));
+
+    cx.update_window(handle, |_, window, cx| {
+        // An old record with neither result nor configuration: it still
+        // exports Markdown, and says it cannot be re-run.
+        window.click(SharedString::from("run-export:5"), cx);
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-rebundle"))
+            .is_none());
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_none());
+        window.click(SharedString::from("export-markdown"), cx);
+    })
+    .unwrap();
+    let copied = cx.read_from_clipboard().and_then(|i| i.text()).unwrap();
+    assert!(copied.contains("Run #5, from history"));
+
+    // #7's bundle goes missing; it kept its configuration, so it re-runs.
+    std::fs::remove_dir_all(&kept_int).unwrap();
+    let before = cx.update(|cx| console.read(cx).store.runs.len());
+    cx.update_window(handle, |_, window, cx| {
+        window.click(SharedString::from("run-export:7"), cx);
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_none());
+        window.click(SharedString::from("export-rebundle"), cx);
+        assert_eq!(console.read(cx).status, super::Status::Running);
+        assert_eq!(console.read(cx).rebundle, Some(7));
+        let Ok(super::WorkerMsg::Run(config, _)) = worker_rx.try_recv() else {
+            panic!("the stored configuration went to the worker");
+        };
+        assert_eq!(config.model_path, "/models/Llama-3.2-1B-Instruct-Q8_0.gguf");
+        window.render_frame(cx);
+        assert!(window
+            .try_find(SharedString::from("export-rebundle-cancel"))
+            .is_some());
+    })
+    .unwrap();
+    let (fresh_base, fresh_int) = (root.join("fresh-base"), root.join("fresh-int"));
+    std::fs::create_dir_all(&fresh_base).unwrap();
+    std::fs::create_dir_all(&fresh_int).unwrap();
+    let mut bundle = fake_bundle();
+    bundle.baseline.bundle_dir = fresh_base.display().to_string();
+    bundle.intervention.bundle_dir = fresh_int.display().to_string();
+    reply_tx
+        .send(super::WorkerReply::RunDone(Box::new(Ok(bundle))))
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            console.drain_replies(cx);
+        });
+        window.render_frame(cx);
+        let console = console.read(cx);
+        assert_eq!(console.status, super::Status::Idle);
+        assert_eq!(console.store.runs.len(), before, "no new history row");
+        assert!(console.baseline.is_none(), "nothing changes on screen");
+        let seven = console.store.runs.iter().find(|r| r.number == 7).unwrap();
+        let kept = seven.bundles.as_ref().unwrap();
+        assert!(kept.exist(), "the record points at the new bundles");
+        assert!(kept.intervention.ends_with("fresh-int"));
+        assert!(console
+            .export_note
+            .as_deref()
+            .is_some_and(|note| note.contains("wrote a verified bundle")));
+        assert!(window
+            .try_find(SharedString::from("export-reveal"))
+            .is_some());
+    })
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -687,6 +687,7 @@ mod tests {
                 peak_relative_l2: Some(peak),
                 tokens_equal: false,
             }),
+            bundles: None,
         }
     }
 

@@ -250,7 +250,7 @@ impl TableDelegate for RunsDelegate {
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
             // Wide enough for Select + Open + Pin + Reuse + Star + Delete,
             // the fullest lane a row can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(440.0)),
+            _ => Column::new(run_col::ACTIONS, "").width(px(520.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -352,6 +352,23 @@ impl TableDelegate for RunsDelegate {
                         if let Some(console) = select_console.as_ref() {
                             let _ = console.update(cx, |console, cx| {
                                 console.toggle_compare_pick(number, cx);
+                            });
+                        }
+                    }),
+            );
+            // Every row exports: Markdown always, and its bundle when it is
+            // on disk or can be re-run.
+            let export_console = self.console.clone();
+            lane = lane.child(
+                Button::new(SharedString::from(format!("run-export:{number}")))
+                    .ghost()
+                    .compact()
+                    .label("Export")
+                    .tooltip("Copy as Markdown, or get this run's verifiable bundle")
+                    .on_click(move |_, _, cx| {
+                        if let Some(console) = export_console.as_ref() {
+                            let _ = console.update(cx, |console, cx| {
+                                console.toggle_export(number, cx);
                             });
                         }
                     }),
@@ -618,6 +635,7 @@ mod tests {
             prompt: String::new(),
             config: None,
             result: None,
+            bundles: None,
         }
     }
 

@@ -60,8 +60,8 @@ pub const STORE_SCHEMA_MAJOR: u32 = 1;
 /// tells the caller to treat the session as read-only.
 ///
 /// History: 0 had no `config`, `result` or `last_run_number`; 1 has all three;
-/// 2 adds `deleted_runs` and `legacy_imported`.
-pub const STORE_SCHEMA_MINOR: u32 = 2;
+/// 2 adds `deleted_runs` and `legacy_imported`; 3 adds a run's `bundles`.
+pub const STORE_SCHEMA_MINOR: u32 = 3;
 
 /// The intervention configuration of a completed run, as typed into the form.
 /// Enough to branch from a past run without the original session; the prompt
@@ -114,6 +114,22 @@ pub struct RecordResult {
     pub tokens_equal: bool,
 }
 
+/// Where a run's two verified bundles were written, as absolute paths. The
+/// directories belong to the user and may since have been moved or deleted,
+/// so readers check before relying on them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordBundles {
+    pub baseline: String,
+    pub intervention: String,
+}
+
+impl RecordBundles {
+    /// Both directories are still on disk.
+    pub fn exist(&self) -> bool {
+        Path::new(&self.baseline).is_dir() && Path::new(&self.intervention).is_dir()
+    }
+}
+
 /// One completed run, as a record rather than a line of history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
@@ -156,6 +172,10 @@ pub struct RunRecord {
     /// Absent on records written before results were kept.
     #[serde(default)]
     pub result: Option<RecordResult>,
+    /// The run's bundle directories, so History can export them. Absent on
+    /// records written before they were kept.
+    #[serde(default)]
+    pub bundles: Option<RecordBundles>,
 }
 
 impl RunRecord {
@@ -649,6 +669,19 @@ impl AppStore {
         Ok(merged)
     }
 
+    /// Record where a run's bundles now are (after a re-run wrote them).
+    /// `false` means no such run.
+    pub fn set_bundles(&mut self, number: u64, bundles: RecordBundles) -> bool {
+        match self.runs.iter_mut().find(|run| run.number == number) {
+            Some(run) => {
+                run.bundles = Some(bundles);
+                self.touch();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Flip a run's pinned state. Ordering reads `pinned` on every render, so
     /// this is the whole feature; `false` means no such run.
     pub fn toggle_pin(&mut self, number: u64) -> bool {
@@ -877,6 +910,7 @@ mod tests {
             prompt: "اكتب جملة قصيرة عن المدينة المنورة".into(),
             config: None,
             result: None,
+            bundles: None,
         }
     }
 

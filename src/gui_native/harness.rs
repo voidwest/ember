@@ -225,12 +225,13 @@ pub(super) fn seed_store() -> AppStore {
                 layer: row.layer.map(|layer| layer.to_string()).unwrap_or_default(),
                 op: "scale".to_string(),
                 value: "0.5".to_string(),
-                source: "live".to_string(),
-                source_layer: String::new(),
+                source: "capture".to_string(),
+                source_layer: "0".to_string(),
                 token: "prompt-final".to_string(),
                 span: String::new(),
                 max_tokens: "48".to_string(),
             }),
+            bundles: None,
         });
         store.touch_model(
             &format!("/models/{}.gguf", row.model),
@@ -882,15 +883,22 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                         .collect()
                 });
                 if let [right, left, ..] = numbers[..] {
-                    for (file, comparing) in
-                        [("runs-select", None), ("runs-compare", Some((left, right)))]
-                    {
+                    for (file, comparing, export) in [
+                        ("runs-select", None, None),
+                        ("runs-export", None, Some(right)),
+                        ("runs-compare", Some((left, right)), None),
+                    ] {
                         context.update_window(handle.into(), |_, window, cx| {
                             console.update(cx, |console, cx| {
                                 console.appearance = mode;
                                 console.view = View::Runs;
-                                console.compare_picks = vec![left, right];
+                                console.compare_picks = if export.is_some() {
+                                    Vec::new()
+                                } else {
+                                    vec![left, right]
+                                };
                                 console.comparing = comparing;
+                                console.export_run = export;
                                 console.sync_kit_theme(cx);
                                 cx.notify();
                             });
@@ -927,6 +935,7 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                         console.update(cx, |console, _| {
                             console.compare_picks.clear();
                             console.comparing = None;
+                            console.export_run = None;
                         });
                     })?;
                 }

@@ -818,6 +818,10 @@ impl Console {
             .flex_col()
             .gap(px(Space::XL))
             .w_full()
+            // Never wider than the window: the table scrolls sideways in its
+            // own region instead of widening the page (and every bar on it).
+            .flex_1()
+            .min_w(px(0.0))
             .px_5()
             .pt_6()
             .child(self.section_header(
@@ -829,10 +833,11 @@ impl Console {
                 ),
             ))
             .children(self.compare_bar(colors, cx))
+            .children(self.export_bar(colors, cx))
             .child(body)
             .when(row_count > 0, |page| {
                 page.child(label(
-                    "Select two runs to compare them side by side. Open shows a run's result, Pin makes it the reference for your next run, and Reuse loads its settings. Star keeps a run at the top.",
+                    "Select two runs to compare them side by side. Export copies a run as Markdown or gets its verifiable bundle. Open shows a run's result, Pin makes it the reference for your next run, and Reuse loads its settings. Star keeps a run at the top.",
                     Type::LABEL,
                     colors.text_faint,
                 ))
@@ -2276,6 +2281,32 @@ impl Console {
                     })
                     // A sample offers neither; a run reopened from History offers
                     // both, since the banner says Duplicate branches from it.
+                    // The run's verified bundle, when it is on disk: a live
+                    // result, or a reopened run whose bundle was kept.
+                    .when(
+                        has_results
+                            && self.intervention.as_ref().is_some_and(|output| {
+                                std::path::Path::new(&output.bundle_dir).is_dir()
+                            }),
+                        |header| {
+                            let dir = self
+                                .intervention
+                                .as_ref()
+                                .map(|output| output.bundle_dir.clone())
+                                .unwrap_or_default();
+                            header.child(text_button(
+                                "review-bundle",
+                                "Reveal bundle",
+                                cx.listener(move |console, _: &ClickEvent, _window, cx| {
+                                    if let Err(error) = reveal_in_finder(&dir) {
+                                        console.error =
+                                            Some(format!("Could not reveal the bundle: {error}"));
+                                        cx.notify();
+                                    }
+                                }),
+                            ))
+                        },
+                    )
                     .when(has_results && (!self.sample || self.saved_run.is_some()), |header| {
                         header
                             .child(text_button(
@@ -2755,7 +2786,7 @@ fn fmt_tps(tps: Option<f64>) -> String {
 ///
 /// One command per platform, spawned detached: the file manager is not ours
 /// to wait on, and a failure is a banner, not a crash.
-fn reveal_in_finder(path: &str) -> Result<(), String> {
+pub(super) fn reveal_in_finder(path: &str) -> Result<(), String> {
     let result = if cfg!(target_os = "macos") {
         std::process::Command::new("open")
             .arg("-R")
