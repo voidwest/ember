@@ -446,6 +446,16 @@ fn k_matmul_output_len(
     Ok((seq_len, output_len))
 }
 
+/// Quantize projection input rows; single-row decode inputs are split across
+/// the decode team (byte-identical to the serial encoder).
+fn quantize_projection_input(src: &[f32], rows: usize, input: &mut Vec<u8>) {
+    if rows == 1 {
+        crate::simd::quantize_q8_0_decode_into(src, input);
+    } else {
+        crate::quant::quantize_q8_0_into(src, input);
+    }
+}
+
 fn assert_q8_projection_layout(
     src: &[f32],
     rows: usize,
@@ -504,7 +514,7 @@ impl CpuBackend {
         );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            quantize_projection_input(src, rows, &mut input);
             if rows == 1 {
                 Self::time_kernel::<TIMED>(|| crate::simd::matmul_q8_0_decode(&input, w, dst))
             } else {
@@ -523,6 +533,42 @@ impl CpuBackend {
     /// caller's output slice instead of wrapping a new `Vec`.
     pub fn matmul_q8_0_into(&self, src: &[f32], rows: usize, w: &QuantizedWeight, dst: &mut [f32]) {
         self.matmul_q8_0_into_impl::<false>(src, rows, w, dst);
+    }
+
+    /// Decode MLP tail: `gated = silu(gate) * up`, quantized in the same
+    /// team pass, then `dst = down · gated`.
+    ///
+    /// Bit-identical to [`crate::simd::silu_mul_into`] followed by
+    /// [`Self::matmul_q8_0_into`] (or the packed projection when `packed` is
+    /// given); it only removes a serial pass over the intermediate width.
+    pub fn silu_mul_matmul_q8_0_decode_into(
+        &self,
+        gate: &[f32],
+        up: &[f32],
+        gated: &mut [f32],
+        down: &QuantizedWeight,
+        packed: Option<&QuantizedWeightVnni>,
+        dst: &mut [f32],
+    ) {
+        assert_q8_projection_layout(
+            gated,
+            1,
+            down.in_features(),
+            down.out_features(),
+            dst,
+            "silu_mul_matmul_q8_0_decode_into",
+        );
+        let weight = match packed {
+            Some(packed) => crate::simd::Q8DecodeWeight::Packed16(packed),
+            None => crate::simd::Q8DecodeWeight::Rows(down),
+        };
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::simd::silu_mul_quantize_q8_0_decode_into(gate, up, gated, &mut input);
+            crate::simd::matmul_q8_0_decode_tasks(&mut [crate::simd::Q8DecodeTask::columns(
+                &input, weight, 1, dst,
+            )]);
+        });
     }
 
     /// Instrumented single-row projection used only by operator profiling.
@@ -549,7 +595,7 @@ impl CpuBackend {
         assert_eq!(dst.len(), w.out_features());
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::quantize_q8_0_decode_into(src, &mut input);
             Self::time_kernel::<TIMED>(|| {
                 crate::simd::matmul_q8_0_decode_interleaved_parallel(&input, w, dst)
             })
@@ -595,7 +641,7 @@ impl CpuBackend {
         );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::quantize_q8_0_decode_into(src, &mut input);
             Self::time_kernel::<TIMED>(|| {
                 crate::simd::matmul_q8_0_decode_packed16_parallel(&input, weight, dst)
             })
@@ -646,8 +692,15 @@ impl CpuBackend {
         }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::quantize_q8_0_decode_into(src, &mut input);
             let mut timings = [std::time::Duration::ZERO; 2];
+            if !TIMED {
+                crate::simd::matmul_q8_0_decode_packed16_many(
+                    &input,
+                    &mut [(first, first_dst), (second, second_dst)],
+                );
+                return timings;
+            }
             timings[0] = Self::time_kernel::<TIMED>(|| {
                 crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst)
             });
@@ -715,8 +768,15 @@ impl CpuBackend {
         }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::quantize_q8_0_decode_into(src, &mut input);
             let mut timings = [std::time::Duration::ZERO; 3];
+            if !TIMED {
+                crate::simd::matmul_q8_0_decode_packed16_many(
+                    &input,
+                    &mut [(first, first_dst), (second, second_dst), (third, third_dst)],
+                );
+                return timings;
+            }
             timings[0] = Self::time_kernel::<TIMED>(|| {
                 crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst)
             });
@@ -789,9 +849,12 @@ impl CpuBackend {
         }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            quantize_projection_input(src, rows, &mut input);
             let mut timings = [std::time::Duration::ZERO; 2];
-            if rows == 1 {
+            if rows == 1 && !TIMED {
+                // One decode region for both projections.
+                crate::simd::matmul_q8_0_decode_rows(&input, &mut [(w_a, dst_a), (w_b, dst_b)]);
+            } else if rows == 1 {
                 timings[0] = Self::time_kernel::<TIMED>(|| {
                     crate::simd::matmul_q8_0_decode(&input, w_a, dst_a)
                 });
@@ -861,9 +924,15 @@ impl CpuBackend {
         }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
+            quantize_projection_input(src, rows, &mut input);
             let mut timings = [std::time::Duration::ZERO; 3];
-            if rows == 1 {
+            if rows == 1 && !TIMED {
+                // One decode region for all three projections.
+                crate::simd::matmul_q8_0_decode_rows(
+                    &input,
+                    &mut [(w_q, dst_q), (w_k, dst_k), (w_v, dst_v)],
+                );
+            } else if rows == 1 {
                 timings[0] = Self::time_kernel::<TIMED>(|| {
                     crate::simd::matmul_q8_0_decode(&input, w_q, dst_q)
                 });
@@ -1130,8 +1199,10 @@ impl Backend for CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(x.data(), &mut input);
             if seq_len == 1 {
-                crate::simd::matmul_q8_0_decode(&input, first, &mut first_out);
-                crate::simd::matmul_q8_0_decode(&input, second, &mut second_out);
+                crate::simd::matmul_q8_0_decode_rows(
+                    &input,
+                    &mut [(first, &mut first_out), (second, &mut second_out)],
+                );
             } else {
                 crate::simd::matmul_q8_0_batch(&input, seq_len, first, &mut first_out);
                 crate::simd::matmul_q8_0_batch(&input, seq_len, second, &mut second_out);
@@ -1228,9 +1299,14 @@ impl Backend for CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(x.data(), &mut input);
             if seq_len == 1 {
-                crate::simd::matmul_q8_0_decode(&input, first, &mut first_out);
-                crate::simd::matmul_q8_0_decode(&input, second, &mut second_out);
-                crate::simd::matmul_q8_0_decode(&input, third, &mut third_out);
+                crate::simd::matmul_q8_0_decode_rows(
+                    &input,
+                    &mut [
+                        (first, &mut first_out),
+                        (second, &mut second_out),
+                        (third, &mut third_out),
+                    ],
+                );
             } else {
                 crate::simd::matmul_q8_0_batch(&input, seq_len, first, &mut first_out);
                 crate::simd::matmul_q8_0_batch(&input, seq_len, second, &mut second_out);
@@ -1943,6 +2019,23 @@ pub(crate) fn cached_attention_dispatch(
     }
     if parallel_attention {
         debug_assert_eq!(seq_len, 1);
+        // Single-token decode: one head per chunk on the decode team, which
+        // is already spinning between the surrounding matvec regions. Each
+        // head is computed exactly as on the Rayon path below.
+        let n_heads = out.len() / spec.head_dim;
+        let heads = crate::decode_pool::SharedMut::new(out);
+        let ran = crate::decode_pool::run(n_heads, &|h| {
+            // SAFETY: each chunk index is a distinct head, so the head
+            // slices are disjoint.
+            let head_out = unsafe { heads.range(h * spec.head_dim, spec.head_dim) };
+            ATTENTION_SCORE_SCRATCH.with(|qk_row| {
+                let mut qk_row = qk_row.borrow_mut();
+                compute_head(0, h, &mut qk_row, head_out);
+            });
+        });
+        if ran {
+            return;
+        }
         out.par_chunks_mut(spec.head_dim)
             .enumerate()
             .for_each(|(h, head_out)| {

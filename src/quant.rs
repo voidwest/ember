@@ -42,7 +42,6 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
         .checked_mul(Q8_0_TYPE_SIZE)
         .expect("q8_0 encoded length overflow");
     dst.resize(encoded_len, 0);
-
     // Blocks are independent, so a multi-row prefill input is split across
     // the Rayon pool; every block is encoded by the same code either way.
     if src.len() >= PARALLEL_Q8_0_QUANTIZE_MIN_VALUES && rayon::current_num_threads() > 1 {
@@ -59,7 +58,12 @@ const PARALLEL_Q8_0_QUANTIZE_MIN_VALUES: usize = 1 << 16;
 /// Blocks per parallel quantization task.
 const PARALLEL_Q8_0_QUANTIZE_CHUNK_BLOCKS: usize = 256;
 
-fn quantize_q8_0_blocks(src: &[f32], dst: &mut [u8]) {
+/// Quantize whole 32-value blocks of `src` into the pre-sized `dst`
+/// (`src.len() / 32` encoded blocks). Blocks are independent, so any split of
+/// a row into block ranges produces the same bytes as one call.
+pub(crate) fn quantize_q8_0_blocks(src: &[f32], dst: &mut [u8]) {
+    assert!(src.len().is_multiple_of(Q8_0_BLOCK_SIZE));
+    assert_eq!(dst.len(), src.len() / Q8_0_BLOCK_SIZE * Q8_0_TYPE_SIZE);
     for (values, block) in src
         .chunks_exact(Q8_0_BLOCK_SIZE)
         .zip(dst.chunks_exact_mut(Q8_0_TYPE_SIZE))

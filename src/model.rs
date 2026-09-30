@@ -16,10 +16,12 @@ pub use crate::llama::{Llama, LlamaConfig};
 /// Raw forward calls outside a session remain supported but may allocate scheduler
 /// queue blocks. This helper is an experimental Rust API.
 pub fn with_cpu_session<R: Send>(run: impl FnOnce() -> R + Send) -> R {
+    // The session thread also drives single-token decode regions on the
+    // spin-waiting decode team (see `decode_pool::session`).
     if rayon::current_thread_index().is_some() {
-        run()
+        crate::decode_pool::session(run)
     } else {
-        rayon::join(run, || ()).0
+        rayon::join(|| crate::decode_pool::session(run), || ()).0
     }
 }
 

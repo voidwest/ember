@@ -1876,8 +1876,13 @@ mod aarch64 {
         }
     }
 
-    /// Four independent output rows reuse each activation load. Integer dot
-    /// products are exact, and scaling preserves the scalar block order.
+    /// Two independent output rows reuse each activation load. Integer dot
+    /// products are exact, and scaling preserves the scalar block order, so
+    /// every row matches the one-row tile bit for bit.
+    ///
+    /// Two concurrent weight streams measured faster than four on M1: with
+    /// four rows in flight the long rows of the MLP down projection (8.5 KiB)
+    /// dropped a core to ~23 GB/s versus ~39 GB/s with two.
     ///
     /// # Safety
     /// Requires NEON, FP16 conversion and the signed byte dot-product extension.
@@ -1894,9 +1899,9 @@ mod aarch64 {
         // give `x` one encoded row and `data` a row for every output, and each
         // tile receives the data suffix starting at its first row.
         unsafe {
-            let full_rows = out.len() / 4 * 4;
-            for (tile, dst) in out[..full_rows].chunks_exact_mut(4).enumerate() {
-                q8_tile::<4>(x, &data[tile * 4 * blocks * Q8_0_TYPE_SIZE..], blocks, dst);
+            let full_rows = out.len() / 2 * 2;
+            for (tile, dst) in out[..full_rows].chunks_exact_mut(2).enumerate() {
+                q8_tile::<2>(x, &data[tile * 2 * blocks * Q8_0_TYPE_SIZE..], blocks, dst);
             }
             for (row, dst) in out[full_rows..].chunks_mut(1).enumerate() {
                 q8_tile::<1>(
@@ -1905,6 +1910,233 @@ mod aarch64 {
                     blocks,
                     dst,
                 );
+            }
+        }
+    }
+
+    /// Where block `b` of weight row `r` lives in a decode weight layout.
+    pub(crate) trait DecodeRowBlocks {
+        /// Pointer to the 32 signed quants.
+        fn quants(&self, row: usize, block: usize) -> *const u8;
+        /// Pointer to the little-endian f16 scale.
+        fn scale(&self, row: usize, block: usize) -> *const u8;
+    }
+
+    /// Row-contiguous GGUF Q8_0 blocks (`[scale, 32 quants]` per block).
+    pub(crate) struct RowsBlocks {
+        pub(crate) data: *const u8,
+        pub(crate) blocks: usize,
+    }
+
+    impl DecodeRowBlocks for RowsBlocks {
+        #[inline(always)]
+        fn quants(&self, row: usize, block: usize) -> *const u8 {
+            self.data
+                .wrapping_add((row * self.blocks + block) * Q8_0_TYPE_SIZE + 2)
+        }
+        #[inline(always)]
+        fn scale(&self, row: usize, block: usize) -> *const u8 {
+            self.data
+                .wrapping_add((row * self.blocks + block) * Q8_0_TYPE_SIZE)
+        }
+    }
+
+    /// Four-row interleaved stripes (see `QuantizedWeightInterleaved`).
+    pub(crate) struct InterleavedBlocks {
+        pub(crate) quants: *const u8,
+        pub(crate) scales: *const u8,
+        pub(crate) blocks: usize,
+    }
+
+    impl DecodeRowBlocks for InterleavedBlocks {
+        #[inline(always)]
+        fn quants(&self, row: usize, block: usize) -> *const u8 {
+            self.quants
+                .wrapping_add(((row / 4) * self.blocks + block) * 128 + (row % 4) * 32)
+        }
+        #[inline(always)]
+        fn scale(&self, row: usize, block: usize) -> *const u8 {
+            self.scales
+                .wrapping_add(((row / 4) * self.blocks + block) * 8 + (row % 4) * 2)
+        }
+    }
+
+    /// `R` weight rows × `C` activation columns. Each weight block is loaded
+    /// once for all columns. Every `(row, column)` accumulates
+    /// `sum += (dot as f32 * ws) * xs` in block order — the single-row decode
+    /// tile's exact arithmetic — so each column is bit-identical to decoding
+    /// that activation alone.
+    #[inline]
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    unsafe fn q8_columns_tile<L: DecodeRowBlocks, const R: usize, const C: usize>(
+        layout: &L,
+        x: *const u8,
+        row_bytes: usize,
+        row: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        // SAFETY: the caller guarantees the CPU features, `C` activation
+        // rows of `row_bytes` at `x` (each 34-byte block read at offsets 0,
+        // 2 and 18), a `layout` addressing every block of weight rows
+        // `row..row + R`, and `out` valid for `out[c * out_stride + row + r]`
+        // for every `(r, c)` written below.
+        unsafe {
+            let mut sums = [[0.0f32; C]; R];
+            for b in 0..row_bytes / Q8_0_TYPE_SIZE {
+                let mut xs = [0.0f32; C];
+                let mut x0 = [vdupq_n_s8(0); C];
+                let mut x1 = [vdupq_n_s8(0); C];
+                for c in 0..C {
+                    let xp = x.add(c * row_bytes + b * Q8_0_TYPE_SIZE);
+                    xs[c] = load_scale(xp);
+                    x0[c] = vld1q_s8(xp.add(2).cast());
+                    x1[c] = vld1q_s8(xp.add(18).cast());
+                }
+                for (r, row_sums) in sums.iter_mut().enumerate() {
+                    let wp = layout.quants(row + r, b);
+                    let ws = load_scale(layout.scale(row + r, b));
+                    let w0 = vld1q_s8(wp.cast());
+                    let w1 = vld1q_s8(wp.add(16).cast());
+                    for c in 0..C {
+                        let dot = signed_dot(signed_dot(vdupq_n_s32(0), x0[c], w0), x1[c], w1);
+                        row_sums[c] += vaddvq_s32(dot) as f32 * ws * xs[c];
+                    }
+                }
+            }
+            for (r, row_sums) in sums.iter().enumerate() {
+                for (c, &value) in row_sums.iter().enumerate() {
+                    *out.add(c * out_stride + row + r) = value;
+                }
+            }
+        }
+    }
+
+    /// `R` weight rows × four activation columns with the column scales in
+    /// one vector. Lane `c` computes `(dot_c as f32 * ws) * xs_c` and adds it
+    /// to its running sum: the pairwise integer reduction is exact, the
+    /// conversion rounds like the scalar cast, and the two multiplies and the
+    /// add stay separate IEEE operations, so every lane equals
+    /// [`q8_columns_tile`] (and single-row decode) bit for bit.
+    #[inline]
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    unsafe fn q8_columns4_tile<L: DecodeRowBlocks, const R: usize>(
+        layout: &L,
+        x: *const u8,
+        row_bytes: usize,
+        row: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        // SAFETY: as for `q8_columns_tile` with four activation rows at `x`;
+        // `scales` and `lanes` are local four-element arrays.
+        unsafe {
+            let mut sums = [vdupq_n_f32(0.0); R];
+            for b in 0..row_bytes / Q8_0_TYPE_SIZE {
+                let mut scales = [0.0f32; 4];
+                let mut x0 = [vdupq_n_s8(0); 4];
+                let mut x1 = [vdupq_n_s8(0); 4];
+                for c in 0..4 {
+                    let xp = x.add(c * row_bytes + b * Q8_0_TYPE_SIZE);
+                    scales[c] = load_scale(xp);
+                    x0[c] = vld1q_s8(xp.add(2).cast());
+                    x1[c] = vld1q_s8(xp.add(18).cast());
+                }
+                let xs = vld1q_f32(scales.as_ptr());
+                for (r, sum) in sums.iter_mut().enumerate() {
+                    let wp = layout.quants(row + r, b);
+                    let ws = load_scale(layout.scale(row + r, b));
+                    let w0 = vld1q_s8(wp.cast());
+                    let w1 = vld1q_s8(wp.add(16).cast());
+                    let zero = vdupq_n_s32(0);
+                    let d0 = signed_dot(signed_dot(zero, x0[0], w0), x1[0], w1);
+                    let d1 = signed_dot(signed_dot(zero, x0[1], w0), x1[1], w1);
+                    let d2 = signed_dot(signed_dot(zero, x0[2], w0), x1[2], w1);
+                    let d3 = signed_dot(signed_dot(zero, x0[3], w0), x1[3], w1);
+                    let dots = vpaddq_s32(vpaddq_s32(d0, d1), vpaddq_s32(d2, d3));
+                    let products = vmulq_f32(vmulq_n_f32(vcvtq_f32_s32(dots), ws), xs);
+                    *sum = vaddq_f32(*sum, products);
+                }
+            }
+            for (r, sum) in sums.iter().enumerate() {
+                let mut lanes = [0.0f32; 4];
+                vst1q_f32(lanes.as_mut_ptr(), *sum);
+                for (c, value) in lanes.into_iter().enumerate() {
+                    *out.add(c * out_stride + row + r) = value;
+                }
+            }
+        }
+    }
+
+    /// Weight rows `row_start..row_end` against `columns` quantized
+    /// activation rows (`x` holds `columns * row_bytes` bytes). Output column
+    /// `c` row `r` is written to `out[c * out_stride + r]`.
+    ///
+    /// # Safety
+    /// Requires NEON, FP16 and dotprod; `layout` must address every block of
+    /// the requested rows, `x` must hold `columns` activation rows, and `out`
+    /// must be valid for the addressed writes.
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn matmul_q8_0_decode_columns_dotprod<L: DecodeRowBlocks>(
+        layout: &L,
+        x: &[u8],
+        row_bytes: usize,
+        columns: usize,
+        row_start: usize,
+        row_end: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        assert!(x.len() >= columns * row_bytes);
+        // SAFETY: the caller contract above is forwarded; the assert covers
+        // the activation rows, and every tile stays within `row_end` rows and
+        // `columns` columns.
+        unsafe {
+            // Wider batches are compute-bound, so taller row tiles amortize
+            // the activation loads; single-column work keeps two streams.
+            let tall = if columns >= 4 { 4 } else { 2 };
+            let mut row = row_start;
+            while row < row_end {
+                let height = if row + tall <= row_end {
+                    tall
+                } else if row + 2 <= row_end {
+                    2
+                } else {
+                    1
+                };
+                let mut column = 0;
+                while column < columns {
+                    let xp = x.as_ptr().add(column * row_bytes);
+                    let op = out.add(column * out_stride);
+                    let width = match columns - column {
+                        4.. => 4,
+                        2..=3 => 2,
+                        _ => 1,
+                    };
+                    macro_rules! tile {
+                        ($r:literal) => {
+                            match width {
+                                4 => q8_columns4_tile::<L, $r>(
+                                    layout, xp, row_bytes, row, op, out_stride,
+                                ),
+                                2 => q8_columns_tile::<L, $r, 2>(
+                                    layout, xp, row_bytes, row, op, out_stride,
+                                ),
+                                _ => q8_columns_tile::<L, $r, 1>(
+                                    layout, xp, row_bytes, row, op, out_stride,
+                                ),
+                            }
+                        };
+                    }
+                    match height {
+                        4 => tile!(4),
+                        2 => tile!(2),
+                        _ => tile!(1),
+                    }
+                    column += width;
+                }
+                row += height;
             }
         }
     }
@@ -2453,7 +2685,7 @@ pub(crate) fn matmul_q8_0_decode(x: &[u8], w: &QuantizedWeight, out: &mut [f32])
 
     let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
     if should_parallel_q8_decode(w.out_features(), w.in_features()) {
-        matmul_q8_0_decode_parallel(x, w, blocks_per_row, out);
+        matmul_q8_0_decode_parallel(x, w, out);
         return;
     }
 
@@ -2503,7 +2735,9 @@ pub(crate) fn matmul_q8_0_batch_legacy(
     if tile_rows == 1 {
         x.par_chunks(encoded_row_len)
             .zip(out.par_chunks_mut(w.out_features()))
-            .for_each(|(x_row, out_row)| matmul_q8_0_decode(x_row, w, out_row));
+            .for_each(|(x_row, out_row)| {
+                crate::decode_pool::without_team(|| matmul_q8_0_decode(x_row, w, out_row))
+            });
         return;
     }
 
@@ -2644,33 +2878,472 @@ pub(crate) fn q8_decode_uses_row_parallel(out_features: usize, in_features: usiz
     should_parallel_q8_decode(out_features, in_features)
 }
 
-// Ten-worker M1 Pro pools mix performance and efficiency cores. More work
-// chunks let Rayon redistribute a slow worker's remaining output rows.
-fn q8_decode_chunk_rows(outputs: usize, threads: usize, alignment: usize) -> usize {
-    let rows = outputs.div_ceil(threads).max(64);
-    #[cfg(target_arch = "aarch64")]
-    if threads > 8 {
-        return rows.min(256).next_multiple_of(alignment.max(4));
-    }
-    rows.next_multiple_of(alignment)
+fn matmul_q8_0_decode_parallel(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
+    matmul_q8_0_decode_tasks(&mut [Q8DecodeTask {
+        x,
+        weight: Q8DecodeWeight::Rows(w),
+        out,
+        columns: 1,
+    }]);
 }
 
-fn matmul_q8_0_decode_parallel(
-    x: &[u8],
-    w: &QuantizedWeight,
-    blocks_per_row: usize,
-    out: &mut [f32],
+// -- decode activation preparation ----------------------------------------------
+
+/// Q8_0 blocks per team chunk when preparing decode activations.
+const PREPARE_CHUNK_BLOCKS: usize = 32;
+
+/// Quantize whole rows of `src` into `dst` (resized), splitting the blocks
+/// across the decode team. Byte-identical to
+/// [`crate::quant::quantize_q8_0_into`]: every block is encoded
+/// independently by the same code.
+pub(crate) fn quantize_q8_0_decode_into(src: &[f32], dst: &mut Vec<u8>) {
+    assert!(src.len().is_multiple_of(Q8_0_BLOCK_SIZE));
+    let blocks = src.len() / Q8_0_BLOCK_SIZE;
+    dst.resize(blocks * Q8_0_TYPE_SIZE, 0);
+    let chunks = blocks.div_ceil(PREPARE_CHUNK_BLOCKS);
+    let out = crate::decode_pool::SharedMut::new(dst);
+    crate::decode_pool::run_or_serial(chunks, &|chunk| {
+        let first = chunk * PREPARE_CHUNK_BLOCKS;
+        let count = PREPARE_CHUNK_BLOCKS.min(blocks - first);
+        // SAFETY: chunks cover disjoint block ranges of `dst`.
+        let encoded = unsafe { out.range(first * Q8_0_TYPE_SIZE, count * Q8_0_TYPE_SIZE) };
+        crate::quant::quantize_q8_0_blocks(
+            &src[first * Q8_0_BLOCK_SIZE..(first + count) * Q8_0_BLOCK_SIZE],
+            encoded,
+        );
+    });
+}
+
+/// `gated = silu(gate) * up`, then quantize `gated` into `dst` (resized),
+/// fused per block range on the decode team. Element-wise identical to
+/// [`silu_mul_into`] followed by [`crate::quant::quantize_q8_0_into`].
+pub(crate) fn silu_mul_quantize_q8_0_decode_into(
+    gate: &[f32],
+    up: &[f32],
+    gated: &mut [f32],
+    dst: &mut Vec<u8>,
 ) {
-    let threads = rayon::current_num_threads().max(1);
-    let chunk_rows = q8_decode_chunk_rows(w.out_features(), threads, 1);
-    out.par_chunks_mut(chunk_rows)
-        .enumerate()
-        .for_each(|(chunk_idx, out_chunk)| {
-            let row_start = chunk_idx * chunk_rows;
-            let data_start = row_start * blocks_per_row * Q8_0_TYPE_SIZE;
-            let data = &w.data()[data_start..];
-            matmul_q8_0_decode_dispatch_chunk(x, data, blocks_per_row, out_chunk);
+    assert_eq!(gate.len(), up.len());
+    assert_eq!(gate.len(), gated.len());
+    assert!(gate.len().is_multiple_of(Q8_0_BLOCK_SIZE));
+    let blocks = gate.len() / Q8_0_BLOCK_SIZE;
+    dst.resize(blocks * Q8_0_TYPE_SIZE, 0);
+    let chunks = blocks.div_ceil(PREPARE_CHUNK_BLOCKS);
+    let out = crate::decode_pool::SharedMut::new(dst);
+    let gated = crate::decode_pool::SharedMut::new(gated);
+    crate::decode_pool::run_or_serial(chunks, &|chunk| {
+        let first = chunk * PREPARE_CHUNK_BLOCKS;
+        let count = PREPARE_CHUNK_BLOCKS.min(blocks - first);
+        let values = first * Q8_0_BLOCK_SIZE..(first + count) * Q8_0_BLOCK_SIZE;
+        // SAFETY: chunks cover disjoint element and block ranges.
+        let (gated, encoded) = unsafe {
+            (
+                gated.range(values.start, values.len()),
+                out.range(first * Q8_0_TYPE_SIZE, count * Q8_0_TYPE_SIZE),
+            )
+        };
+        // Chunk boundaries are multiples of 32 elements, so SIMD SiLU
+        // variants see the same full-width lanes as one whole-row call.
+        silu_mul_into(&gate[values.clone()], &up[values], gated);
+        crate::quant::quantize_q8_0_blocks(gated, encoded);
+    });
+}
+
+// -- decode regions ------------------------------------------------------------
+
+/// Weight layouts a decode region can read.
+#[derive(Clone, Copy)]
+pub(crate) enum Q8DecodeWeight<'a> {
+    /// Row-contiguous GGUF Q8_0 blocks.
+    Rows(&'a QuantizedWeight),
+    /// Four-row interleaved stripes (the LM head's decode copy).
+    Interleaved(&'a QuantizedWeightInterleaved),
+    /// Sixteen-output packed records (x86 AVX-512 VNNI only).
+    Packed16(&'a QuantizedWeightVnni),
+}
+
+impl Q8DecodeWeight<'_> {
+    fn out_features(self) -> usize {
+        match self {
+            Self::Rows(w) => w.out_features(),
+            Self::Interleaved(w) => w.out_features(),
+            Self::Packed16(w) => w.out_features(),
+        }
+    }
+
+    fn in_features(self) -> usize {
+        match self {
+            Self::Rows(w) => w.in_features(),
+            Self::Interleaved(w) => w.in_features(),
+            Self::Packed16(w) => w.in_features(),
+        }
+    }
+
+    /// Row alignment of a chunk start: keeps every kernel on its widest tile.
+    fn row_alignment(self) -> usize {
+        match self {
+            Self::Rows(_) => 8,
+            Self::Interleaved(_) => crate::quant::INTERLEAVE,
+            Self::Packed16(_) => VNNI_OUT_TILE,
+        }
+    }
+
+    /// Compute output rows `row_start..row_start + out.len()` serially.
+    ///
+    /// Every kernel computes each output row with the same arithmetic no
+    /// matter which range it is called with, so chunking never changes bits.
+    fn compute_rows(self, x: &[u8], row_start: usize, out: &mut [f32]) {
+        match self {
+            Self::Rows(w) => {
+                let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
+                let data = &w.data()[row_start * blocks_per_row * Q8_0_TYPE_SIZE..];
+                matmul_q8_0_decode_dispatch_chunk(x, data, blocks_per_row, out);
+            }
+            Self::Interleaved(w) => matmul_q8_0_decode_interleaved(x, w, out, row_start),
+            Self::Packed16(w) => {
+                assert!(packed_q8_0_vnni_supported());
+                assert!(row_start.is_multiple_of(VNNI_OUT_TILE));
+                #[cfg(target_arch = "x86_64")]
+                // SAFETY: runtime feature checks above cover every enabled ISA
+                // extension. Repacking pads the last tile and guarantees one
+                // complete record for every aligned output range addressed here.
+                unsafe {
+                    x86_64::matmul_q8_0_decode_packed16_avx512_vnni(
+                        x,
+                        w.packed_bytes(),
+                        w.blocks_per_row,
+                        out,
+                        row_start,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                let _ = (w, x, out);
+            }
+        }
+    }
+}
+
+impl Q8DecodeWeight<'_> {
+    /// Weight rows `row_start..row_end` against `columns` activation rows,
+    /// writing column `c` row `r` to `out[c * out_stride + r]`.
+    ///
+    /// ARM reuses each loaded weight block across up to four columns with the
+    /// single-row arithmetic; other targets run the single-row kernel once per
+    /// column over the (now cache-resident) weight rows.
+    ///
+    /// # Safety
+    /// `out` must be valid for those writes and no other thread may access
+    /// them concurrently.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn compute_rows_columns(
+        self,
+        x: &[u8],
+        columns: usize,
+        row_start: usize,
+        row_end: usize,
+        out: *mut f32,
+        out_stride: usize,
+    ) {
+        let blocks_per_row = self.in_features() / Q8_0_BLOCK_SIZE;
+        let row_bytes = blocks_per_row * Q8_0_TYPE_SIZE;
+        #[cfg(target_arch = "aarch64")]
+        if is_aarch64_feature_detected!("dotprod") && is_aarch64_feature_detected!("fp16") {
+            match self {
+                Self::Rows(w) => {
+                    let layout = aarch64::RowsBlocks {
+                        data: w.data().as_ptr(),
+                        blocks: blocks_per_row,
+                    };
+                    // SAFETY: features checked above; the layout addresses
+                    // rows below `out_features` of a validated weight, and
+                    // the caller guarantees the output writes.
+                    unsafe {
+                        aarch64::matmul_q8_0_decode_columns_dotprod(
+                            &layout, x, row_bytes, columns, row_start, row_end, out, out_stride,
+                        );
+                    }
+                    return;
+                }
+                Self::Interleaved(w) => {
+                    let layout = aarch64::InterleavedBlocks {
+                        quants: w.quants().as_ptr(),
+                        scales: w.scales().as_ptr(),
+                        blocks: blocks_per_row,
+                    };
+                    // SAFETY: as above; interleaved stripes are padded to a
+                    // multiple of four rows.
+                    unsafe {
+                        aarch64::matmul_q8_0_decode_columns_dotprod(
+                            &layout, x, row_bytes, columns, row_start, row_end, out, out_stride,
+                        );
+                    }
+                    return;
+                }
+                Self::Packed16(_) => {}
+            }
+        }
+        for column in 0..columns {
+            // SAFETY: the caller guarantees exclusive access to these writes.
+            let out = unsafe {
+                std::slice::from_raw_parts_mut(
+                    out.add(column * out_stride + row_start),
+                    row_end - row_start,
+                )
+            };
+            self.compute_rows(
+                &x[column * row_bytes..(column + 1) * row_bytes],
+                row_start,
+                out,
+            );
+        }
+    }
+}
+
+/// One matvec of a decode region: `out = weight · x` for `columns`
+/// quantized activation rows.
+///
+/// `x` holds `columns` encoded rows back to back and `out` holds `columns`
+/// output rows of `weight.out_features()` values (`out[c * out_features + r]`
+/// is weight row `r` against activation `c`). Each column is bit-identical to
+/// a one-column task on that activation alone.
+pub(crate) struct Q8DecodeTask<'a, 'o> {
+    pub(crate) x: &'a [u8],
+    pub(crate) weight: Q8DecodeWeight<'a>,
+    pub(crate) out: &'o mut [f32],
+    pub(crate) columns: usize,
+}
+
+impl<'a, 'o> Q8DecodeTask<'a, 'o> {
+    /// A task over `columns` activation rows (see the type docs for layout).
+    pub(crate) fn columns(
+        x: &'a [u8],
+        weight: Q8DecodeWeight<'a>,
+        columns: usize,
+        out: &'o mut [f32],
+    ) -> Self {
+        Self {
+            x,
+            weight,
+            out,
+            columns,
+        }
+    }
+}
+
+/// Most matvecs one decode region can fuse (Q/K/V is the widest user).
+pub(crate) const MAX_DECODE_TASKS: usize = 4;
+
+/// Target weight bytes per scheduled chunk. Small enough that a preempted
+/// worker only delays the region by one short chunk, large enough that
+/// claiming a chunk stays negligible and each worker streams long runs
+/// (M1 Pro sweep: 16 KiB 62.7, 32 KiB 63.3, 64 KiB 65.2, 128 KiB 65.9,
+/// 256 KiB 66.2, 384 KiB 64.4 tok/s).
+const DECODE_CHUNK_BYTES: usize = 128 * 1024;
+
+fn decode_chunk_rows(weight: Q8DecodeWeight<'_>) -> usize {
+    let row_bytes = (weight.in_features() / Q8_0_BLOCK_SIZE) * Q8_0_TYPE_SIZE;
+    (DECODE_CHUNK_BYTES / row_bytes.max(1))
+        .max(1)
+        .next_multiple_of(weight.row_alignment())
+}
+
+struct DecodeRegionTask<'a> {
+    x: &'a [u8],
+    weight: Q8DecodeWeight<'a>,
+    out: *mut f32,
+    columns: usize,
+    rows: usize,
+    chunk_rows: usize,
+    first_chunk: usize,
+}
+
+struct DecodeRegion<'a> {
+    tasks: [Option<DecodeRegionTask<'a>>; MAX_DECODE_TASKS],
+    chunks: usize,
+}
+
+// SAFETY: the raw output pointers come from disjoint `&mut [f32]` borrows held
+// for the whole region, and every chunk index maps to a disjoint row range of
+// exactly one task, so concurrent chunks never alias.
+unsafe impl Sync for DecodeRegion<'_> {}
+
+impl DecodeRegion<'_> {
+    fn run_chunk(&self, chunk: usize) {
+        let task = self
+            .tasks
+            .iter()
+            .flatten()
+            .rev()
+            .find(|task| task.first_chunk <= chunk)
+            .expect("decode chunk index within region");
+        let row_start = (chunk - task.first_chunk) * task.chunk_rows;
+        let row_end = (row_start + task.chunk_rows).min(task.rows);
+        if task.columns != 1 {
+            // SAFETY: see `unsafe impl Sync for DecodeRegion`; every column's
+            // row range lies inside the task's output slice.
+            unsafe {
+                task.weight.compute_rows_columns(
+                    task.x,
+                    task.columns,
+                    row_start,
+                    row_end,
+                    task.out,
+                    task.rows,
+                );
+            }
+            return;
+        }
+        // SAFETY: see `unsafe impl Sync for DecodeRegion`; the range lies
+        // inside the task's output slice.
+        let out =
+            unsafe { std::slice::from_raw_parts_mut(task.out.add(row_start), row_end - row_start) };
+        task.weight.compute_rows(task.x, row_start, out);
+    }
+}
+
+/// Several row-contiguous projections of one quantized activation row as one
+/// decode region (bit-identical to calling [`matmul_q8_0_decode`] on each).
+pub(crate) fn matmul_q8_0_decode_rows(
+    x: &[u8],
+    projections: &mut [(&QuantizedWeight, &mut [f32])],
+) {
+    let mut tasks: [Option<Q8DecodeTask<'_, '_>>; MAX_DECODE_TASKS] = [None, None, None, None];
+    assert!(
+        projections.len() <= MAX_DECODE_TASKS,
+        "too many decode tasks"
+    );
+    let used = projections.len();
+    for (slot, (weight, out)) in tasks.iter_mut().zip(projections.iter_mut()) {
+        *slot = Some(Q8DecodeTask {
+            x,
+            weight: Q8DecodeWeight::Rows(weight),
+            out,
+            columns: 1,
         });
+    }
+    run_task_slots(&mut tasks[..used]);
+}
+
+/// Several 16-output packed projections of one activation row as one region.
+pub(crate) fn matmul_q8_0_decode_packed16_many(
+    x: &[u8],
+    projections: &mut [(&QuantizedWeightVnni, &mut [f32])],
+) {
+    assert!(packed_q8_0_vnni_supported());
+    let mut tasks: [Option<Q8DecodeTask<'_, '_>>; MAX_DECODE_TASKS] = [None, None, None, None];
+    assert!(
+        projections.len() <= MAX_DECODE_TASKS,
+        "too many decode tasks"
+    );
+    let used = projections.len();
+    for (slot, (weight, out)) in tasks.iter_mut().zip(projections.iter_mut()) {
+        *slot = Some(Q8DecodeTask {
+            x,
+            weight: Q8DecodeWeight::Packed16(weight),
+            out,
+            columns: 1,
+        });
+    }
+    run_task_slots(&mut tasks[..used]);
+}
+
+fn run_task_slots(slots: &mut [Option<Q8DecodeTask<'_, '_>>]) {
+    match slots {
+        [Some(a)] => matmul_q8_0_decode_tasks(std::slice::from_mut(a)),
+        [Some(a), Some(b)] => {
+            let (a, b) = (a.reborrow(), b.reborrow());
+            matmul_q8_0_decode_tasks(&mut [a, b]);
+        }
+        [Some(a), Some(b), Some(c)] => {
+            let (a, b, c) = (a.reborrow(), b.reborrow(), c.reborrow());
+            matmul_q8_0_decode_tasks(&mut [a, b, c]);
+        }
+        [Some(a), Some(b), Some(c), Some(d)] => {
+            let (a, b, c, d) = (a.reborrow(), b.reborrow(), c.reborrow(), d.reborrow());
+            matmul_q8_0_decode_tasks(&mut [a, b, c, d]);
+        }
+        [] => {}
+        _ => unreachable!("decode task slots are filled in order"),
+    }
+}
+
+impl<'a> Q8DecodeTask<'a, '_> {
+    fn reborrow(&mut self) -> Q8DecodeTask<'a, '_> {
+        Q8DecodeTask {
+            x: self.x,
+            weight: self.weight,
+            out: self.out,
+            columns: self.columns,
+        }
+    }
+}
+
+/// Run up to [`MAX_DECODE_TASKS`] single-row Q8_0 matvecs as one parallel
+/// region.
+///
+/// Fusing independent projections (Q/K/V, gate/up) into one region pays the
+/// scheduling cost once. Large regions run on the spin-waiting decode team
+/// with fine-grained chunks; small ones stay serial. Each output row is
+/// computed by the same serial kernel with the same arithmetic in every
+/// case, so results are bit-identical to [`matmul_q8_0_decode`] on each task.
+pub(crate) fn matmul_q8_0_decode_tasks(tasks: &mut [Q8DecodeTask<'_, '_>]) {
+    assert!(tasks.len() <= MAX_DECODE_TASKS, "too many decode tasks");
+    for task in tasks.iter() {
+        let blocks_per_row = task.weight.in_features() / Q8_0_BLOCK_SIZE;
+        assert!(task.columns >= 1, "q8_0 decode task needs a column");
+        assert_eq!(
+            task.x.len(),
+            task.columns * blocks_per_row * Q8_0_TYPE_SIZE,
+            "q8_0 decode input length mismatch"
+        );
+        assert_eq!(
+            task.out.len(),
+            task.columns * task.weight.out_features(),
+            "q8_0 decode output length mismatch"
+        );
+    }
+    let parallel = tasks.iter().any(|task| {
+        should_parallel_q8_decode(
+            task.weight.out_features(),
+            task.weight.in_features().saturating_mul(task.columns),
+        )
+    });
+    if !parallel && tasks.iter().all(|task| task.columns == 1) {
+        for task in tasks.iter_mut() {
+            task.weight.compute_rows(task.x, 0, task.out);
+        }
+        return;
+    }
+    let mut region = DecodeRegion {
+        tasks: [None, None, None, None],
+        chunks: 0,
+    };
+    for (slot, task) in region.tasks.iter_mut().zip(tasks.iter_mut()) {
+        let chunk_rows = decode_chunk_rows(task.weight);
+        let rows = task.weight.out_features();
+        *slot = Some(DecodeRegionTask {
+            x: task.x,
+            weight: task.weight,
+            out: task.out.as_mut_ptr(),
+            columns: task.columns,
+            rows,
+            chunk_rows,
+            first_chunk: region.chunks,
+        });
+        region.chunks += rows.div_ceil(chunk_rows);
+    }
+    let region = &region;
+    if !parallel {
+        for chunk in 0..region.chunks {
+            region.run_chunk(chunk);
+        }
+        return;
+    }
+    if !crate::decode_pool::run(region.chunks, &|chunk| region.run_chunk(chunk)) {
+        (0..region.chunks)
+            .into_par_iter()
+            .for_each(|chunk| region.run_chunk(chunk));
+    }
 }
 
 fn matmul_q8_0_decode_dispatch_chunk(
@@ -2734,33 +3407,12 @@ pub(crate) fn matmul_q8_0_decode_packed16_parallel(
     out: &mut [f32],
 ) {
     assert!(packed_q8_0_vnni_supported());
-    assert_eq!(x.len(), weight.blocks_per_row * Q8_0_TYPE_SIZE);
-    assert_eq!(out.len(), weight.out_features());
-    let threads = rayon::current_num_threads().max(1);
-    let chunk_rows = weight
-        .out_features()
-        .div_ceil(threads)
-        .next_multiple_of(VNNI_OUT_TILE)
-        .max(64);
-    out.par_chunks_mut(chunk_rows).enumerate().for_each(
-        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
-        |(chunk_index, out_chunk)| {
-            let global_row_offset = chunk_index * chunk_rows;
-            #[cfg(target_arch = "x86_64")]
-            // SAFETY: runtime feature checks above cover every enabled ISA
-            // extension. Repacking pads the last tile and guarantees one
-            // complete record for every output chunk addressed here.
-            unsafe {
-                x86_64::matmul_q8_0_decode_packed16_avx512_vnni(
-                    x,
-                    weight.packed_bytes(),
-                    weight.blocks_per_row,
-                    out_chunk,
-                    global_row_offset,
-                );
-            }
-        },
-    );
+    matmul_q8_0_decode_tasks(&mut [Q8DecodeTask {
+        x,
+        weight: Q8DecodeWeight::Packed16(weight),
+        out,
+        columns: 1,
+    }]);
 }
 
 /// Matrix multiply using interleaved Q8_0 weight layout.
@@ -2849,31 +3501,18 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
     }
 }
 
-/// Parallel version: splits output rows across Rayon threads.
-/// Each chunk receives its global row offset so stripe indexing is correct.
+/// Parallel version: splits output rows across the decode team.
 pub(crate) fn matmul_q8_0_decode_interleaved_parallel(
     x: &[u8],
     w: &QuantizedWeightInterleaved,
     out: &mut [f32],
 ) {
-    assert_eq!(
-        out.len(),
-        w.out_features(),
-        "interleaved q8 output length mismatch"
-    );
-    let input_len = w
-        .blocks_per_row
-        .checked_mul(Q8_0_TYPE_SIZE)
-        .expect("interleaved q8 input length overflow");
-    assert_eq!(x.len(), input_len, "interleaved q8 input length mismatch");
-    let threads = rayon::current_num_threads().max(1);
-    let chunk_rows = q8_decode_chunk_rows(w.out_features(), threads, crate::quant::INTERLEAVE);
-    out.par_chunks_mut(chunk_rows)
-        .enumerate()
-        .for_each(|(chunk_idx, out_chunk)| {
-            let global_start = chunk_idx * chunk_rows;
-            matmul_q8_0_decode_interleaved(x, w, out_chunk, global_start);
-        });
+    matmul_q8_0_decode_tasks(&mut [Q8DecodeTask {
+        x,
+        weight: Q8DecodeWeight::Interleaved(w),
+        out,
+        columns: 1,
+    }]);
 }
 
 // -- scalar fallback --------------------------------------------------------
@@ -3832,6 +4471,234 @@ mod tests {
             }
         }
         data
+    }
+
+    // -- decode region bit identity -------------------------------------------
+
+    fn bits(values: &[f32]) -> Vec<u32> {
+        values.iter().map(|value| value.to_bits()).collect()
+    }
+
+    /// Scheduled decode regions (spin team, fused projections, fine chunks)
+    /// must reproduce the serial whole-matrix kernel bit for bit, including
+    /// odd row counts that leave partial tiles and partial chunks.
+    #[test]
+    fn decode_regions_are_bit_identical_to_serial_kernels() {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        // (out_features, in_features): shapes below and above the parallel
+        // threshold, odd row counts, and a wide down-projection-like input.
+        let shapes = [
+            (1, 64),
+            (3, 2048),
+            (7, 96),
+            (17, 4096),
+            (513, 2048),
+            (1023, 2048),
+            (2051, 1024),
+            (263, 8192),
+        ];
+        for &(out_features, in_features) in &shapes {
+            let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+            let x: Vec<f32> = (0..in_features)
+                .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
+                .collect();
+            let qx = quantized_input(&x);
+            let weights: Vec<QuantizedWeight> = (0..3)
+                .map(|extra| {
+                    let rows = out_features + extra * 5;
+                    QuantizedWeight::try_new(
+                        random_q8_0_data(rows, in_features),
+                        vec![rows, in_features],
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let serial: Vec<Vec<f32>> = weights
+                .iter()
+                .map(|w| {
+                    let mut out = vec![0.0f32; w.out_features()];
+                    matmul_q8_0_decode_dispatch_chunk(&qx, w.data(), blocks_per_row, &mut out);
+                    out
+                })
+                .collect();
+
+            // On ARM the dot-product tiles implement exactly the scalar
+            // per-row formula `sum += (dot as f32 * ws) * xs` in block order,
+            // so the tile height (and any schedule) must not change a bit.
+            #[cfg(target_arch = "aarch64")]
+            for (w, expected) in weights.iter().zip(&serial) {
+                let mut scalar = vec![0.0f32; w.out_features()];
+                matmul_q8_0_decode_scalar(
+                    &qx,
+                    w.data(),
+                    w.out_features(),
+                    blocks_per_row,
+                    &mut scalar,
+                );
+                assert_eq!(bits(expected), bits(&scalar), "tile vs scalar formula");
+            }
+
+            for (w, expected) in weights.iter().zip(&serial) {
+                let mut out = vec![f32::NAN; w.out_features()];
+                matmul_q8_0_decode(&qx, w, &mut out);
+                assert_eq!(
+                    bits(&out),
+                    bits(expected),
+                    "single {out_features}x{in_features}"
+                );
+            }
+
+            let mut outs: Vec<Vec<f32>> = weights
+                .iter()
+                .map(|w| vec![f32::NAN; w.out_features()])
+                .collect();
+            {
+                let [a, b, c] = &mut outs[..] else {
+                    unreachable!()
+                };
+                matmul_q8_0_decode_rows(
+                    &qx,
+                    &mut [(&weights[0], a), (&weights[1], b), (&weights[2], c)],
+                );
+            }
+            for (out, expected) in outs.iter().zip(&serial) {
+                assert_eq!(bits(out), bits(expected));
+            }
+
+            if interleaved_q8_0_supported() {
+                let interleaved = QuantizedWeightInterleaved::from_quantized(&weights[0]);
+                let mut expected = vec![0.0f32; out_features];
+                matmul_q8_0_decode_interleaved(&qx, &interleaved, &mut expected, 0);
+                let mut out = vec![f32::NAN; out_features];
+                matmul_q8_0_decode_interleaved_parallel(&qx, &interleaved, &mut out);
+                assert_eq!(bits(&out), bits(&expected), "interleaved {out_features}");
+            }
+        }
+    }
+
+    /// The same regions requested from inside a Rayon worker (where the
+    /// decode team declines) and from many threads at once still match.
+    #[test]
+    fn decode_regions_match_under_nested_and_concurrent_callers() {
+        use rand::Rng;
+        let (out_features, in_features) = (1031, 2048);
+        let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+        let w = QuantizedWeight::try_new(
+            random_q8_0_data(out_features, in_features),
+            vec![out_features, in_features],
+        )
+        .unwrap();
+        let mut rng = rand::thread_rng();
+        let x: Vec<f32> = (0..in_features)
+            .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
+            .collect();
+        let qx = quantized_input(&x);
+        let mut expected = vec![0.0f32; out_features];
+        matmul_q8_0_decode_dispatch_chunk(&qx, w.data(), blocks_per_row, &mut expected);
+        let expected = bits(&expected);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(3)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            (0..6).into_par_iter().for_each(|_| {
+                let mut out = vec![f32::NAN; out_features];
+                matmul_q8_0_decode(&qx, &w, &mut out);
+                assert_eq!(bits(&out), expected);
+            })
+        });
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        let mut out = vec![f32::NAN; out_features];
+                        matmul_q8_0_decode(&qx, &w, &mut out);
+                        assert_eq!(bits(&out), expected);
+                    }
+                });
+            }
+        });
+    }
+
+    /// Multi-column decode tasks (batched sequences) must give every column
+    /// exactly the single-activation result, for both decode layouts, odd
+    /// row counts and every column count used by the batched decode tests.
+    #[test]
+    fn decode_column_tasks_match_single_column_bit_for_bit() {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        for &(out_features, in_features) in &[(5, 64), (37, 256), (1027, 2048), (131, 8192)] {
+            let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+            let row_bytes = blocks_per_row * Q8_0_TYPE_SIZE;
+            let weight = QuantizedWeight::try_new(
+                random_q8_0_data(out_features, in_features),
+                vec![out_features, in_features],
+            )
+            .unwrap();
+            let interleaved = QuantizedWeightInterleaved::from_quantized(&weight);
+            for columns in [1usize, 2, 3, 4, 5, 7, 8, 17] {
+                let mut x = Vec::with_capacity(columns * row_bytes);
+                for _ in 0..columns {
+                    let values: Vec<f32> = (0..in_features)
+                        .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
+                        .collect();
+                    x.extend_from_slice(&quantized_input(&values));
+                }
+                let mut layouts = vec![Q8DecodeWeight::Rows(&weight)];
+                if interleaved_q8_0_supported() {
+                    layouts.push(Q8DecodeWeight::Interleaved(&interleaved));
+                }
+                for layout in layouts {
+                    let mut batched = vec![f32::NAN; columns * out_features];
+                    matmul_q8_0_decode_tasks(&mut [Q8DecodeTask::columns(
+                        &x,
+                        layout,
+                        columns,
+                        &mut batched,
+                    )]);
+                    for column in 0..columns {
+                        let mut single = vec![f32::NAN; out_features];
+                        matmul_q8_0_decode_tasks(&mut [Q8DecodeTask::columns(
+                            &x[column * row_bytes..(column + 1) * row_bytes],
+                            layout,
+                            1,
+                            &mut single,
+                        )]);
+                        assert_eq!(
+                            bits(&batched[column * out_features..(column + 1) * out_features]),
+                            bits(&single),
+                            "{out_features}x{in_features} columns={columns} column={column}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Team-split activation preparation is byte-identical to the serial
+    /// encoder and SiLU.
+    #[test]
+    fn decode_activation_preparation_matches_serial() {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        for len in [32usize, 2048, 8192, 32 * 33] {
+            let a: Vec<f32> = (0..len).map(|_| rng.r#gen::<f32>() * 8.0 - 4.0).collect();
+            let b: Vec<f32> = (0..len).map(|_| rng.r#gen::<f32>() * 8.0 - 4.0).collect();
+            let mut serial = Vec::new();
+            crate::quant::quantize_q8_0_into(&a, &mut serial);
+            let mut team = Vec::new();
+            quantize_q8_0_decode_into(&a, &mut team);
+            assert_eq!(serial, team);
+
+            let mut gated = vec![0.0f32; len];
+            silu_mul_into(&a, &b, &mut gated);
+            crate::quant::quantize_q8_0_into(&gated, &mut serial);
+            let mut fused_gated = vec![f32::NAN; len];
+            silu_mul_quantize_q8_0_decode_into(&a, &b, &mut fused_gated, &mut team);
+            assert_eq!(bits(&gated), bits(&fused_gated));
+            assert_eq!(serial, team);
+        }
     }
 
     // -- decode path correctness --------------------------------------------

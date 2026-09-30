@@ -680,6 +680,14 @@ impl<'a> SliceActivation<'a> {
     }
 }
 
+#[cfg(test)]
+impl SliceActivation<'_> {
+    /// Test access to the viewed values.
+    pub(crate) fn values_mut_for_test(&mut self) -> &mut [f32] {
+        self.values
+    }
+}
+
 trait ActivationStorage {
     fn shape_2d(&self) -> [usize; 2];
     fn values_mut(&mut self) -> &mut [f32];

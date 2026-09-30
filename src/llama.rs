@@ -19,6 +19,10 @@ use std::sync::{Arc, OnceLock};
 
 const INTERLEAVED_MIN_OUT_FEATURES: usize = 65_536;
 
+#[path = "llama_batch.rs"]
+mod batch;
+pub use batch::{DecodeBatchExperiment, DecodeBatchSequence};
+
 /// v0.4 execution-plan cache. Every input that changes serialized plan
 /// content or scratch/KV capacity participates in the key; otherwise a
 /// snapshot replay using a different cache capacity could reuse an undersized
@@ -2316,29 +2320,35 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_pair_into(norm, 1, gate_weight, up_weight, gate, up);
             }
-            profile_op!(layer, "silu_mul", inter_dim, inter_dim, {
-                crate::simd::silu_mul_into(gate, up, gated)
-            });
-
             let down_weight = block
                 .mlp
                 .down_proj
                 .q8_weight_without_bias()
                 .expect("fast path eligibility checked");
             let packed_down = block.mlp.down_proj.packed_q8_weight_without_bias();
-            if let Some(packed_down) = packed_down {
-                if profile_operators {
+            if !profile_operators {
+                // SiLU, its quantization and the down projection share one
+                // pass over the intermediate width on the decode team.
+                backend.silu_mul_matmul_q8_0_decode_into(
+                    gate,
+                    up,
+                    gated,
+                    down_weight,
+                    packed_down,
+                    projected,
+                );
+            } else {
+                profile_op!(layer, "silu_mul", inter_dim, inter_dim, {
+                    crate::simd::silu_mul_into(gate, up, gated)
+                });
+                if let Some(packed_down) = packed_down {
                     let elapsed =
                         backend.matmul_q8_0_packed_into_timed(gated, packed_down, projected);
                     record_profiled_packed(layer, "down", packed_down, elapsed);
                 } else {
-                    backend.matmul_q8_0_packed_into(gated, packed_down, projected);
+                    let elapsed = backend.matmul_q8_0_into_timed(gated, down_weight, projected);
+                    record_profiled_q8(layer, "down", down_weight, elapsed);
                 }
-            } else if profile_operators {
-                let elapsed = backend.matmul_q8_0_into_timed(gated, down_weight, projected);
-                record_profiled_q8(layer, "down", down_weight, elapsed);
-            } else {
-                backend.matmul_q8_0_into(gated, 1, down_weight, projected);
             }
             {
                 let mut mlp_output = SliceActivation::new(1, embed_dim, projected);
@@ -6323,6 +6333,275 @@ mod tests {
                 );
             }
         }
+    }
+
+    // -- batched multi-sequence decode ------------------------------------------
+
+    /// Records every hook site's activation bits and applies a
+    /// sequence-specific intervention after layer 0 attention.
+    struct BatchProbeHooks {
+        nudge: f32,
+        records: Vec<(u8, usize, Vec<u32>)>,
+        dispatches: Vec<DispatchPath>,
+    }
+
+    impl BatchProbeHooks {
+        fn new(sequence: usize) -> Self {
+            Self {
+                nudge: sequence as f32 * 0.03125,
+                records: Vec::new(),
+                dispatches: Vec::new(),
+            }
+        }
+
+        fn record(&mut self, site: u8, layer: usize, tensor: &mut SliceActivation<'_>) {
+            let values = tensor.values_mut_for_test();
+            if site == 1 && layer == 0 {
+                values[0] += self.nudge;
+            }
+            self.records
+                .push((site, layer, values.iter().map(|v| v.to_bits()).collect()));
+        }
+    }
+
+    impl<'a> LayerHooks<SliceActivation<'a>, CpuError> for BatchProbeHooks {
+        fn note_dispatch(&mut self, path: DispatchPath) {
+            self.dispatches.push(path);
+        }
+        fn before_layer(
+            &mut self,
+            layer: usize,
+            t: &mut SliceActivation<'a>,
+        ) -> Result<(), CpuError> {
+            self.record(0, layer, t);
+            Ok(())
+        }
+        fn after_attention(
+            &mut self,
+            layer: usize,
+            t: &mut SliceActivation<'a>,
+        ) -> Result<(), CpuError> {
+            self.record(1, layer, t);
+            Ok(())
+        }
+        fn after_mlp(&mut self, layer: usize, t: &mut SliceActivation<'a>) -> Result<(), CpuError> {
+            self.record(2, layer, t);
+            Ok(())
+        }
+        fn after_layer(
+            &mut self,
+            layer: usize,
+            t: &mut SliceActivation<'a>,
+        ) -> Result<(), CpuError> {
+            self.record(3, layer, t);
+            Ok(())
+        }
+        fn before_logits(&mut self, t: &mut SliceActivation<'a>) -> Result<(), CpuError> {
+            self.record(4, usize::MAX, t);
+            Ok(())
+        }
+        fn after_logits(&mut self, t: &mut SliceActivation<'a>) -> Result<(), CpuError> {
+            self.record(5, usize::MAX, t);
+            Ok(())
+        }
+    }
+
+    /// Wider synthetic Llama whose projections cross the parallel decode
+    /// threshold once several sequences are batched (and the LM head alone).
+    fn batch_test_model() -> Llama<CpuBackend> {
+        test_llama_model_with_dims(2, 256, 4099)
+    }
+
+    fn bits_of(values: &[f32]) -> Vec<u32> {
+        values.iter().map(|v| v.to_bits()).collect()
+    }
+
+    #[test]
+    fn batched_decode_matches_independent_single_decodes_bit_for_bit() {
+        let model = batch_test_model();
+        let backend = CpuBackend;
+        let vocab = model.config.vocab_size;
+        assert!(model.supports_batched_decode());
+        for n in 1..=17usize {
+            // Sequence i starts after a prefill of 1 + i % 3 tokens, so the
+            // batch mixes positions and cache lengths.
+            let prompt = |i: usize| -> Vec<u32> {
+                (0..1 + i % 3)
+                    .map(|t| ((i * 7 + t * 3) % vocab) as u32)
+                    .collect()
+            };
+            let mut batch_caches = Vec::new();
+            let mut single_caches = Vec::new();
+            let mut positions = Vec::new();
+            for i in 0..n {
+                let tokens = prompt(i);
+                for caches in [&mut batch_caches, &mut single_caches] {
+                    let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+                    ForwardModel::forward_last_logits_with_cache(
+                        &model, &backend, &tokens, &mut cache, 0,
+                    )
+                    .unwrap();
+                    caches.push(cache);
+                }
+                positions.push(tokens.len());
+            }
+            let steps = if n <= 4 { 4 } else { 2 };
+            for step in 0..steps {
+                let tokens: Vec<u32> = (0..n)
+                    .map(|i| ((i * 11 + step * 5 + 1) % vocab) as u32)
+                    .collect();
+                let mut batch_logits = vec![vec![f32::NAN; vocab]; n];
+                let mut batch_hooks: Vec<BatchProbeHooks> =
+                    (0..n).map(BatchProbeHooks::new).collect();
+                {
+                    let mut sequences: Vec<DecodeBatchSequence<'_>> = batch_caches
+                        .iter_mut()
+                        .zip(batch_logits.iter_mut())
+                        .enumerate()
+                        .map(|(i, (cache, logits))| DecodeBatchSequence {
+                            token_id: tokens[i],
+                            cache,
+                            start_pos: positions[i],
+                            logits,
+                        })
+                        .collect();
+                    model
+                        .forward_decode_batch_hooked(&backend, &mut sequences, &mut batch_hooks)
+                        .unwrap();
+                }
+                for i in 0..n {
+                    let mut hooks = BatchProbeHooks::new(i);
+                    let mut logits = vec![f32::NAN; vocab];
+                    model
+                        .forward_decode_fast_hooked(
+                            &backend,
+                            &[tokens[i]],
+                            &mut single_caches[i],
+                            positions[i],
+                            &mut hooks,
+                            Some(&mut logits),
+                        )
+                        .expect("fast path eligible")
+                        .unwrap();
+                    assert_eq!(
+                        bits_of(&batch_logits[i]),
+                        bits_of(&logits),
+                        "logits n={n} step={step} seq={i}"
+                    );
+                    assert_eq!(batch_hooks[i].records, hooks.records, "hooks n={n} seq={i}");
+                    assert_eq!(batch_hooks[i].dispatches, hooks.dispatches);
+                    assert_eq!(batch_caches[i].cursor(), single_caches[i].cursor());
+                    for layer in 0..model.blocks.len() {
+                        let (bk, bv) = batch_caches[i].get(layer);
+                        let (sk, sv) = single_caches[i].get(layer);
+                        assert!(bk.iter().zip(sk).all(|(a, b)| a.to_bits() == b.to_bits()));
+                        assert!(bv.iter().zip(sv).all(|(a, b)| a.to_bits() == b.to_bits()));
+                    }
+                    positions[i] += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batched_decode_with_experiments_matches_single_experiment_decode() {
+        let model = batch_test_model();
+        let backend = CpuBackend;
+        let vocab = model.config.vocab_size;
+        let model_context =
+            ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
+        // Even sequences zero layer-0 attention, odd sequences zero layer-1 MLP.
+        let make_runner = |i: usize| {
+            let spec = if i.is_multiple_of(2) {
+                ZeroLayerOutputSpec::new(0, ZeroLayerOutputStage::Attention)
+            } else {
+                ZeroLayerOutputSpec::new(1, ZeroLayerOutputStage::Mlp)
+            };
+            let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(spec));
+            runner.on_model_loaded(&model_context).unwrap();
+            runner
+        };
+        let n = 5;
+        let mut batch_caches = Vec::new();
+        let mut single_caches = Vec::new();
+        for i in 0..n {
+            for caches in [&mut batch_caches, &mut single_caches] {
+                let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+                ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[(i + 2) as u32],
+                    &mut cache,
+                    0,
+                )
+                .unwrap();
+                caches.push(cache);
+            }
+        }
+        let mut batch_runners: Vec<ExperimentRunner> = (0..n).map(make_runner).collect();
+        let mut batch_logits = vec![vec![0.0f32; vocab]; n];
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Decode,
+            1,
+            1,
+            TracingState::Disabled,
+        );
+        {
+            let mut sequences: Vec<DecodeBatchSequence<'_>> = batch_caches
+                .iter_mut()
+                .zip(batch_logits.iter_mut())
+                .enumerate()
+                .map(|(i, (cache, logits))| DecodeBatchSequence {
+                    token_id: (i * 13 % vocab) as u32,
+                    cache,
+                    start_pos: 1,
+                    logits,
+                })
+                .collect();
+            let mut experiments: Vec<DecodeBatchExperiment<'_, '_>> = batch_runners
+                .iter_mut()
+                .map(|runner| DecodeBatchExperiment { runner, execution })
+                .collect();
+            model
+                .forward_decode_batch_with_experiments(&backend, &mut sequences, &mut experiments)
+                .unwrap();
+        }
+        for i in 0..n {
+            let mut runner = make_runner(i);
+            let single = ExperimentalForwardModel::forward_last_logits_with_experiment(
+                &model,
+                &backend,
+                &[(i * 13 % vocab) as u32],
+                &mut single_caches[i],
+                1,
+                execution,
+                &mut runner,
+            )
+            .unwrap();
+            assert_eq!(bits_of(&batch_logits[i]), bits_of(single.data()), "seq {i}");
+        }
+        // Different interventions really produced different sequences.
+        assert_ne!(bits_of(&batch_logits[0]), bits_of(&batch_logits[1]));
+    }
+
+    #[test]
+    fn batched_decode_rejects_bad_shapes_before_touching_caches() {
+        let model = batch_test_model();
+        let backend = CpuBackend;
+        let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+        let mut short = vec![0.0f32; 3];
+        let mut sequences = [DecodeBatchSequence {
+            token_id: 1,
+            cache: &mut cache,
+            start_pos: 0,
+            logits: &mut short,
+        }];
+        assert!(model
+            .forward_decode_batch(&backend, &mut sequences)
+            .is_err());
+        assert_eq!(cache.cursor(), 0);
+        assert!(model.forward_decode_batch(&backend, &mut []).is_ok());
     }
 }
 
