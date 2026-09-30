@@ -249,6 +249,46 @@ pub(crate) fn run(chunks: usize, job: &(dyn Fn(usize) + Sync)) -> bool {
     true
 }
 
+/// A mutable slice shared with team chunks that each touch a disjoint range.
+pub(crate) struct SharedMut<T> {
+    ptr: *mut T,
+    len: usize,
+}
+
+// SAFETY: `SharedMut` only hands out ranges through the unsafe `range`
+// accessor, whose contract requires callers to keep concurrent ranges
+// disjoint; `T: Send` makes moving element access across threads sound.
+unsafe impl<T: Send> Sync for SharedMut<T> {}
+
+impl<T> SharedMut<T> {
+    pub(crate) fn new(slice: &mut [T]) -> Self {
+        Self {
+            ptr: slice.as_mut_ptr(),
+            len: slice.len(),
+        }
+    }
+
+    /// # Safety
+    /// No other live reference (from this or any other chunk) may overlap
+    /// `start..start + len`, and the source slice must outlive the result.
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) unsafe fn range(&self, start: usize, len: usize) -> &mut [T] {
+        assert!(start <= self.len && len <= self.len - start);
+        // SAFETY: in bounds by the assertion; exclusivity is the caller's contract.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.add(start), len) }
+    }
+}
+
+/// Run `job(0..chunks)` on the decode team, or serially on this thread when
+/// the team is unavailable or there is only one chunk.
+pub(crate) fn run_or_serial(chunks: usize, job: &(dyn Fn(usize) + Sync)) {
+    if chunks <= 1 || !run(chunks, job) {
+        for chunk in 0..chunks {
+            job(chunk);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

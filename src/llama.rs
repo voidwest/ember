@@ -2316,29 +2316,35 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_pair_into(norm, 1, gate_weight, up_weight, gate, up);
             }
-            profile_op!(layer, "silu_mul", inter_dim, inter_dim, {
-                crate::simd::silu_mul_into(gate, up, gated)
-            });
-
             let down_weight = block
                 .mlp
                 .down_proj
                 .q8_weight_without_bias()
                 .expect("fast path eligibility checked");
             let packed_down = block.mlp.down_proj.packed_q8_weight_without_bias();
-            if let Some(packed_down) = packed_down {
-                if profile_operators {
+            if !profile_operators {
+                // SiLU, its quantization and the down projection share one
+                // pass over the intermediate width on the decode team.
+                backend.silu_mul_matmul_q8_0_decode_into(
+                    gate,
+                    up,
+                    gated,
+                    down_weight,
+                    packed_down,
+                    projected,
+                );
+            } else {
+                profile_op!(layer, "silu_mul", inter_dim, inter_dim, {
+                    crate::simd::silu_mul_into(gate, up, gated)
+                });
+                if let Some(packed_down) = packed_down {
                     let elapsed =
                         backend.matmul_q8_0_packed_into_timed(gated, packed_down, projected);
                     record_profiled_packed(layer, "down", packed_down, elapsed);
                 } else {
-                    backend.matmul_q8_0_packed_into(gated, packed_down, projected);
+                    let elapsed = backend.matmul_q8_0_into_timed(gated, down_weight, projected);
+                    record_profiled_q8(layer, "down", down_weight, elapsed);
                 }
-            } else if profile_operators {
-                let elapsed = backend.matmul_q8_0_into_timed(gated, down_weight, projected);
-                record_profiled_q8(layer, "down", down_weight, elapsed);
-            } else {
-                backend.matmul_q8_0_into(gated, 1, down_weight, projected);
             }
             {
                 let mut mlp_output = SliceActivation::new(1, embed_dim, projected);

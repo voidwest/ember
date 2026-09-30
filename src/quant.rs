@@ -42,21 +42,28 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
         .checked_mul(Q8_0_TYPE_SIZE)
         .expect("q8_0 encoded length overflow");
     dst.resize(encoded_len, 0);
+    quantize_q8_0_blocks(src, dst);
+}
 
-    for block in 0..n_blocks {
-        let src_start = block * Q8_0_BLOCK_SIZE;
-        let values = &src[src_start..src_start + Q8_0_BLOCK_SIZE];
+/// Quantize whole 32-value blocks of `src` into the pre-sized `dst`
+/// (`src.len() / 32` encoded blocks). Blocks are independent, so any split of
+/// a row into block ranges produces the same bytes as one call.
+pub(crate) fn quantize_q8_0_blocks(src: &[f32], dst: &mut [u8]) {
+    assert!(src.len().is_multiple_of(Q8_0_BLOCK_SIZE));
+    assert_eq!(dst.len(), src.len() / Q8_0_BLOCK_SIZE * Q8_0_TYPE_SIZE);
+    for (values, block) in src
+        .chunks_exact(Q8_0_BLOCK_SIZE)
+        .zip(dst.chunks_exact_mut(Q8_0_TYPE_SIZE))
+    {
         let amax = values
             .iter()
             .fold(0.0f32, |acc, value| acc.max(value.abs()));
         let scale = amax / 127.0;
         let inv_scale = if scale != 0.0 { scale.recip() } else { 0.0 };
-        let dst_start = block * Q8_0_TYPE_SIZE;
-        dst[dst_start..dst_start + 2]
-            .copy_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
+        block[..2].copy_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
         for (index, value) in values.iter().enumerate() {
             let quantized = (*value * inv_scale).round().clamp(-127.0, 127.0) as i8;
-            dst[dst_start + 2 + index] = quantized as u8;
+            block[2 + index] = quantized as u8;
         }
     }
 }
