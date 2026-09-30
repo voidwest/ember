@@ -1767,8 +1767,13 @@ mod aarch64 {
         }
     }
 
-    /// Four independent output rows reuse each activation load. Integer dot
-    /// products are exact, and scaling preserves the scalar block order.
+    /// Two independent output rows reuse each activation load. Integer dot
+    /// products are exact, and scaling preserves the scalar block order, so
+    /// every row matches the one-row tile bit for bit.
+    ///
+    /// Two concurrent weight streams measured faster than four on M1: with
+    /// four rows in flight the long rows of the MLP down projection (8.5 KiB)
+    /// dropped a core to ~23 GB/s versus ~39 GB/s with two.
     ///
     /// # Safety
     /// Requires NEON, FP16 conversion and the signed byte dot-product extension.
@@ -1782,9 +1787,9 @@ mod aarch64 {
         assert!(x.len() >= blocks * Q8_0_TYPE_SIZE);
         assert!(data.len() >= out.len() * blocks * Q8_0_TYPE_SIZE);
         unsafe {
-            let full_rows = out.len() / 4 * 4;
-            for (tile, dst) in out[..full_rows].chunks_exact_mut(4).enumerate() {
-                q8_tile::<4>(x, &data[tile * 4 * blocks * Q8_0_TYPE_SIZE..], blocks, dst);
+            let full_rows = out.len() / 2 * 2;
+            for (tile, dst) in out[..full_rows].chunks_exact_mut(2).enumerate() {
+                q8_tile::<2>(x, &data[tile * 2 * blocks * Q8_0_TYPE_SIZE..], blocks, dst);
             }
             for (row, dst) in out[full_rows..].chunks_mut(1).enumerate() {
                 q8_tile::<1>(
@@ -3867,6 +3872,22 @@ mod tests {
                     out
                 })
                 .collect();
+
+            // On ARM the dot-product tiles implement exactly the scalar
+            // per-row formula `sum += (dot as f32 * ws) * xs` in block order,
+            // so the tile height (and any schedule) must not change a bit.
+            #[cfg(target_arch = "aarch64")]
+            for (w, expected) in weights.iter().zip(&serial) {
+                let mut scalar = vec![0.0f32; w.out_features()];
+                matmul_q8_0_decode_scalar(
+                    &qx,
+                    w.data(),
+                    w.out_features(),
+                    blocks_per_row,
+                    &mut scalar,
+                );
+                assert_eq!(bits(expected), bits(&scalar), "tile vs scalar formula");
+            }
 
             for (w, expected) in weights.iter().zip(&serial) {
                 let mut out = vec![f32::NAN; w.out_features()];
