@@ -717,3 +717,168 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(_)));
         }).unwrap();
 }
+
+/// A fake loaded model, so a run goes straight to the worker.
+fn fake_session() -> crate::gui::SessionInfo {
+    crate::gui::SessionInfo {
+        model_path: "fixture.gguf".into(),
+        model_name: "fixture".into(),
+        architecture: "llama".into(),
+        n_layers: 16,
+        embed_dim: 64,
+        vocab_size: 128,
+        model_sha: String::new(),
+        tokenizer_sha: String::new(),
+        load_ms: 0.0,
+    }
+}
+
+/// A verified-looking pair, for replies the tests inject.
+fn fake_bundle() -> crate::gui::RunBundle {
+    let (baseline, intervention, comparison, _) = super::sample_result();
+    crate::gui::RunBundle {
+        baseline,
+        intervention,
+        comparison,
+        verification: ember::v05::verify::VerificationReport {
+            bundle_schema: String::new(),
+            ok: true,
+            semantic_hash: String::new(),
+            payload_hash: String::new(),
+            checks: Vec::new(),
+            warnings: Vec::new(),
+            timestamp: String::new(),
+        },
+        elapsed_ms_total: 1.0,
+        elapsed_ms_baseline: 1.0,
+        baseline_key: String::new(),
+    }
+}
+
+type WorkerEnds = (
+    gpui_kit::AnyWindowHandle,
+    gpui_kit::Entity<Console>,
+    mpsc::Receiver<super::WorkerMsg>,
+    mpsc::Sender<super::WorkerReply>,
+);
+
+/// A console whose worker channel the test holds, with a model "loaded".
+async fn console_with_worker(cx: &mut TestAppContext) -> WorkerEnds {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(FONT_SANS),
+                Cow::Borrowed(FONT_MONO),
+                Cow::Borrowed(FONT_ARABIC),
+            ])
+            .unwrap();
+    });
+    let (tx, worker_rx) = mpsc::channel();
+    let (reply_tx, reply_rx) = mpsc::channel();
+    let mut view = None;
+    let handle = cx.add_window(|window, cx| {
+        let console =
+            cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+        console.update(cx, |console, cx| {
+            console.model_path = "fixture.gguf".into();
+            console
+                .inputs
+                .model
+                .update(cx, |input, cx| input.set_value("fixture.gguf", cx));
+            console.session = Some(fake_session());
+            console.view = View::Experiment;
+        });
+        view = Some(console.clone());
+        Root::new(console, window, cx)
+    });
+    (handle.into(), view.unwrap(), worker_rx, reply_tx)
+}
+
+#[gpui_kit::test]
+async fn cancelling_a_run_stops_it_and_records_nothing(cx: &mut TestAppContext) {
+    let (handle, console, worker_rx, reply_tx) = console_with_worker(cx).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(
+            window
+                .try_find(SharedString::from("setup-cancel"))
+                .is_none(),
+            "nothing to cancel while idle"
+        );
+        window.click(SharedString::from("setup-run"), cx);
+        assert_eq!(console.read(cx).status, super::Status::Running);
+        let Ok(super::WorkerMsg::Run(_, token)) = worker_rx.try_recv() else {
+            panic!("the run went to the worker with a cancel token");
+        };
+        assert!(!token.is_cancelled());
+        window.render_frame(cx);
+
+        // The button cancels: the token fires at once, and the console waits
+        // for the worker to confirm rather than claiming it stopped.
+        window.click(SharedString::from("setup-cancel"), cx);
+        assert!(token.is_cancelled(), "Cancel fires the run's token");
+        assert_eq!(console.read(cx).status, super::Status::Cancelling);
+        assert!(
+            !console.read(cx).action_enabled(),
+            "no new run until it stops"
+        );
+        reply_tx.send(super::WorkerReply::Cancelled).unwrap();
+        console.update(cx, |console, cx| {
+            console.drain_replies(cx);
+        });
+        window.render_frame(cx);
+        {
+            let console = console.read(cx);
+            assert_eq!(console.status, super::Status::Idle);
+            assert!(console.cancelled, "the page says it was cancelled");
+            assert!(console.error.is_none(), "a cancel is not an error");
+            assert!(console.store.runs.is_empty(), "nothing recorded");
+            assert!(console.session.is_some(), "the model stays loaded");
+            assert!(console.baseline.is_none());
+        }
+        assert!(window
+            .try_find(SharedString::from("run-cancelled"))
+            .is_some());
+
+        // Esc does the same, and a result that raced the cancel is dropped.
+        window.click(SharedString::from("setup-run"), cx);
+        let Ok(super::WorkerMsg::Run(_, token)) = worker_rx.try_recv() else {
+            panic!("second run");
+        };
+        assert!(!console.read(cx).cancelled, "a new run clears the notice");
+        window.press("escape", cx);
+        assert!(token.is_cancelled(), "Esc cancels the run in flight");
+        reply_tx
+            .send(super::WorkerReply::RunDone(Box::new(Ok(fake_bundle()))))
+            .unwrap();
+        console.update(cx, |console, cx| {
+            console.drain_replies(cx);
+        });
+        let console = console.read(cx);
+        assert_eq!(console.status, super::Status::Idle);
+        assert!(console.store.runs.is_empty(), "a raced result is not kept");
+        assert!(console.baseline.is_none(), "nor shown");
+    })
+    .unwrap();
+
+    // The palette command reaches the same path.
+    cx.update_window(handle, |_, _, cx| {
+        console.update(cx, |console, cx| {
+            console.run();
+            let Ok(super::WorkerMsg::Run(_, token)) = worker_rx.try_recv() else {
+                panic!("third run");
+            };
+            console.palette_open = true;
+            console.palette_query = "cancel".into();
+            console.palette_index = 0;
+            assert_eq!(
+                console.palette_candidates().first(),
+                Some(&super::palette::Command::CancelRun)
+            );
+            console.palette_execute(cx);
+            assert!(token.is_cancelled());
+        });
+    })
+    .unwrap();
+}

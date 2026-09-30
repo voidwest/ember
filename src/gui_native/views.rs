@@ -458,6 +458,7 @@ impl Console {
             Status::Preparing => (colors.warn, "Loading the model…"),
             Status::Running => (colors.busy, "Running baseline and intervention…"),
             Status::Restoring => (colors.busy, "Checking exact restoration…"),
+            Status::Cancelling => (colors.warn, "Cancelling the run…"),
         };
         let (line, line_color) = if let Some((text, color)) = store_line.map(|t| (t, store_color)) {
             (text, color)
@@ -1439,7 +1440,35 @@ impl Console {
                 .rounded(px(Radius::MD))
                 .child(label(error.clone(), Type::LABEL, colors.err))
         });
-        div().flex().flex_col().gap(px(Space::SM)).children(error)
+        // A cancelled run is a choice, not a failure: it is said plainly and
+        // in neutral colours, with what it did and did not leave behind.
+        let cancelled = (self.cancelled && !self.busy()).then(|| {
+            div()
+                .id("run-cancelled")
+                .test_support()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(Space::XS))
+                .px(px(Space::MD))
+                .py(px(Space::SM))
+                .rounded(px(Radius::MD))
+                .border_l_2()
+                .border_color(colors.border_strong)
+                .bg(colors.surface)
+                .child(label("Run cancelled", Type::LABEL, colors.text))
+                .child(label(
+                    "Nothing was recorded and no bundle was kept. The model is still loaded, so the next run starts straight away.",
+                    Type::LABEL,
+                    colors.text_muted,
+                ))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(Space::SM))
+            .children(error)
+            .children(cancelled)
     }
 
     pub(super) fn layer_stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -1513,6 +1542,7 @@ impl Console {
                 ("Compare the results", 0),
             ],
             Status::Restoring => vec![("Replay the baseline and check it matches exactly", 1)],
+            Status::Cancelling => vec![("Stop at the next decode step", 1)],
             Status::Idle => Vec::new(),
         };
         let note = match self.status {
@@ -1520,7 +1550,10 @@ impl Console {
                 "The first run loads the model, so it takes longer. Later runs start straight away."
             }
             Status::Running => {
-                "Ember is running your prompt twice, once untouched and once with your change."
+                "Ember is running your prompt twice, once untouched and once with your change. Esc cancels."
+            }
+            Status::Cancelling => {
+                "Nothing from this run will be recorded, and the model stays loaded."
             }
             _ => "",
         };

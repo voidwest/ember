@@ -371,6 +371,7 @@ pub(crate) fn execute_resolved(
                 spec_text,
                 output_directory,
                 retain_incomplete,
+                None,
             )
         })
 }
@@ -464,6 +465,12 @@ pub(crate) fn prepare_run(
 /// Execute a resolved experiment against an already-loaded session:
 /// build the plan, run every input through generation with the v0.5
 /// experiment attached, assemble + write the bundle, and self-verify it.
+///
+/// `cancel` follows the generation contract in `docs/cancellation.md`: it is
+/// checked before prefill and at every decode step of every input, and once
+/// more before the bundle is written. A cancelled run returns
+/// [`ember::cancel::Cancelled`] and writes nothing -- no bundle and no staging
+/// directory -- so there is nothing partial to clean up.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_prepared(
     prepared: &mut PreparedRun,
@@ -471,6 +478,7 @@ pub(crate) fn execute_prepared(
     spec_text: &str,
     output_directory: &std::path::Path,
     retain_incomplete: bool,
+    cancel: Option<&ember::cancel::CancelToken>,
 ) -> anyhow::Result<(
     PathBuf,
     BundleIdentity,
@@ -485,6 +493,7 @@ pub(crate) fn execute_prepared(
             spec_text,
             output_directory,
             retain_incomplete,
+            cancel,
         );
     }
     rayon::ThreadPoolBuilder::new()
@@ -498,6 +507,7 @@ pub(crate) fn execute_prepared(
                 spec_text,
                 output_directory,
                 retain_incomplete,
+                cancel,
             )
         })
 }
@@ -508,6 +518,7 @@ fn execute_prepared_inner(
     spec_text: &str,
     output_directory: &std::path::Path,
     retain_incomplete: bool,
+    cancel: Option<&ember::cancel::CancelToken>,
 ) -> anyhow::Result<(
     PathBuf,
     BundleIdentity,
@@ -660,7 +671,9 @@ fn execute_prepared_inner(
             } else {
                 None
             },
-            None, // experiment runs are not signal-cancellable yet
+            // The CLI passes no token (experiment runs are not signal-
+            // cancellable yet); the native console passes its Cancel token.
+            cancel,
         )?;
         {
             let mut experiment = inner.lock().expect("v05 experiment lock");
@@ -671,6 +684,11 @@ fn execute_prepared_inner(
         }
     }
     let wall_clock_ms = start.elapsed().as_secs_f64() * 1000.0;
+    // Last check point: a cancel that lands after the final decode step must
+    // still leave no bundle behind.
+    if cancel.is_some_and(ember::cancel::CancelToken::is_cancelled) {
+        return Err(anyhow::Error::new(ember::cancel::Cancelled));
+    }
 
     // -- assemble + write + self-verify --
     let runtime = RuntimeMetrics {

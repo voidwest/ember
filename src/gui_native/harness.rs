@@ -968,13 +968,19 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
             }
         }
         // A run in flight: the progress steps a first-time user waits on.
-        for (label_name, status) in [("loading", Status::Preparing), ("running", Status::Running)] {
+        for (label_name, status) in [
+            ("loading", Status::Preparing),
+            ("running", Status::Running),
+            ("cancelling", Status::Cancelling),
+            ("cancelled", Status::Idle),
+        ] {
             context.update_window(handle.into(), |_, window, cx| {
                 console.update(cx, |console, cx| {
                     console.appearance = AppearanceMode::Dark;
                     console.view = View::Experiment;
                     console.step = WorkspaceStep::Review;
                     console.status = status;
+                    console.cancelled = label_name == "cancelled";
                     console.sync_kit_theme(cx);
                 });
                 window.draw(cx).clear(cx);
@@ -988,7 +994,10 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                 .save(directory.join(format!("{name}-progress-{label_name}.png")))?;
         }
         context.update_window(handle.into(), |_, _, cx| {
-            console.update(cx, |console, _| console.status = Status::Idle);
+            console.update(cx, |console, _| {
+                console.status = Status::Idle;
+                console.cancelled = false;
+            });
         })?;
         // The built-in sample result, which needs no model.
         for (appearance, mode) in [
@@ -1052,7 +1061,7 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                         .as_ref()
                         .map_err(|error| anyhow::anyhow!(error.clone()))?;
                 }
-                worker.send(WorkerMsg::Run(config))?;
+                worker.send(WorkerMsg::Run(config, ember::cancel::CancelToken::new()))?;
                 let completed = receiver
                     .lock()
                     .unwrap()
