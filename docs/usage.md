@@ -792,9 +792,10 @@ fails instead of skipping.
 ember experiment validate <spec.toml> [--json]
 ember experiment run <spec.toml> [--execution reference|planned|planned-fused]
                                 [--threads <n>] [--output <dir>] [--retain-incomplete]
-                                [--json]
+                                [--sign-key <key> | --no-sign] [--json]
 ember experiment inspect <bundle> [--json]
-ember experiment verify <bundle> [--model <model.gguf>] [--tokenizer <tokenizer.json>] [--json]
+ember experiment verify <bundle> [--model <model.gguf>] [--tokenizer <tokenizer.json>]
+                                 [--trusted-key <key.pub> [--expect-evidence <envelope>]] [--json]
 ember experiment compare <bundle-a> <bundle-b> [--json]
 ember experiment reproduce <bundle> --model <model.gguf> [--output <dir>] [--json]
 ember experiment tokenize --model <model.gguf> --arch <arch> --tokenizer <tokenizer.json>
