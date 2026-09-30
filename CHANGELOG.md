@@ -19,6 +19,13 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- Experiments: shared-prefix reuse. `experiment run <baseline> --variant
+  <spec>...` and the GUI's baseline/intervention pair compute the prompt
+  prefill up to the first intervened block once; each variant resumes from
+  the recorded hidden state and KV cache. Bundles are bit-identical to
+  standalone runs (tested on synthetic F32/Q8_0 models in reference and
+  planned modes, and on the morphology example); `runtime.json` records the
+  path each input took (`prefix_reuse`). See docs/experiments.md.
 - Bundle verification: `experiment verify` no longer writes
   `verification.json` into the bundle (use `--write-report <path>`); an old
   one is ignored. Every parsed bundle file is read once and the verified bytes

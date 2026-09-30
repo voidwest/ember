@@ -44,7 +44,7 @@ ember experiment reproduce runs/morphology-baseline --model Llama-3.2-1B-Instruc
 ember experiment validate <spec.toml> [--json]
 ember experiment run <spec.toml> [--execution reference|planned|planned-fused]
                                 [--threads <n>] [--output <dir>] [--retain-incomplete]
-                                [--json]
+                                [--variant <spec.toml> ...] [--json]
 ember experiment inspect <bundle> [--json]
 ember experiment verify <bundle> [--model <model.gguf>] [--tokenizer <tokenizer.json>]
                                  [--json]
@@ -74,6 +74,49 @@ the bundle and is exposed through `inspect`.
    atomically renamed into place only after all payloads, checksums, and
    the manifest are complete (see `docs/bundle-schema-v1.md`).
 6. **Self-verify**: the run command verifies the bundle it just wrote.
+
+## Running a baseline and its variants together
+
+```text
+ember experiment run <baseline.toml> --variant <intervention.toml> [--variant <other.toml> ...]
+```
+
+loads the model once, runs the baseline, and then runs each variant,
+writing one ordinary bundle per spec (each to its own `output.directory`).
+A baseline and an intervention run over the same prompt compute the same
+prefill up to the first block the intervention can change, so the
+baseline computes that shared prefix once and each variant starts its
+prefill there instead of recomputing it:
+
+- **Boundary.** For each input, the boundary is the earliest block `k` in
+  which a prefill-phase intervention of either run acts: a per-layer site
+  at layer `L` gives `k = L` (the residual stream entering block `L`
+  precedes every site of that block); a `final-norm-output` or `logits`
+  site gives `k = n_layers`. Interventions addressed to generated steps act
+  only in decode and do not move the boundary.
+- **What is reused.** During the baseline prefill Ember records the
+  residual stream entering block `k` and, after prefill, the KV cache. The
+  variant copies that cache (layers `< k` hold exactly the K/V it would
+  compute) and runs blocks `k..` through the same generic prefill code a
+  full forward uses. Captures the variant requests before the boundary are
+  recorded during the baseline by an observer instance of the variant's own
+  experiment and handed over; captures, interventions and snapshots at or
+  after the boundary fire in the variant's run as usual. Decode is never
+  shared.
+- **Identity.** A variant bundle is bit-identical to running its spec
+  alone: same semantic hash, same payload hash. Only `runtime.json`
+  differs; its `prefix_reuse` object records the role (`base`, `variant`,
+  `co-baseline`) and, per input, `path = "resumed"` with `resume_layer`, or
+  `path = "full-recompute"` with the reason.
+- **Fallbacks.** An input recomputes in full when the runs differ in
+  model, tokenizer, architecture, execution mode, threads, generation
+  settings, seed or input; when an intervention acts in block 0; when the
+  prompt is a single token (a one-token prefill takes the fused decode
+  route, which has no block boundary); or when any runtime check (prompt
+  tokens, cache capacity) fails. Specs naming a different model file,
+  tokenizer or architecture are rejected outright.
+
+The GUI runs every baseline/intervention pair this way.
 
 ## Determinism and identity
 

@@ -148,6 +148,17 @@ pub struct V05Experiment {
     snapshots: HashMap<SnapshotKey, Vec<f32>>,
     snapshot_checksums: HashMap<SnapshotKey, String>,
     final_top1: Option<(u32, f32)>,
+    /// Observations recorded before the shared-prefix boundary by an
+    /// observer instance during the base run; merged at `before_prefill`.
+    pending_prefix: Option<PrefixObservations>,
+}
+
+/// Captures and summaries an experiment recorded during a prefill, before
+/// the shared-prefix boundary (see `crate::v05::prefix`).
+#[derive(Debug, Clone, Default)]
+pub struct PrefixObservations {
+    pub captures: Vec<CapturedTensor>,
+    pub summaries: Vec<CaptureSummary>,
 }
 
 impl V05Experiment {
@@ -174,7 +185,41 @@ impl V05Experiment {
             snapshots: HashMap::new(),
             snapshot_checksums: HashMap::new(),
             final_top1: None,
+            pending_prefix: None,
         }
+    }
+
+    /// Hand this experiment the observations its observer instance recorded
+    /// before the shared-prefix boundary. They enter the result at
+    /// `before_prefill`, exactly where the skipped hooks would have put them
+    /// (every one of them precedes every hook that still fires).
+    pub fn inject_prefix_observations(&mut self, observations: PrefixObservations) {
+        self.pending_prefix = Some(observations);
+    }
+
+    /// Take what an observer instance recorded (its prefill captures and
+    /// summaries). The observer is consumed for this input.
+    pub fn take_prefix_observations(&mut self) -> Result<PrefixObservations, ExperimentError> {
+        let result = self
+            .result
+            .take()
+            .ok_or_else(|| ExperimentError::new("observer did not see a prefill"))?;
+        Ok(PrefixObservations {
+            captures: result.captures,
+            summaries: result.summaries,
+        })
+    }
+
+    /// Whether any intervention of this input acts at a per-layer site of
+    /// `layer` during prefill (resolved at `before_prefill`; generated-step
+    /// interventions act only in decode). Observers use it to refuse a hook
+    /// that could mutate the shared tensor.
+    pub fn intervenes_in_prefill_layer(&self, layer: usize) -> bool {
+        self.interventions.iter().any(|target| {
+            target.static_record.is_some()
+                && target.site.is_per_layer()
+                && target.layers.contains(&layer)
+        })
     }
 
     /// Inject a cross-bundle source resolved by the driver before
@@ -946,6 +991,10 @@ impl Experiment for V05Experiment {
             if let Some(record) = &target.static_record {
                 result.selection_records.push(record.clone());
             }
+        }
+        if let Some(prefix) = self.pending_prefix.take() {
+            result.captures.extend(prefix.captures);
+            result.summaries.extend(prefix.summaries);
         }
         Ok(())
     }

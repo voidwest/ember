@@ -3300,15 +3300,50 @@ impl<B: Backend> Llama<B> {
     where
         H: LayerHooks<B::Tensor, B::Error>,
     {
+        self.forward_last_logits_from_layer_hooked(
+            backend,
+            embeddings.clone(),
+            0,
+            cache,
+            start_pos,
+            hooks,
+        )
+    }
+
+    /// Hooked last-logits forward that starts at block `first_layer`, with
+    /// `hidden` as the residual stream entering that block.
+    ///
+    /// `first_layer == 0` is the ordinary embeddings forward above. A later
+    /// start serves experiment prefix reuse (`crate::experiments::resume`):
+    /// the caller supplies the exact hidden state and a cache whose layers
+    /// `< first_layer` already hold this sequence's K/V, so every block that
+    /// runs executes the same code on the same inputs as a full forward.
+    pub(crate) fn forward_last_logits_from_layer_hooked<H>(
+        &self,
+        backend: &B,
+        hidden: B::Tensor,
+        first_layer: usize,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         cache.validate_start_pos(start_pos);
-        let seq_len = backend.shape(embeddings)[0];
+        let seq_len = backend.shape(&hidden)[0];
         let embed_dim = self.config.embed_dim;
         assert!(seq_len > 0, "Llama forward requires at least one embedding");
-        let mut x = embeddings.clone();
+        assert!(
+            first_layer <= self.blocks.len(),
+            "first layer {first_layer} exceeds the model's {} blocks",
+            self.blocks.len()
+        );
+        let mut x = hidden;
 
-        for (layer, block) in self.blocks.iter().enumerate() {
+        for (layer, block) in self.blocks.iter().enumerate().skip(first_layer) {
             hooks.before_layer(layer, &mut x)?;
             x = block.forward_with_cache_hooked(backend, &x, cache, layer, start_pos, hooks)?;
             hooks.after_layer(layer, &mut x)?;

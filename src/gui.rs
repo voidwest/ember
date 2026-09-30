@@ -13,7 +13,8 @@
 //! demo loop (change layer/intervention -> Run -> compare -> verify) reuses
 //! one loaded model instead of reloading per run.
 
-use crate::cli_experiment::{execute_prepared, prepare_run, PreparedRun};
+use crate::cli_experiment::{execute_prepared, prepare_run, PreparedRun, RunOutcome, RunTarget};
+use crate::cli_experiment_shared::{run_base_pass, run_variant, BasePass};
 use anyhow::Context;
 use clap::Args as ClapArgs;
 use ember::plan::ExecutionMode;
@@ -241,11 +242,49 @@ impl GuiSession {
         cfg: &RunConfig,
     ) -> Result<RunBundle, String> {
         let started = std::time::Instant::now();
-        let (baseline, _baseline_report) = run_one(self, cfg, RunKind::Baseline)
-            .map_err(|error| format!("baseline run failed: {error}"))?;
+        self.ensure_prepared(&cfg.model_path)?;
+        let baseline_dir = next_output_dir(self, "baseline");
+        let intervention_dir = next_output_dir(self, "intervention");
+        let (baseline_text, baseline_spec) =
+            build_and_resolve_spec(cfg, RunKind::Baseline, &baseline_dir)?;
+        let (intervention_text, intervention_spec) =
+            build_and_resolve_spec(cfg, RunKind::Intervention, &intervention_dir)?;
+        let prepared = self
+            .prepared
+            .as_mut()
+            .ok_or_else(|| "model session is not prepared".to_string())?;
+        // The baseline computes the prompt prefix once; the intervention
+        // run starts its prefill at the intervened block from that state
+        // (bit-identical to a full recompute; see `ember::v05::prefix`).
+        let BasePass {
+            base, mut prefix, ..
+        } = run_base_pass(
+            prepared,
+            RunTarget {
+                resolved: &baseline_spec,
+                spec_text: &baseline_text,
+                output_directory: Path::new(&baseline_dir),
+                retain_incomplete: false,
+            },
+            &[],
+            &[&intervention_spec],
+        )
+        .map_err(|error| format!("baseline run failed: {error:#}"))?;
+        let (baseline, _baseline_report) = run_output(prepared, base)?;
         let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
-        let (intervention, intervention_report) = run_one(self, cfg, RunKind::Intervention)
-            .map_err(|error| format!("intervention run failed: {error}"))?;
+        let intervention = run_variant(
+            prepared,
+            &mut prefix,
+            0,
+            RunTarget {
+                resolved: &intervention_spec,
+                spec_text: &intervention_text,
+                output_directory: Path::new(&intervention_dir),
+                retain_incomplete: false,
+            },
+        )
+        .map_err(|error| format!("intervention run failed: {error:#}"))?;
+        let (intervention, intervention_report) = run_output(prepared, intervention)?;
         let raw_comparison = ember::v05::compare::compare_bundles(
             Path::new(&baseline.bundle_dir),
             Path::new(&intervention.bundle_dir),
@@ -963,6 +1002,30 @@ fn run_one(
         false,
     )
     .map_err(|error| format!("{error:#}"))?;
+    run_output(
+        prepared,
+        RunOutcome {
+            path,
+            identity,
+            report,
+            results,
+            prefix: None,
+        },
+    )
+}
+
+/// The GUI's view of a written bundle.
+fn run_output(
+    prepared: &PreparedRun,
+    outcome: RunOutcome,
+) -> Result<(RunOutput, VerificationReport), String> {
+    let RunOutcome {
+        path,
+        identity,
+        report,
+        results,
+        ..
+    } = outcome;
     let result: &InputResult = results
         .first()
         .ok_or_else(|| "the run produced no input results".to_string())?;
@@ -1680,6 +1743,74 @@ mod tests {
 
     fn cfg_of(req: &RunRequest) -> RunConfig {
         parse_run_request(req).expect("request parses")
+    }
+
+    /// Wall-time of a GUI-style baseline+intervention pair, computed as two
+    /// full runs (the previous path) and with the shared prefix. Needs a
+    /// real model: `EMBER_TIMING_MODEL=model.gguf cargo test --release
+    /// --bin ember gui_pair_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing harness; needs EMBER_TIMING_MODEL"]
+    fn gui_pair_timing() {
+        let Ok(model) = std::env::var("EMBER_TIMING_MODEL") else {
+            return;
+        };
+        let mut req = base_request();
+        req.model_path = model;
+        req.prompt = "The capital of France is".to_string();
+        req.max_new_tokens = 24;
+        req.site = "after-mlp".to_string();
+        req.layer = Some(8);
+        let cfg = cfg_of(&req);
+        let mut session = GuiSession::new(KStrategy::Auto, false);
+        session.ensure_prepared(&cfg.model_path).unwrap();
+        let mut full = Vec::new();
+        let mut shared = Vec::new();
+        for round in 0..6 {
+            let started = std::time::Instant::now();
+            let (baseline, _) = run_one(&mut session, &cfg, RunKind::Baseline).unwrap();
+            let (intervention, _) = run_one(&mut session, &cfg, RunKind::Intervention).unwrap();
+            let full_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let started = std::time::Instant::now();
+            let pair = session.run_baseline_intervention(&cfg).unwrap();
+            let shared_ms = started.elapsed().as_secs_f64() * 1000.0;
+            // The spec texts name different output directories, so compare
+            // the computed content rather than the hashes.
+            for (old, new) in [
+                (&baseline, &pair.baseline),
+                (&intervention, &pair.intervention),
+            ] {
+                let result = ember::v05::compare::compare_bundles(
+                    Path::new(&old.bundle_dir),
+                    Path::new(&new.bundle_dir),
+                )
+                .unwrap();
+                assert!(result
+                    .outputs
+                    .iter()
+                    .all(|output| output.generated_tokens_equal && output.final_top1_equal));
+                assert!(!result.captures.is_empty());
+                assert!(result.captures.iter().all(|capture| capture
+                    .metrics
+                    .as_ref()
+                    .is_some_and(|metrics| metrics.exact)));
+            }
+            if round > 0 {
+                full.push(full_ms);
+                shared.push(shared_ms);
+            }
+        }
+        let median = |values: &mut Vec<f64>| {
+            values.sort_by(f64::total_cmp);
+            values[values.len() / 2]
+        };
+        eprintln!(
+            "gui pair (24 tokens, after-mlp layer 8): two full runs {:.0} ms, shared prefix \
+             {:.0} ms (median of {})",
+            median(&mut full),
+            median(&mut shared),
+            full.len()
+        );
     }
 
     #[test]

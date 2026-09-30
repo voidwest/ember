@@ -735,6 +735,191 @@ where
     }
 }
 
+/// The shared-prefix role of an experiment generation (see
+/// `ember::v05::prefix`).
+pub(crate) enum PrefixRole<'a> {
+    /// A base run: keep a copy of the KV cache right after prefill, when it
+    /// holds every layer's K/V for the prompt and nothing else.
+    Record {
+        cache: &'a mut Option<ember::kv_cache::KVCache>,
+    },
+    /// A variant run: start the prefill at `first_layer` from the recorded
+    /// state when the runtime preconditions hold, otherwise run it in full.
+    Resume {
+        first_layer: usize,
+        prompt_token_ids: &'a [u32],
+        hidden: &'a ember::tensor::CpuTensor,
+        cache: &'a ember::kv_cache::KVCache,
+        /// Set to the resume layer when the resumed route actually ran, or
+        /// to the reason it did not.
+        outcome: &'a mut Option<Result<usize, String>>,
+    },
+}
+
+/// Experiment generation with a shared-prefix role; decode and every other
+/// evaluation are exactly `ActiveGeneration`'s.
+pub(crate) struct PrefixGeneration<'runner, 'model, 'prefix> {
+    active: ActiveGeneration<'runner, 'model>,
+    role: PrefixRole<'prefix>,
+}
+
+impl GenerationExecution<CpuBackend, ember::llama::Llama<CpuBackend>>
+    for PrefixGeneration<'_, '_, '_>
+{
+    fn before_prefill(&mut self, prompt_token_ids: &[u32]) -> anyhow::Result<()> {
+        <ActiveGeneration<'_, '_> as GenerationExecution<
+            CpuBackend,
+            ember::llama::Llama<CpuBackend>,
+        >>::before_prefill(&mut self.active, prompt_token_ids)
+    }
+
+    fn forward_last_logits(
+        &mut self,
+        backend: &CpuBackend,
+        model: &ember::llama::Llama<CpuBackend>,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        phase: ExecutionPhase,
+    ) -> Result<ember::tensor::CpuTensor, ember::backend::CpuError> {
+        if phase == ExecutionPhase::Prefill && start_pos == 0 {
+            match &mut self.role {
+                PrefixRole::Record { cache: slot } => {
+                    let logits = self
+                        .active
+                        .forward_last_logits(backend, model, token_ids, cache, start_pos, phase)?;
+                    **slot = Some(cache.clone());
+                    return Ok(logits);
+                }
+                PrefixRole::Resume {
+                    first_layer,
+                    prompt_token_ids,
+                    hidden,
+                    cache: recorded,
+                    outcome,
+                } => {
+                    let refusal = if token_ids.len() < 2 {
+                        Some("a one-token prompt takes the single-token decode route")
+                    } else if token_ids != *prompt_token_ids {
+                        Some("the prompt tokens differ from the base run's")
+                    } else if recorded.max_seq_len() != cache.max_seq_len() {
+                        Some("the KV cache capacity differs from the base run's")
+                    } else if recorded.cursor() != token_ids.len()
+                        || hidden.shape() != [token_ids.len(), model.config.embed_dim]
+                    {
+                        Some("the recorded prefix does not match this prompt")
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = refusal {
+                        // The variant's experiment already holds the
+                        // observations of the skipped blocks, so a full
+                        // forward here would record them twice: fail, and
+                        // let the driver rerun the input from scratch.
+                        **outcome = Some(Err(reason.to_string()));
+                        return Err(ember::backend::CpuError::Kernel(format!(
+                            "shared-prefix resume refused: {reason}"
+                        )));
+                    } else {
+                        *cache = (*recorded).clone();
+                        cache.truncate_to(0);
+                        let context = ExecutionContext::new_with_token_ids(
+                            self.active.model_context,
+                            phase,
+                            start_pos,
+                            token_ids,
+                            self.active.tracing,
+                        );
+                        let logits =
+                            ember::experiments::forward_last_logits_resumed_with_experiment(
+                                model,
+                                backend,
+                                (*hidden).clone(),
+                                *first_layer,
+                                cache,
+                                start_pos,
+                                context,
+                                self.active.runner,
+                            )?;
+                        **outcome = Some(Ok(*first_layer));
+                        return Ok(logits);
+                    }
+                }
+            }
+        }
+        self.active
+            .forward_last_logits(backend, model, token_ids, cache, start_pos, phase)
+    }
+
+    fn generation_complete(
+        &mut self,
+        prompt_token_count: usize,
+        generated_token_count: usize,
+        decode_evaluations: usize,
+        input_token_ids: &[u32],
+        generated_token_ids: &[u32],
+    ) -> anyhow::Result<()> {
+        <ActiveGeneration<'_, '_> as GenerationExecution<
+            CpuBackend,
+            ember::llama::Llama<CpuBackend>,
+        >>::generation_complete(
+            &mut self.active,
+            prompt_token_count,
+            generated_token_count,
+            decode_evaluations,
+            input_token_ids,
+            generated_token_ids,
+        )
+    }
+}
+
+/// `generate_with_experiment` with a shared-prefix role (experiment runs
+/// only: greedy or seeded sampling, no tracing, no cancellation).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn generate_with_experiment_prefix(
+    backend: &CpuBackend,
+    model: &ember::llama::Llama<CpuBackend>,
+    runner: &mut ExperimentRunner,
+    model_context: ModelContext<'_>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt: &str,
+    max_tokens: usize,
+    temperature: f32,
+    thread_count: usize,
+    context_limit: usize,
+    rng_seed: Option<u64>,
+    role: PrefixRole<'_>,
+) -> anyhow::Result<String> {
+    let mut execution = PrefixGeneration {
+        active: ActiveGeneration {
+            runner,
+            model_context,
+            tracing: TracingState::from(false),
+        },
+        role,
+    };
+    generate_with_execution(
+        backend,
+        model,
+        &mut execution,
+        tokenizer,
+        prompt,
+        max_tokens,
+        temperature,
+        None,
+        None,
+        false,
+        false,
+        None,
+        false,
+        false,
+        thread_count,
+        context_limit,
+        rng_seed,
+        None,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn generate<B: Backend>(
     backend: &B,

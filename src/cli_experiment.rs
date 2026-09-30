@@ -21,7 +21,6 @@ use ember::plan::{ExecutionMode, HookMode};
 use ember::quant_k::KStrategy;
 use ember::tokenizer::EmberTokenizer;
 use ember::v05::compare::compare_loaded;
-use ember::v05::hook::SemanticHookSite;
 use ember::v05::manifest::BundleIdentity;
 use ember::v05::run::{
     write_bundle, BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta,
@@ -32,7 +31,6 @@ use ember::v05::runner::{
 use ember::v05::spec::{RawExperimentSpec, EXPERIMENT_SCHEMA_V1};
 use ember::v05::token_select::{tokenize_for_selection, TextNormalization};
 use ember::v05::verify::{load_verified_bundle, verify_bundle, LoadedBundle, VerifyOptions};
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -86,6 +84,12 @@ pub(crate) struct RunArgs {
     /// Keep the staging directory on failure (clearly marked incomplete).
     #[arg(long)]
     pub retain_incomplete: bool,
+    /// Also run this intervention spec (repeatable), starting its prefill
+    /// from the prompt prefix this run computes instead of recomputing it.
+    /// Each variant writes its own bundle (its spec's output directory),
+    /// bit-identical to running it alone; runtime.json records the path.
+    #[arg(long = "variant", value_name = "spec.toml")]
+    pub variants: Vec<PathBuf>,
     /// Machine-readable output.
     #[arg(long)]
     pub json: bool,
@@ -390,6 +394,50 @@ pub(crate) struct PreparedRun {
     pub tokenizer_sha: String,
     pub gguf_metadata: serde_json::Value,
     pub model_path: PathBuf,
+    /// The model section the session was prepared from; shared execution
+    /// admits only specs naming the same model, tokenizer and architecture.
+    pub model_spec: ember::v05::spec::ModelSpec,
+}
+
+/// Refuse a spec that names a different model, tokenizer or architecture
+/// than the loaded session, or pins hashes the session does not have.
+pub(crate) fn ensure_same_session(
+    prepared: &PreparedRun,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+) -> anyhow::Result<()> {
+    let session = &prepared.model_spec;
+    let model = &resolved.model;
+    if model.path != session.path
+        || model.tokenizer != session.tokenizer
+        || model.arch != session.arch
+    {
+        anyhow::bail!(
+            "experiment '{}' names a different model, tokenizer or architecture than the \
+             loaded session ('{}'); specs run together must share them",
+            resolved.experiment.name,
+            session.path.display()
+        );
+    }
+    if !model.expected_sha256.is_empty() && model.expected_sha256 != prepared.model_sha {
+        anyhow::bail!(
+            "experiment '{}' expects model SHA-256 {} but the session's model hashes to {}",
+            resolved.experiment.name,
+            model.expected_sha256,
+            prepared.model_sha
+        );
+    }
+    if !model.tokenizer_expected_sha256.is_empty()
+        && model.tokenizer_expected_sha256 != prepared.tokenizer_sha
+    {
+        anyhow::bail!(
+            "experiment '{}' expects tokenizer SHA-256 {} but the session's tokenizer hashes \
+             to {}",
+            resolved.experiment.name,
+            model.tokenizer_expected_sha256,
+            prepared.tokenizer_sha
+        );
+    }
+    Ok(())
 }
 
 /// Load the model + tokenizer for a resolved experiment and validate
@@ -458,6 +506,7 @@ pub(crate) fn prepare_run(
         tokenizer_sha,
         gguf_metadata,
         model_path: resolved.model.path.clone(),
+        model_spec: resolved.model.clone(),
     })
 }
 
@@ -514,16 +563,90 @@ fn execute_prepared_inner(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let backend = ember::backend::CpuBackend;
+    let active = activate_spec(prepared, resolved)?;
+    let mut results = Vec::new();
+    let mut timing = RunTiming::default();
+    for index in 0..resolved.inputs.len() {
+        let started = std::time::Instant::now();
+        let experiment = new_input_experiment(prepared, resolved, &active.bundle_sources, index)?;
+        let result = run_input(prepared, resolved, &active, &experiment, None, None)?;
+        timing.add(started.elapsed(), &result);
+        results.push(result);
+    }
+    let outcome = finish_bundle(
+        prepared,
+        &RunTarget {
+            resolved,
+            spec_text,
+            output_directory,
+            retain_incomplete,
+        },
+        &active,
+        results,
+        timing,
+        None,
+    )?;
+    Ok((
+        outcome.path,
+        outcome.identity,
+        outcome.report,
+        outcome.results,
+    ))
+}
+
+/// One experiment to execute against a prepared session.
+#[derive(Clone, Copy)]
+pub(crate) struct RunTarget<'a> {
+    pub resolved: &'a ember::v05::spec::ExperimentSpecV1,
+    pub spec_text: &'a str,
+    pub output_directory: &'a std::path::Path,
+    pub retain_incomplete: bool,
+}
+
+/// A written, self-verified bundle and the results it holds.
+pub(crate) struct RunOutcome {
+    pub path: PathBuf,
+    pub identity: BundleIdentity,
+    pub report: ember::v05::verify::VerificationReport,
+    pub results: Vec<InputResult>,
+    /// Which shared-prefix path produced it (also in runtime.json).
+    pub prefix: Option<ember::v05::prefix::PrefixReuseRecord>,
+}
+
+/// Per-spec execution state: the authoritative plan the model now runs and
+/// the cross-bundle sources the spec's interventions consume.
+pub(crate) struct ActiveSpec {
+    pub plan: std::sync::Arc<ember::plan::ExecutionPlan>,
+    pub bundle_sources: Vec<BundleSource>,
+    pub threads: usize,
+}
+
+/// Wall time and generated-token count accumulated over a run's inputs.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct RunTiming {
+    pub elapsed: std::time::Duration,
+    pub generated: usize,
+}
+
+impl RunTiming {
+    pub fn add(&mut self, elapsed: std::time::Duration, result: &InputResult) {
+        self.elapsed += elapsed;
+        self.generated += result.generated_token_ids.len();
+    }
+}
+
+/// Build the spec's execution plan (making it the model's active plan) and
+/// load its cross-bundle sources.
+pub(crate) fn activate_spec(
+    prepared: &PreparedRun,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+) -> anyhow::Result<ActiveSpec> {
     let mode = resolved.execution.mode;
     let threads = pool_threads(resolved)?;
     let model = &prepared.model;
-    let tokenizer = &prepared.tokenizer;
-    let architecture = &prepared.architecture;
     let model_sha = &prepared.model_sha;
     let tokenizer_sha = &prepared.tokenizer_sha;
     let n_layers = prepared.n_layers;
-    let embed_dim = prepared.embed_dim;
 
     // -- execution plan --
     let has_captures = !resolved.captures.is_empty();
@@ -538,30 +661,10 @@ fn execute_prepared_inner(
     // Planned execution is single-token decode. Record the exact union of
     // generated-step sites used by any input so every runtime decode builds
     // the same authoritative plan; prompt-only hooks stay on generic prefill.
-    let mut stage_keys = BTreeSet::new();
-    let mut add_site = |site: SemanticHookSite,
-                        layers: &ember::v05::capture::LayerSelector|
-     -> anyhow::Result<()> {
-        if site.is_per_layer() {
-            for layer in layers.resolve(n_layers).map_err(anyhow::Error::msg)? {
-                stage_keys.insert(format!("{}@{layer}", site.stage_id()));
-            }
-        } else {
-            stage_keys.insert(site.stage_id().to_string());
-        }
-        Ok(())
-    };
-    for capture in &resolved.captures {
-        if capture.tokens.is_generated() {
-            add_site(capture.site, &capture.layers)?;
-        }
-    }
-    for intervention in &resolved.interventions {
-        if intervention.tokens.is_generated() {
-            add_site(intervention.site, &intervention.layers)?;
-        }
-    }
-    let stage_keys: Vec<String> = stage_keys.into_iter().collect();
+    let stage_keys: Vec<String> = ember::v05::prefix::generated_step_stage_keys(resolved, n_layers)
+        .map_err(anyhow::Error::msg)?
+        .into_iter()
+        .collect();
     let stages: Vec<&str> = stage_keys.iter().map(String::as_str).collect();
     model.set_plan_provenance(
         model_sha.clone(),
@@ -590,129 +693,189 @@ fn execute_prepared_inner(
             bundle_sources.push(loaded);
         }
     }
+    Ok(ActiveSpec {
+        plan,
+        bundle_sources,
+        threads,
+    })
+}
 
-    // -- run every input --
+/// A fresh experiment for input `index`, with its tokenization and the
+/// spec's cross-bundle sources injected.
+pub(crate) fn new_input_experiment(
+    prepared: &PreparedRun,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+    bundle_sources: &[BundleSource],
+    index: usize,
+) -> anyhow::Result<Arc<Mutex<V05Experiment>>> {
     let facts = ModelFacts {
-        n_layers,
-        embed_dim,
-        vocab_size: model.config.vocab_size,
+        n_layers: prepared.n_layers,
+        embed_dim: prepared.embed_dim,
+        vocab_size: prepared.model.config.vocab_size,
+    };
+    let input = resolved
+        .inputs
+        .get(index)
+        .ok_or_else(|| anyhow::anyhow!("input index {index} out of range"))?;
+    let mut experiment = V05Experiment::new(
+        (*resolved).clone(),
+        index,
+        facts,
+        Some(prepared.model_sha.clone()),
+        Some(prepared.tokenizer_sha.clone()),
+    );
+    let info = tokenize_for_selection(&prepared.tokenizer, &input.text, TextNormalization::None)
+        .map_err(anyhow::Error::msg)?;
+    experiment.inject_tokenization(info);
+    for source in bundle_sources {
+        experiment.inject_bundle_source(source.clone());
+    }
+    Ok(Arc::new(Mutex::new(experiment)))
+}
+
+/// Drive one input through generation with `runner_experiment` attached
+/// (the input's own experiment, or a shared pass wrapping it) and collect
+/// the input's result from `experiment`.
+pub(crate) fn run_input(
+    prepared: &PreparedRun,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+    active: &ActiveSpec,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    pass: Option<crate::cli_experiment_shared::SharedPass>,
+    role: Option<crate::cli_generation::PrefixRole<'_>>,
+) -> anyhow::Result<InputResult> {
+    let backend = ember::backend::CpuBackend;
+    let model = &prepared.model;
+    let architecture = &prepared.architecture;
+    let index = experiment.lock().expect("v05 experiment lock").input_index;
+    let input = &resolved.inputs[index];
+    eprintln!(
+        "experiment: input {} ({}) tokens={} mode={}",
+        index + 1,
+        input.id,
+        input.text.len(),
+        resolved.execution.mode.name()
+    );
+    let model_context = ModelContext::new(
+        family_for_arch(architecture),
+        Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
+        architecture,
+        prepared.n_layers,
+        prepared.embed_dim,
+    )
+    .with_provenance(Some(&prepared.model_sha), Some(&prepared.tokenizer_sha));
+    let seed = if resolved.generation.temperature > 0.0 && resolved.experiment.seed != 0 {
+        Some(resolved.experiment.seed)
+    } else {
+        None
     };
     let context_limit = model.max_seq_len(&backend);
-    let mut results = Vec::new();
-    let start = std::time::Instant::now();
-    let mut total_generated = 0usize;
-    let warnings = Vec::new();
-
-    for (index, input) in resolved.inputs.iter().enumerate() {
-        eprintln!(
-            "experiment: input {} ({}) tokens={} mode={}",
-            index + 1,
-            input.id,
-            input.text.len(),
-            mode.name()
-        );
-        let inner = Arc::new(Mutex::new(V05Experiment::new(
-            (*resolved).clone(),
-            index,
-            facts,
-            Some(model_sha.clone()),
-            Some(tokenizer_sha.clone()),
-        )));
-        {
-            let mut experiment = inner.lock().expect("v05 experiment lock");
-            let info = tokenize_for_selection(tokenizer, &input.text, TextNormalization::None)
-                .map_err(anyhow::Error::msg)?;
-            experiment.inject_tokenization(info);
-            for source in &bundle_sources {
-                experiment.inject_bundle_source(source.clone());
-            }
+    let mut runner = match pass {
+        None => ExperimentRunner::new(V05Adapter(Arc::clone(experiment))),
+        Some(pass) => ExperimentRunner::new(pass),
+    };
+    let generated_text = match role {
+        None => {
+            crate::cli_generation::generate_with_experiment(
+                &backend,
+                model,
+                &mut runner,
+                model_context,
+                &prepared.tokenizer,
+                &input.text,
+                resolved.generation.max_new_tokens,
+                resolved.generation.temperature,
+                None,
+                None,
+                false,
+                false,
+                None,
+                false,
+                false,
+                active.threads,
+                context_limit,
+                seed,
+                None, // experiment runs are not signal-cancellable yet
+            )?
         }
-        let adapter = V05Adapter(Arc::clone(&inner));
-        let mut runner = ExperimentRunner::new(adapter);
-        let model_context = ModelContext::new(
-            family_for_arch(architecture),
-            Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
-            architecture,
-            n_layers,
-            embed_dim,
-        )
-        .with_provenance(Some(model_sha), Some(tokenizer_sha));
-        let generated_text = crate::cli_generation::generate_with_experiment(
+        Some(role) => crate::cli_generation::generate_with_experiment_prefix(
             &backend,
             model,
             &mut runner,
             model_context,
-            tokenizer,
+            &prepared.tokenizer,
             &input.text,
             resolved.generation.max_new_tokens,
             resolved.generation.temperature,
-            None,
-            None,
-            false,
-            false,
-            None,
-            false,
-            false,
-            threads,
+            active.threads,
             context_limit,
-            if resolved.generation.temperature > 0.0 && resolved.experiment.seed != 0 {
-                Some(resolved.experiment.seed)
-            } else {
-                None
-            },
-            None, // experiment runs are not signal-cancellable yet
-        )?;
-        {
-            let mut experiment = inner.lock().expect("v05 experiment lock");
-            experiment.set_generated_text(generated_text);
-            let result = experiment.into_result().map_err(anyhow::Error::msg)?;
-            total_generated += result.generated_token_ids.len();
-            results.push(result);
-        }
-    }
-    let wall_clock_ms = start.elapsed().as_secs_f64() * 1000.0;
+            seed,
+            role,
+        )?,
+    };
+    let mut experiment = experiment.lock().expect("v05 experiment lock");
+    experiment.set_generated_text(generated_text);
+    experiment.into_result().map_err(anyhow::Error::msg)
+}
 
-    // -- assemble + write + self-verify --
+/// Assemble, write, and self-verify a bundle from finished input results.
+pub(crate) fn finish_bundle(
+    prepared: &PreparedRun,
+    target: &RunTarget<'_>,
+    active: &ActiveSpec,
+    results: Vec<InputResult>,
+    timing: RunTiming,
+    prefix: Option<ember::v05::prefix::PrefixReuseRecord>,
+) -> anyhow::Result<RunOutcome> {
+    let resolved = target.resolved;
+    let wall_clock_ms = timing.elapsed.as_secs_f64() * 1000.0;
     let runtime = RuntimeMetrics {
         wall_clock_ms,
         decode_throughput_tps: if wall_clock_ms > 0.0 {
-            Some(total_generated as f64 / (wall_clock_ms / 1000.0))
+            Some(timing.generated as f64 / (wall_clock_ms / 1000.0))
         } else {
             None
         },
         prefill_throughput_tps: None,
         first_token_latency_ms: None,
         peak_rss_kb: peak_rss_kb(),
-        threads,
+        threads: active.threads,
+        prefix_reuse: prefix.as_ref().map(|record| record.to_json()),
     };
     let mut resolved_with_output = (*resolved).clone();
-    resolved_with_output.output.directory = output_directory.to_path_buf();
+    resolved_with_output.output.directory = target.output_directory.to_path_buf();
     let materials = BundleMaterials {
-        spec_text: spec_text.to_string(),
+        spec_text: target.spec_text.to_string(),
         resolved: resolved_with_output,
         ember_version: env!("CARGO_PKG_VERSION").to_string(),
         ember_commit: ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()),
         model_meta: ModelBundleMeta {
-            sha256: model_sha.clone(),
-            architecture: architecture.clone(),
-            layer_count: n_layers,
-            embed_dim,
-            vocab_size: model.config.vocab_size,
+            sha256: prepared.model_sha.clone(),
+            architecture: prepared.architecture.clone(),
+            layer_count: prepared.n_layers,
+            embed_dim: prepared.embed_dim,
+            vocab_size: prepared.model.config.vocab_size,
             gguf_metadata: prepared.gguf_metadata.clone(),
         },
         tokenizer_meta: TokenizerBundleMeta {
-            sha256: tokenizer_sha.clone(),
-            vocab_size: tokenizer.vocab_size(),
+            sha256: prepared.tokenizer_sha.clone(),
+            vocab_size: prepared.tokenizer.vocab_size(),
         },
-        plan: (*plan).clone(),
+        plan: (*active.plan).clone(),
         results: results.clone(),
-        warnings,
+        warnings: Vec::new(),
         runtime,
     };
     let (path, identity) =
-        write_bundle(&materials, retain_incomplete).map_err(anyhow::Error::msg)?;
+        write_bundle(&materials, target.retain_incomplete).map_err(anyhow::Error::msg)?;
     let report = verify_bundle(&path, &VerifyOptions::default()).map_err(anyhow::Error::msg)?;
-    Ok((path, identity, report, results))
+    Ok(RunOutcome {
+        path,
+        identity,
+        report,
+        results,
+        prefix,
+    })
 }
 
 fn peak_rss_kb() -> Option<u64> {
@@ -790,6 +953,16 @@ pub(crate) fn run_experiment_command(
         .output
         .clone()
         .unwrap_or_else(|| resolved.output.directory.clone());
+    if !command.variants.is_empty() {
+        return run_with_variants(
+            command,
+            &spec_text,
+            &resolved,
+            &output_directory,
+            k_strategy,
+            k_allow_fallback,
+        );
+    }
     let (path, identity, report, _results) = execute_resolved(
         &resolved,
         &spec_text,
@@ -822,6 +995,123 @@ pub(crate) fn run_experiment_command(
         println!("  verification: {} check(s) passed", report.checks.len());
     }
     Ok(())
+}
+
+/// `experiment run base.toml --variant a.toml --variant b.toml`: one model
+/// load, the base computes the shared prefix, each variant resumes from it.
+fn run_with_variants(
+    command: &RunArgs,
+    spec_text: &str,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+    output_directory: &std::path::Path,
+    k_strategy: KStrategy,
+    k_allow_fallback: bool,
+) -> anyhow::Result<()> {
+    let mut variants = Vec::with_capacity(command.variants.len());
+    for path in &command.variants {
+        variants.push(resolve_spec_file(
+            path,
+            command.execution.as_deref(),
+            command.threads,
+        )?);
+    }
+    let mut prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
+    let targets: Vec<RunTarget<'_>> = variants
+        .iter()
+        .map(|(text, spec)| RunTarget {
+            resolved: spec,
+            spec_text: text,
+            output_directory: &spec.output.directory,
+            retain_incomplete: command.retain_incomplete,
+        })
+        .collect();
+    let (base, _, outcomes) = crate::cli_experiment_shared::execute_shared(
+        &mut prepared,
+        RunTarget {
+            resolved,
+            spec_text,
+            output_directory,
+            retain_incomplete: command.retain_incomplete,
+        },
+        &[],
+        &targets,
+    )?;
+    let all: Vec<&RunOutcome> = std::iter::once(&base).chain(outcomes.iter()).collect();
+    for outcome in &all {
+        if !outcome.report.ok {
+            anyhow::bail!(
+                "bundle {} failed self-verification: {} check(s) failed",
+                outcome.path.display(),
+                outcome
+                    .report
+                    .checks
+                    .iter()
+                    .filter(|check| !check.ok)
+                    .count()
+            );
+        }
+    }
+    if command.json {
+        let bundles: Vec<serde_json::Value> = all
+            .iter()
+            .map(|outcome| {
+                serde_json::json!({
+                    "bundle": outcome.path.display().to_string(),
+                    "semantic_hash": outcome.identity.semantic_hash,
+                    "payload_hash": outcome.identity.payload_hash,
+                    "prefix_reuse": outcome.prefix.as_ref().map(|record| record.to_json()),
+                    "verification": outcome.report,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({"ok": true, "bundles": bundles}))?
+        );
+    } else {
+        for outcome in all {
+            println!("bundle written to {}", outcome.path.display());
+            println!("  semantic hash: {}", outcome.identity.semantic_hash);
+            println!("  payload hash:  {}", outcome.identity.payload_hash);
+            println!(
+                "  verification: {} check(s) passed",
+                outcome.report.checks.len()
+            );
+            if let Some(record) = &outcome.prefix {
+                println!("  prefix: {}", describe_prefix(record));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One line on how a bundle was computed.
+pub(crate) fn describe_prefix(record: &ember::v05::prefix::PrefixReuseRecord) -> String {
+    use ember::v05::prefix::PrefixPath;
+    if record.inputs.is_empty() {
+        return format!(
+            "{}{}",
+            record.role,
+            record
+                .note
+                .as_ref()
+                .map(|note| format!(" ({note})"))
+                .unwrap_or_default()
+        );
+    }
+    let parts: Vec<String> = record
+        .inputs
+        .iter()
+        .map(|input| match &input.path {
+            PrefixPath::Resumed { resume_layer } => {
+                format!("{} resumed at block {resume_layer}", input.input_id)
+            }
+            PrefixPath::FullRecompute { reason } => {
+                format!("{} recomputed in full ({reason})", input.input_id)
+            }
+        })
+        .collect();
+    format!("{}: {}", record.role, parts.join("; "))
 }
 
 pub(crate) fn run_inspect_command(command: &InspectArgs) -> anyhow::Result<()> {
@@ -1233,7 +1523,7 @@ fn fmt_opt_u64(value: Option<u64>) -> String {
 ///
 /// Specs also arrive from bundles (`reproduce`), so the count is untrusted
 /// and bounded before a pool is built from it.
-fn pool_threads(resolved: &ember::v05::spec::ExperimentSpecV1) -> anyhow::Result<usize> {
+pub(crate) fn pool_threads(resolved: &ember::v05::spec::ExperimentSpecV1) -> anyhow::Result<usize> {
     const MAX_THREADS: usize = 1024;
     let requested = resolved.execution.threads;
     anyhow::ensure!(

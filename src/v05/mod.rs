@@ -13,6 +13,7 @@ pub mod compare;
 pub mod hook;
 pub mod intervention;
 pub mod manifest;
+pub mod prefix;
 pub mod run;
 pub mod runner;
 pub mod safetensors;

@@ -43,6 +43,9 @@ pub struct RuntimeMetrics {
     pub first_token_latency_ms: Option<f64>,
     pub peak_rss_kb: Option<u64>,
     pub threads: usize,
+    /// Which shared-prefix path produced the run (`crate::v05::prefix`);
+    /// omitted for a standalone run.
+    pub prefix_reuse: Option<serde_json::Value>,
 }
 
 /// Everything the assembler needs.
@@ -264,7 +267,7 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
     let semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
 
     // runtime.json (excluded from hashes).
-    let runtime_json = serde_json::json!({
+    let mut runtime_json = serde_json::json!({
         "timestamp": format!("epoch-seconds-{}", crate::extraction::unix_timestamp()),
         "hostname": hostname(),
         "os": std::env::consts::OS,
@@ -286,6 +289,12 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
             .as_ref()
             .map(|path| path.display().to_string()),
     });
+    if let (Some(prefix), Some(object)) = (
+        materials.runtime.prefix_reuse.as_ref(),
+        runtime_json.as_object_mut(),
+    ) {
+        object.insert("prefix_reuse".into(), prefix.clone());
+    }
     let _ = semantic_hash; // stored in manifest.json by the writer
 
     Ok(AssembledBundle {
@@ -693,6 +702,7 @@ directory = "runs/bundle-test"
                 first_token_latency_ms: Some(1.5),
                 peak_rss_kb: Some(42_000),
                 threads: 1,
+                prefix_reuse: None,
             },
         }
     }

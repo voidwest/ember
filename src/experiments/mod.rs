@@ -9,6 +9,7 @@ mod activation_patch;
 mod activation_stats;
 mod capture;
 mod context;
+mod resume;
 mod zero_layer_output;
 
 pub use activation_patch::{ActivationPatch, PatchTarget};
@@ -18,6 +19,7 @@ pub use context::{
     ExecutionContext, ExecutionPhase, GenerationContext, LayerContext, ModelContext, ModelFamily,
     TensorAccess, TensorDType, TracingState,
 };
+pub use resume::forward_last_logits_resumed_with_experiment;
 pub use zero_layer_output::{ZeroLayerOutput, ZeroLayerOutputSpec, ZeroLayerOutputStage};
 
 use crate::artifact::{ActivationStage, DispatchObservation, DispatchPath, ManifestExperiment};
