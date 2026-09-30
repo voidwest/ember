@@ -21,9 +21,9 @@
 #   The golden-logit ladder (contract Gate C, scripts/validate_golden_ladder.sh)
 #   is deliberately excluded. It requires the full six-rung matrix across both
 #   model families, which peaks around 11 GB of source plus ladder artifacts
-#   and does not reliably fit a standard runner. Gate C remains a manual,
-#   documented local gate until the ladder rungs are published as a versioned
-#   artifact or the job moves to a larger runner. Do not add it speculatively:
+#   and does not reliably fit a standard runner. Gate C runs instead from a
+#   published, SHA-256-pinned ladder asset in the manual golden-ladder.yml
+#   workflow (see docs/validation.md). Do not add it here speculatively:
 #   a job that is disk-flaky trains everyone to ignore red.
 #
 # The ladder is built into a FRESH output directory on purpose. The tracked

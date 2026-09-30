@@ -1,0 +1,141 @@
+# Golden-logit ladder (contract Gate C) from a published ladder asset.
+#
+# Gate C compares Ember's final-position logits with the pinned llama.cpp
+# reference on all six frozen ladder rungs (llama-3.2-1b + qwen2.5-1.5b x
+# Q8_0 / Q6_K / Q4_K_M). Rebuilding the rungs on a runner does not fit (see
+# numerical-gates.yml), so this workflow consumes the rungs as a versioned
+# release asset prepared by scripts/package_ladder_asset.sh and published by
+# a maintainer (docs/validation.md, "Golden ladder as a release asset").
+#
+# Trust: one pinned value, the SHA-256 of the asset index. The index pins
+# every part; scripts/fetch_ladder_asset.sh checks each part, and
+# scripts/validate_ladder_inputs.py checks every extracted rung against the
+# frozen models/v03-ladder/ladder-manifest.json in this commit. A different
+# ladder cannot pass.
+#
+# Manual only. With no asset configured (neither inputs nor the repository
+# variables EMBER_LADDER_INDEX_URL / EMBER_LADDER_INDEX_SHA256), the run
+# SKIPS with a notice instead of failing: until a maintainer publishes the
+# asset there is nothing to check, and a permanently red job would only
+# teach everyone to ignore it.
+
+name: golden-ladder
+
+on:
+  workflow_dispatch:
+    inputs:
+      index_url:
+        description: "URL of ember-ladder-<version>.index.json (default: vars.EMBER_LADDER_INDEX_URL)"
+        required: false
+        default: ""
+      index_sha256:
+        description: "SHA-256 of that index file (default: vars.EMBER_LADDER_INDEX_SHA256)"
+        required: false
+        default: ""
+
+concurrency:
+  group: golden-ladder
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  LADDER: ${{ github.workspace }}/models/gate-c-ladder
+  LLAMA_CPP_DIR: ${{ github.workspace }}/.llama-cpp
+  PYTHON: python3
+
+jobs:
+  configure:
+    name: resolve ladder asset
+    runs-on: ubuntu-latest
+    outputs:
+      index_url: ${{ steps.resolve.outputs.index_url }}
+      index_sha256: ${{ steps.resolve.outputs.index_sha256 }}
+      configured: ${{ steps.resolve.outputs.configured }}
+    steps:
+      - id: resolve
+        env:
+          INPUT_URL: ${{ inputs.index_url }}
+          INPUT_SHA: ${{ inputs.index_sha256 }}
+          VAR_URL: ${{ vars.EMBER_LADDER_INDEX_URL }}
+          VAR_SHA: ${{ vars.EMBER_LADDER_INDEX_SHA256 }}
+        run: |
+          set -euo pipefail
+          url="${INPUT_URL:-$VAR_URL}"
+          sha="${INPUT_SHA:-$VAR_SHA}"
+          if [[ -z "$url" ]]; then
+            echo "::notice title=Gate C skipped::No golden-ladder asset is configured. Publish one with scripts/package_ladder_asset.sh (docs/validation.md) and pass index_url/index_sha256, or set the EMBER_LADDER_INDEX_URL and EMBER_LADDER_INDEX_SHA256 repository variables."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::an asset URL is configured but its index SHA-256 is missing or malformed; refusing to run unpinned"
+            exit 1
+          fi
+          {
+            echo "index_url=$url"
+            echo "index_sha256=$sha"
+            echo "configured=true"
+          } >> "$GITHUB_OUTPUT"
+
+  gate-c:
+    name: golden ladder (Gate C)
+    needs: configure
+    if: needs.configure.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    # Download (~7.6 GB) + llama.cpp build + release build + 6 rungs x 2 engines.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        # Peak: ladder (~7.6 GB) + one part (<2 GB) + two builds.
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h "$GITHUB_WORKSPACE"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install numpy
+        run: python3 -m pip install --quiet numpy
+
+      - name: fetch and verify the ladder asset
+        env:
+          INDEX_URL: ${{ needs.configure.outputs.index_url }}
+          INDEX_SHA256: ${{ needs.configure.outputs.index_sha256 }}
+        run: |
+          bash scripts/fetch_ladder_asset.sh \
+            --index-url "$INDEX_URL" --index-sha256 "$INDEX_SHA256" --dest "$LADDER"
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: install Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: build Ember (release, headless)
+        run: cargo build --locked --release --no-default-features --bin ember
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.LLAMA_CPP_DIR }}
+          key: llama-cpp-${{ runner.os }}-${{ hashFiles('scripts/setup_llama_cpp.sh', 'scripts/reference_build.py') }}
+
+      - name: build pinned llama.cpp reference
+        # The golden runner re-verifies the build stamp against the checkout,
+        # libraries and CMake cache, so a stale cache cannot pass silently.
+        run: bash scripts/setup_llama_cpp.sh
+
+      - name: run Gate C
+        run: bash scripts/validate_golden_ladder.sh --workdir "$RUNNER_TEMP/golden-gate-c"
+
+      - name: upload Gate C evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-ladder-evidence
+          path: ${{ runner.temp }}/golden-gate-c
+          if-no-files-found: warn
+          retention-days: 30

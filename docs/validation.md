@@ -242,6 +242,44 @@ continues to enforce the frozen manifest, including when `LADDER` points to a
 different directory. A diagnostic run on a downloaded model with another hash
 cannot substitute for this gate.
 
+### Golden ladder as a release asset
+
+Gate C can also run in CI (`.github/workflows/golden-ladder.yml`, manual
+`workflow_dispatch` only) from the six frozen rungs published as a
+versioned release asset. Until a maintainer publishes one, the workflow
+skips with a notice saying so; it never fails for lack of an asset, and it
+never runs unpinned.
+
+**Prepare** (any machine that holds the six frozen rungs):
+
+```sh
+scripts/package_ladder_asset.sh --version v1 --ladder models/v03-ladder --out dist/ladder
+```
+
+The script first checks every rung against the frozen
+`models/v03-ladder/ladder-manifest.json` (fail closed), then writes one
+deterministic tarball per rung (GitHub caps release assets at 2 GiB per
+file; the ladder is ~7.6 GB), a copy of the manifest, an
+`ember-ladder-<version>.index.json` that pins every part by SHA-256, and a
+`SHA256SUMS`. It prints the index's SHA-256. It never uploads anything.
+
+**Publish (manual maintainer action):** upload every file in
+`dist/ladder/` to a single GitHub release (for example a dedicated
+`ladder-v1` release), then either run the `golden-ladder` workflow with
+`index_url` = the index's release download URL and `index_sha256` = the
+printed hash, or store the two as repository variables
+`EMBER_LADDER_INDEX_URL` and `EMBER_LADDER_INDEX_SHA256` so every manual
+run uses them. Record the index hash in this document when publishing.
+
+**Consume:** `scripts/fetch_ladder_asset.sh --index-url URL --index-sha256
+HEX --dest DIR` verifies the index against the pinned hash, then fetches,
+verifies and extracts one part at a time (peak disk: ladder plus one part),
+requires the asset's manifest to equal the committed one, and finally runs
+`validate_ladder_inputs.py` on the result. The workflow then builds Ember
+(release, headless) and the pinned llama.cpp reference and runs
+`scripts/validate_golden_ladder.sh`, uploading the Gate C evidence
+directory.
+
 For rebuilding models, `scripts/quantize_ladder.sh` accepts `PYTHON` and uses
 portable hashing and size checks. Use a new `--out` directory. It refuses an
 existing rung or manifest record; do not run concurrent writers in that directory.
