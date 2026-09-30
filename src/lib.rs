@@ -72,6 +72,8 @@ pub mod plan;
 mod plan_build;
 #[doc(hidden)]
 pub mod planned_decode;
+#[cfg(target_arch = "aarch64")]
+mod q8_gemm;
 pub mod quant;
 #[doc(hidden)]
 pub mod quant_fault;
