@@ -1071,3 +1071,83 @@ async fn any_history_row_exports_markdown_and_its_bundle(cx: &mut TestAppContext
     .unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[gpui_kit::test]
+async fn a_full_history_builds_only_the_rows_on_screen(cx: &mut TestAppContext) {
+    use gpui_kit::component::table::ColumnSort;
+    let (handle, console) = console_window(cx).await;
+    cx.simulate_window_resize(
+        handle,
+        gpui_kit::size(gpui_kit::px(2200.0), gpui_kit::px(720.0)),
+    );
+    cx.run_until_parked();
+    let rows_built = |cx: &mut gpui_kit::App| {
+        let table = console.read(cx).runs_table.clone().expect("Runs was drawn");
+        table.update(cx, |table, _| {
+            std::mem::take(&mut table.delegate_mut().rows_built)
+        })
+    };
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // The store's cap: 500 runs, each with a result and configuration.
+            let template = super::seed_store()
+                .runs
+                .into_iter()
+                .find(|run| run.number == 7)
+                .unwrap();
+            for number in 1..=super::app_store::MAX_RUNS as u64 {
+                let mut run = template.clone();
+                run.number = number;
+                run.finished_at = number as i64;
+                console.store.push_run(run);
+            }
+            assert_eq!(console.store.runs.len(), 500);
+            console.goto(View::Runs, cx);
+        });
+        window.draw(cx).clear(cx);
+        rows_built(cx);
+        console.update(cx, |_, cx| cx.notify());
+        window.render_frame(cx);
+        let built = rows_built(cx);
+        assert!(
+            built > 0 && built <= 40,
+            "a frame built {built} of 500 rows; only the visible ones should be"
+        );
+
+        // Row actions still work on what is on screen: newest first.
+        window.click(SharedString::from("run-pin:500"), cx);
+        window.render_frame(cx);
+        assert!(console
+            .read(cx)
+            .store
+            .runs
+            .iter()
+            .any(|run| run.number == 500 && run.pinned));
+        window.click(SharedString::from("run-delete:499"), cx);
+        window.render_frame(cx);
+        window.click(SharedString::from("run-delete-confirm:499"), cx);
+        window.render_frame(cx);
+        assert_eq!(console.read(cx).store.runs.len(), 499);
+        window.click(SharedString::from("run-select:498"), cx);
+        window.click(SharedString::from("run-select:497"), cx);
+        window.render_frame(cx);
+        window.click(SharedString::from("runs-compare-open"), cx);
+        assert_eq!(console.read(cx).comparing, Some((498, 497)));
+        console.update(cx, |console, cx| console.close_comparison(cx));
+        window.render_frame(cx);
+
+        // Sorting reorders all 500, and the frame still builds a screenful.
+        let table = console.read(cx).runs_table.clone().unwrap();
+        table.update(cx, |table, _| {
+            table.delegate_mut().set_sort(0, ColumnSort::Ascending)
+        });
+        assert_eq!(table.read(cx).delegate().row(0).unwrap().number, 1);
+        rows_built(cx);
+        window.render_frame(cx);
+        let built = rows_built(cx);
+        assert!(built <= 40, "sorted, a frame built {built} rows");
+        window.click(SharedString::from("run-open:1"), cx);
+        assert_eq!(console.read(cx).saved_run, Some(1));
+    })
+    .unwrap();
+}

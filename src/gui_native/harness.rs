@@ -940,6 +940,41 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                     })?;
                 }
             }
+            // A full history (the store's 500-run cap): the table fills the
+            // page and scrolls, building only the rows on screen.
+            if seed_runs_requested() {
+                let saved = context.update_window(handle.into(), |_, window, cx| {
+                    let saved = console.update(cx, |console, cx| {
+                        let saved = console.store.clone();
+                        let template = saved.runs.first().cloned();
+                        if let Some(template) = template {
+                            for number in 8..=app_store::MAX_RUNS as u64 {
+                                let mut run = template.clone();
+                                run.number = number;
+                                run.finished_at -= number as i64 * 600;
+                                console.store.push_run(run);
+                            }
+                        }
+                        console.appearance = mode;
+                        console.view = View::Runs;
+                        console.sync_kit_theme(cx);
+                        cx.notify();
+                        saved
+                    });
+                    window.draw(cx).clear(cx);
+                    saved
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!("{name}-{appearance}-runs-full.png")))?;
+                context.update_window(handle.into(), |_, _, cx| {
+                    console.update(cx, |console, _| console.store = saved);
+                })?;
+            }
             // The command palette overlays every page; capture it once per
             // theme so the dim backdrop and the floating panel are reviewed
             // against both canvases.

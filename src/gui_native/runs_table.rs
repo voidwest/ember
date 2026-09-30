@@ -29,6 +29,10 @@ pub(super) struct RunsDelegate {
     /// How many times `rows` was rebuilt from the store. Tests read it to
     /// prove a render without a store change rebuilds nothing.
     pub(super) rebuilds: usize,
+    /// Rows built by `render_td` since tests last reset it. The table is a
+    /// virtual list; tests read this to prove a frame builds only the rows
+    /// on screen, not all 500.
+    pub(super) rows_built: usize,
     /// Display order: indices into `rows`, sorted by `sort` when one is set.
     order: Vec<usize>,
     /// The column sort the user chose, re-applied to every new snapshot:
@@ -110,6 +114,7 @@ impl RunsDelegate {
             rows: Vec::new(),
             synced: None,
             rebuilds: 0,
+            rows_built: 0,
             order: Vec::new(),
             sort: None,
             confirm_delete: None,
@@ -139,7 +144,7 @@ impl RunsDelegate {
 
     /// Remember a column sort and apply it. `ColumnSort::Default` returns to
     /// store order.
-    fn set_sort(&mut self, col_ix: usize, sort: ColumnSort) {
+    pub(super) fn set_sort(&mut self, col_ix: usize, sort: ColumnSort) {
         self.sort = (!matches!(sort, ColumnSort::Default)).then_some((col_ix, sort));
         self.apply_sort();
     }
@@ -163,7 +168,7 @@ impl RunsDelegate {
     }
 
     /// The run shown at a display row.
-    fn row(&self, row_ix: usize) -> Option<&RunRow> {
+    pub(super) fn row(&self, row_ix: usize) -> Option<&RunRow> {
         self.order.get(row_ix).and_then(|&ix| self.rows.get(ix))
     }
 
@@ -279,6 +284,9 @@ impl TableDelegate for RunsDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let colors = self.colors;
+        if col_ix == 0 {
+            self.rows_built += 1;
+        }
         // The action lane: pin and delete, as quiet text commands. They talk
         // to the console through the weak entity the snapshot came from, so
         // the store, the snapshot and the screen stay one system.

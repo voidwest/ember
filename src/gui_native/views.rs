@@ -764,7 +764,10 @@ impl Console {
             }
         };
 
-        let mut body: Div = div().flex().flex_col();
+        // The table's region may shrink to whatever the page has left: the
+        // kit table is a virtual list, so it builds only the rows it shows
+        // and scrolls the rest. Everything else on the page keeps its size.
+        let mut body: Div = div().flex().flex_col().min_h(px(0.0));
         if row_count == 0 {
             body = body.child(
                 div()
@@ -790,20 +793,21 @@ impl Console {
             );
         } else {
             // Header plus one row band per record, measured off a render rather
-            // than guessed: a fixed 420px left a void under a short history, and
-            // asking for less than the rows need silently dropped the last one.
-            //
-            // `flex_none` matters as much as the number. In a flex column this
-            // wrapper was being compressed to fit the page, so it rendered
-            // shorter than it was asked for -- 194pt for a 230pt request -- and
-            // the shortfall came straight out of the last row.
+            // than guessed: a fixed 420px left a void under a short history.
+            // That is the most the region asks for, not what it gets: with
+            // 500 runs it used to be 16,000px tall, the table's virtual list
+            // saw every row as visible, and every frame built all of them.
+            // Now the region shrinks to the page (and the table scrolls), so
+            // a frame builds only the rows on screen. A short history still
+            // gets exactly its height, with no void under it.
             let height = 34.0 + row_count as f32 * 32.0;
             body = body.child(
                 div()
                     .id("runs-table-scroll")
                     .w_full()
-                    .flex_none()
                     .h(px(height))
+                    .flex_shrink(1.0)
+                    .min_h(px(0.0))
                     // The table is the region that overflows: at the minimum
                     // window the eight columns do not all fit, and the action
                     // lane must be reachable by scrolling this region rather
@@ -822,25 +826,38 @@ impl Console {
             // own region instead of widening the page (and every bar on it).
             .flex_1()
             .min_w(px(0.0))
+            // Exactly the window's height, so the table region is bounded.
+            .h_full()
+            .min_h(px(0.0))
             .px_5()
             .pt_6()
-            .child(self.section_header(
-                colors,
-                "Runs",
-                &format!(
-                    "{row_count} recorded experiment{}.",
-                    if row_count == 1 { "" } else { "s" }
-                ),
-            ))
-            .children(self.compare_bar(colors, cx))
-            .children(self.export_bar(colors, cx))
+            .pb_4()
+            .child(
+                self.section_header(
+                    colors,
+                    "Runs",
+                    &format!(
+                        "{row_count} recorded experiment{}.",
+                        if row_count == 1 { "" } else { "s" }
+                    ),
+                )
+                .flex_none(),
+            )
+            .children(
+                self.compare_bar(colors, cx)
+                    .map(|bar| div().flex_none().child(bar)),
+            )
+            .children(
+                self.export_bar(colors, cx)
+                    .map(|bar| div().flex_none().child(bar)),
+            )
             .child(body)
             .when(row_count > 0, |page| {
                 page.child(label(
                     "Select two runs to compare them side by side. Export copies a run as Markdown or gets its verifiable bundle. Open shows a run's result, Pin makes it the reference for your next run, and Reuse loads its settings. Star keeps a run at the top.",
                     Type::LABEL,
                     colors.text_faint,
-                ))
+                ).flex_none())
             })
             .into_any_element()
     }
