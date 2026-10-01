@@ -82,7 +82,13 @@ cargo build --release
 
 The browser console binds `127.0.0.1` by default (offline, local-only);
 the native console is a local window and exposes no network surface at
-all. K-quant and Q8_0 GGUF models are supported through the same
+all. On a loopback bind the server accepts only loopback `Host` headers,
+requires the per-run console token on every API call, and refuses POSTs
+from a non-loopback `Origin`. `--host 0.0.0.0` (or any other non-loopback
+address) is for a trusted network only: the token and a same-origin check on
+POSTs still apply, but anyone who can reach the address can load the page
+(and with it the token), and the `Host` allowlist that defeats DNS rebinding
+cannot apply. K-quant and Q8_0 GGUF models are supported through the same
 `--k-strategy` plumbing as the CLI (default `auto`). For a fast demo loop
 prefer Q8_0 models: K-quant decode is intentionally much slower.
 

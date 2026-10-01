@@ -1576,7 +1576,7 @@ pub(crate) fn run_gui_command(
     let strict_origin = gui.host == "127.0.0.1" || gui.host == "localhost" || gui.host == "::1";
     if !strict_origin {
         eprintln!(
-            "  WARNING: binding to {} exposes the console to the network; \n  cross-origin protections are disabled in this mode.",
+            "  WARNING: binding to {} exposes the console to the network: anyone who can\n  reach this address can load the page and use it. The API still requires the\n  console token and same-origin POSTs, but the loopback Host allowlist (the\n  DNS-rebinding defence) cannot apply in this mode.",
             gui.host
         );
     }
@@ -1643,6 +1643,71 @@ fn origin_is_loopback_or_absent(origin: Option<&str>) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
+/// Origin header names the same authority as the Host header (or is absent,
+/// for header-less clients). This is the network-bind counterpart of
+/// [`origin_is_loopback_or_absent`]: the served address is not known in
+/// advance there, so a cross-site POST is recognised by its Origin differing
+/// from the host it was sent to.
+fn origin_matches_host_or_absent(origin: Option<&str>, host: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    let Some(host) = host else {
+        return false;
+    };
+    let Some(authority) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        // `null` and non-HTTP origins never match a served host.
+        return false;
+    };
+    authority.eq_ignore_ascii_case(host.trim())
+}
+
+/// The headers the security gate reads, separated from `tiny_http` so the
+/// decision is a pure function.
+struct GateInput<'a> {
+    is_root: bool,
+    is_post: bool,
+    host: Option<&'a str>,
+    origin: Option<&'a str>,
+    token: Option<&'a str>,
+}
+
+/// Decide whether a request may proceed; `Err` carries the 403 body.
+///
+/// The bearer token guards the JSON API in every mode. A loopback bind also
+/// pins the Host header (anti-DNS-rebinding) and requires a loopback Origin on
+/// POSTs. A network bind cannot allowlist hosts, so it requires POSTs to be
+/// same-origin instead.
+fn security_gate(
+    strict_origin: bool,
+    expected_token: &str,
+    input: &GateInput<'_>,
+) -> Result<(), &'static str> {
+    if strict_origin && !input.host.is_some_and(host_is_loopback) {
+        return Err("forbidden: bad Host header");
+    }
+    if input.is_root {
+        return Ok(());
+    }
+    if input.token != Some(expected_token) {
+        return Err("forbidden: missing or invalid token");
+    }
+    if input.is_post {
+        let origin_ok = if strict_origin {
+            origin_is_loopback_or_absent(input.origin)
+        } else {
+            origin_matches_host_or_absent(input.origin, input.host)
+        };
+        if !origin_ok {
+            return Err("forbidden: cross-origin request");
+        }
+    }
+    Ok(())
+}
+
 fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
@@ -1665,36 +1730,28 @@ fn handle_request(
     let method = request.method().clone();
     let is_root = method == tiny_http::Method::Get && path == "/";
 
-    // Security gate: Host allowlist (anti-DNS-rebinding) applies to every
-    // request; the bearer token and Origin check apply to the JSON API.
-    if strict_origin {
-        let host_ok = request
+    // Security gate: see `security_gate` for what each bind mode enforces.
+    let header_value = |name: &'static str| {
+        request
             .headers()
             .iter()
-            .any(|h| h.field.equiv("Host") && host_is_loopback(h.value.as_str()));
-        if !host_ok {
-            let response = plain_response(403, "forbidden: bad Host header");
-            return Ok(request.respond(response)?);
-        }
-        if !is_root {
-            let token_ok = request
-                .headers()
-                .iter()
-                .any(|h| h.field.equiv("X-Ember-Token") && h.value.as_str() == token);
-            if !token_ok {
-                let response = plain_response(403, "forbidden: missing or invalid token");
-                return Ok(request.respond(response)?);
-            }
-            let origin = request
-                .headers()
-                .iter()
-                .find(|h| h.field.equiv("Origin"))
-                .map(|h| h.value.as_str());
-            if method == tiny_http::Method::Post && !origin_is_loopback_or_absent(origin) {
-                let response = plain_response(403, "forbidden: cross-origin request");
-                return Ok(request.respond(response)?);
-            }
-        }
+            .find(|h| h.field.equiv(name))
+            .map(|h| h.value.as_str())
+    };
+    let verdict = security_gate(
+        strict_origin,
+        token,
+        &GateInput {
+            is_root,
+            is_post: method == tiny_http::Method::Post,
+            host: header_value("Host"),
+            origin: header_value("Origin"),
+            token: header_value("X-Ember-Token"),
+        },
+    );
+    if let Err(message) = verdict {
+        let response = plain_response(403, message);
+        return Ok(request.respond(response)?);
     }
 
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2175,6 +2232,132 @@ mod tests {
         ] {
             assert!(!origin_is_loopback_or_absent(Some(bad)), "reject {bad:?}");
         }
+    }
+
+    #[test]
+    fn network_origin_must_match_the_served_host() {
+        let host = Some("192.168.1.10:8337");
+        assert!(origin_matches_host_or_absent(None, host), "no Origin");
+        assert!(origin_matches_host_or_absent(
+            Some("http://192.168.1.10:8337"),
+            host
+        ));
+        assert!(origin_matches_host_or_absent(
+            Some("http://Lab-Box.local:8337"),
+            Some("lab-box.local:8337")
+        ));
+        for bad in [
+            "https://evil.example",
+            "http://192.168.1.10:9000",
+            "http://192.168.1.10:8337.evil.example",
+            "null",
+        ] {
+            assert!(
+                !origin_matches_host_or_absent(Some(bad), host),
+                "reject {bad:?}"
+            );
+        }
+        assert!(
+            !origin_matches_host_or_absent(Some("http://192.168.1.10:8337"), None),
+            "an Origin with no Host to compare against is refused"
+        );
+    }
+
+    fn gate<'a>(
+        is_root: bool,
+        is_post: bool,
+        host: &'a str,
+        origin: Option<&'a str>,
+        token: Option<&'a str>,
+    ) -> GateInput<'a> {
+        GateInput {
+            is_root,
+            is_post,
+            host: Some(host),
+            origin,
+            token,
+        }
+    }
+
+    #[test]
+    fn loopback_gate_pins_host_token_and_origin() {
+        let local = "127.0.0.1:8337";
+        assert_eq!(
+            security_gate(true, "tok", &gate(true, false, local, None, None)),
+            Ok(()),
+            "the page itself needs no token"
+        );
+        assert_eq!(
+            security_gate(true, "tok", &gate(true, false, "evil.example", None, None)),
+            Err("forbidden: bad Host header"),
+            "a rebound Host cannot even read the page"
+        );
+        assert_eq!(
+            security_gate(true, "tok", &gate(false, false, local, None, None)),
+            Err("forbidden: missing or invalid token")
+        );
+        assert_eq!(
+            security_gate(true, "tok", &gate(false, true, local, None, Some("tok"))),
+            Ok(())
+        );
+        assert_eq!(
+            security_gate(
+                true,
+                "tok",
+                &gate(
+                    false,
+                    true,
+                    local,
+                    Some("https://evil.example"),
+                    Some("tok")
+                )
+            ),
+            Err("forbidden: cross-origin request")
+        );
+    }
+
+    #[test]
+    fn network_gate_still_requires_the_token_and_same_origin_posts() {
+        let lan = "192.168.1.10:8337";
+        assert_eq!(
+            security_gate(false, "tok", &gate(true, false, lan, None, None)),
+            Ok(()),
+            "a network bind serves the page to non-loopback hosts"
+        );
+        for token in [None, Some("wrong")] {
+            assert_eq!(
+                security_gate(false, "tok", &gate(false, true, lan, None, token)),
+                Err("forbidden: missing or invalid token"),
+                "a network bind must not drop the token check ({token:?})"
+            );
+        }
+        assert_eq!(
+            security_gate(
+                false,
+                "tok",
+                &gate(
+                    false,
+                    true,
+                    lan,
+                    Some("http://192.168.1.10:8337"),
+                    Some("tok")
+                )
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            security_gate(
+                false,
+                "tok",
+                &gate(false, true, lan, Some("https://evil.example"), Some("tok"))
+            ),
+            Err("forbidden: cross-origin request")
+        );
+        assert_eq!(
+            security_gate(false, "tok", &gate(false, false, lan, None, Some("tok"))),
+            Ok(()),
+            "GETs carry no Origin requirement"
+        );
     }
 
     fn base_request() -> RunRequest {

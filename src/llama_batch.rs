@@ -124,9 +124,10 @@ impl Llama<CpuBackend> {
 
     /// Advance every sequence by one token in one forward pass.
     ///
-    /// See the [module documentation](self) for the contract: each
-    /// sequence's logits and cache are bit-identical to a single-sequence
-    /// decode of the same token.
+    /// The contract is spelled out at the top of `src/llama_batch.rs` (a
+    /// private module, so rustdoc cannot link to it): each sequence's logits
+    /// and cache are bit-identical to a single-sequence decode of the same
+    /// token.
     pub fn forward_decode_batch(
         &self,
         backend: &CpuBackend,
