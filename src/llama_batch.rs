@@ -339,22 +339,46 @@ impl Llama<CpuBackend> {
                     k_row,
                     &v[index * kv_dim..(index + 1) * kv_dim],
                 );
-                let spec = CachedAttentionSpec {
-                    n_heads,
-                    n_kv_heads,
-                    head_dim: self.config.head_dim,
-                    max_seq_len: cache.max_seq_len(),
-                    total_seq_len: cursor + 1,
-                };
-                let (cached_k, cached_v, scratch) = cache.get_with_scratch(layer);
-                backend.cached_causal_attention_into(
-                    q_row,
-                    cached_k,
-                    cached_v,
-                    spec,
-                    scratch,
-                    row(attention, index, q_dim),
-                )?;
+            }
+            // Every sequence's attention in one decode-team region (one chunk
+            // per sequence and head; bit-identical to attending each on its
+            // own), or per sequence when the team is unavailable.
+            let spec_of = |cache: &crate::kv_cache::KVCache| CachedAttentionSpec {
+                n_heads,
+                n_kv_heads,
+                head_dim: self.config.head_dim,
+                max_seq_len: cache.max_seq_len(),
+                total_seq_len: cache.cursor() + 1,
+            };
+            let mut items: Vec<crate::backend::DecodeAttention<'_>> = sequences
+                .iter()
+                .zip(q.chunks_exact(q_dim))
+                .zip(attention.chunks_exact_mut(q_dim))
+                .map(|((sequence, q_row), out)| {
+                    let (cached_k, cached_v) = sequence.cache.get(layer);
+                    crate::backend::DecodeAttention {
+                        q: q_row,
+                        cached_k,
+                        cached_v,
+                        spec: spec_of(sequence.cache),
+                        out,
+                    }
+                })
+                .collect();
+            if !backend.cached_decode_attention_batch_into(&mut items)? {
+                drop(items);
+                for (index, sequence) in sequences.iter_mut().enumerate() {
+                    let spec = spec_of(sequence.cache);
+                    let (cached_k, cached_v, scratch) = sequence.cache.get_with_scratch(layer);
+                    backend.cached_causal_attention_into(
+                        &q[index * q_dim..(index + 1) * q_dim],
+                        cached_k,
+                        cached_v,
+                        spec,
+                        scratch,
+                        row(attention, index, q_dim),
+                    )?;
+                }
             }
 
             crate::simd::quantize_q8_0_decode_into(attention, quantized);

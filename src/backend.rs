@@ -1060,6 +1060,121 @@ impl CpuBackend {
         );
         Ok(())
     }
+
+    /// Single-token cached attention of several independent sequences in one
+    /// decode-team region, one chunk per (sequence, head).
+    ///
+    /// Every head is computed by the same per-head body, in the same order,
+    /// as [`Self::cached_causal_attention_into`] computes it for a
+    /// single-token query (whichever of its serial, Rayon or team routes runs),
+    /// so each sequence's output is bit-identical to that call. Returns
+    /// `Ok(false)` without computing anything when the decode team is
+    /// unavailable or the sequences differ in head layout; the caller then
+    /// attends each sequence on its own.
+    pub(crate) fn cached_decode_attention_batch_into(
+        &self,
+        items: &mut [DecodeAttention<'_>],
+    ) -> Result<bool, CpuError> {
+        let Some(first) = items.first() else {
+            return Ok(true);
+        };
+        let (n_heads, n_kv_heads, head_dim) = (
+            first.spec.n_heads,
+            first.spec.n_kv_heads,
+            first.spec.head_dim,
+        );
+        if items.len() < 2 || !crate::decode_pool::available() {
+            return Ok(false);
+        }
+        let embed_dim = n_heads
+            .checked_mul(head_dim)
+            .ok_or_else(|| CpuError::ShapeMismatch("attention width overflow".into()))?;
+        let n_repeat = validate_gqa(n_heads, n_kv_heads)?;
+        for item in items.iter() {
+            let spec = &item.spec;
+            if (spec.n_heads, spec.n_kv_heads, spec.head_dim) != (n_heads, n_kv_heads, head_dim) {
+                return Ok(false);
+            }
+            if embed_dim == 0 || item.q.len() != embed_dim || item.out.len() != embed_dim {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "batched decode attention: q len {} / output len {} != width {embed_dim}",
+                    item.q.len(),
+                    item.out.len()
+                )));
+            }
+            if spec.total_seq_len == 0 || spec.total_seq_len > spec.max_seq_len {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "batched decode attention: total_seq_len {} invalid for max_seq_len {}",
+                    spec.total_seq_len, spec.max_seq_len
+                )));
+            }
+            let cache_len = n_kv_heads
+                .checked_mul(spec.max_seq_len)
+                .and_then(|len| len.checked_mul(head_dim))
+                .ok_or_else(|| CpuError::ShapeMismatch("attention cache length overflow".into()))?;
+            if item.cached_k.len() != cache_len || item.cached_v.len() != cache_len {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "batched decode attention: cache len mismatch, got k={} v={}, expected \
+                     {cache_len}",
+                    item.cached_k.len(),
+                    item.cached_v.len()
+                )));
+            }
+        }
+        let scale = (head_dim as f32).sqrt().recip();
+        let outs: Vec<crate::decode_pool::SharedMut<f32>> = items
+            .iter_mut()
+            .map(|item| {
+                item.out.fill(0.0);
+                crate::decode_pool::SharedMut::new(item.out)
+            })
+            .collect();
+        let inputs: Vec<_> = items
+            .iter()
+            .map(|item| (item.q, item.cached_k, item.cached_v, item.spec))
+            .collect();
+        let job = |chunk: usize| {
+            let (sequence, head) = (chunk / n_heads, chunk % n_heads);
+            let (q, cached_k, cached_v, spec) = inputs[sequence];
+            // SAFETY: chunk indices are distinct, so each (sequence, head)
+            // pair, and with it this head's slice of that sequence's output,
+            // is claimed by exactly one chunk; the outputs outlive the region.
+            let head_out = unsafe { outs[sequence].range(head * head_dim, head_dim) };
+            let max_j = spec.total_seq_len - 1;
+            ATTENTION_SCORE_SCRATCH.with(|scores| {
+                let mut scores = scores.borrow_mut();
+                scores.resize(max_j + 1, 0.0);
+                cached_attention_row_head(
+                    q,
+                    cached_k,
+                    cached_v,
+                    0,
+                    head,
+                    embed_dim,
+                    head_dim,
+                    head_dim,
+                    n_repeat,
+                    scale,
+                    spec.max_seq_len * head_dim,
+                    max_j,
+                    0,
+                    scores.as_mut_slice(),
+                    head_out,
+                );
+            });
+        };
+        Ok(crate::decode_pool::run(items.len() * n_heads, &job))
+    }
+}
+
+/// One sequence of [`CpuBackend::cached_decode_attention_batch_into`]: a
+/// single-token query against its own KV cache layer.
+pub(crate) struct DecodeAttention<'a> {
+    pub q: &'a [f32],
+    pub cached_k: &'a [f16],
+    pub cached_v: &'a [f16],
+    pub spec: CachedAttentionSpec,
+    pub out: &'a mut [f32],
 }
 
 impl Backend for CpuBackend {
@@ -2222,6 +2337,92 @@ mod tests {
             .unwrap();
 
         assert_eq!(actual, expected.data());
+    }
+
+    /// Batched decode attention over sequences of different lengths equals
+    /// attending each sequence on its own, bit for bit, on every route the
+    /// single call can take (serial below the parallel threshold, decode
+    /// team above it).
+    #[test]
+    fn batched_decode_attention_matches_per_sequence_attention() {
+        let backend = CpuBackend;
+        let (n_heads, n_kv_heads, head_dim, max_seq_len) = (8usize, 2usize, 64usize, 96usize);
+        let width = n_heads * head_dim;
+        let cache_len = n_kv_heads * max_seq_len * head_dim;
+        let value = |seed: usize, index: usize| {
+            ((seed * 7919 + index * 104_729) % 2003) as f32 / 1001.0 - 1.0
+        };
+        let lengths = [1usize, 5, 40, 96, 63, 17];
+        let queries: Vec<Vec<f32>> = (0..lengths.len())
+            .map(|seed| (0..width).map(|index| value(seed + 1, index)).collect())
+            .collect();
+        let caches: Vec<(Vec<f16>, Vec<f16>)> = (0..lengths.len())
+            .map(|seed| {
+                let fill = |salt: usize| {
+                    (0..cache_len)
+                        .map(|index| f16::from_f32(value(seed * 31 + salt, index)))
+                        .collect::<Vec<_>>()
+                };
+                (fill(3), fill(5))
+            })
+            .collect();
+        let spec = |total_seq_len: usize| CachedAttentionSpec {
+            n_heads,
+            n_kv_heads,
+            head_dim,
+            max_seq_len,
+            total_seq_len,
+        };
+        let expected: Vec<Vec<f32>> = lengths
+            .iter()
+            .enumerate()
+            .map(|(index, &length)| {
+                let mut out = vec![0.0; width];
+                backend
+                    .cached_causal_attention_into(
+                        &queries[index],
+                        &caches[index].0,
+                        &caches[index].1,
+                        spec(length),
+                        &mut Vec::new(),
+                        &mut out,
+                    )
+                    .unwrap();
+                out
+            })
+            .collect();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            crate::decode_pool::session(|| {
+                let mut outs = vec![vec![f32::NAN; width]; lengths.len()];
+                let mut items: Vec<DecodeAttention<'_>> = outs
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(index, out)| DecodeAttention {
+                        q: &queries[index],
+                        cached_k: &caches[index].0,
+                        cached_v: &caches[index].1,
+                        spec: spec(lengths[index]),
+                        out,
+                    })
+                    .collect();
+                // The team may be held by a concurrently running test.
+                let ran = backend
+                    .cached_decode_attention_batch_into(&mut items)
+                    .unwrap();
+                drop(items);
+                if ran {
+                    for (index, (got, want)) in outs.iter().zip(&expected).enumerate() {
+                        let got: Vec<u32> = got.iter().map(|value| value.to_bits()).collect();
+                        let want: Vec<u32> = want.iter().map(|value| value.to_bits()).collect();
+                        assert_eq!(got, want, "sequence {index}");
+                    }
+                }
+            });
+        });
     }
 }
 
