@@ -710,11 +710,50 @@ pub(crate) struct ActiveSpec {
     pub threads: usize,
 }
 
-/// Wall time and generated-token count accumulated over a run's inputs.
+/// Wall time and generated-token count accumulated over a run's inputs,
+/// and how its decode steps ran.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct RunTiming {
     pub elapsed: std::time::Duration,
     pub generated: usize,
+    pub decode: DecodeRoute,
+}
+
+/// How a run's decode steps executed; `runtime.json` records it as
+/// `decode_batch` (never part of the semantic identity).
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecodeRoute {
+    /// A standalone run: its own sequential decode; nothing is recorded.
+    #[default]
+    Standalone,
+    /// Every decode step shared one batched forward with the other runs of
+    /// a shared pass still generating (`batch_size`: the largest batch).
+    Batched {
+        batch_size: usize,
+        generations: usize,
+    },
+    /// A shared pass whose runs decoded one after another, and why.
+    Sequential { reason: &'static str },
+}
+
+impl DecodeRoute {
+    fn to_json(self) -> Option<serde_json::Value> {
+        match self {
+            DecodeRoute::Standalone => None,
+            DecodeRoute::Batched {
+                batch_size,
+                generations,
+            } => Some(serde_json::json!({
+                "path": "batched",
+                "batch_size": batch_size,
+                "generations": generations,
+            })),
+            DecodeRoute::Sequential { reason } => Some(serde_json::json!({
+                "path": "sequential",
+                "reason": reason,
+            })),
+        }
+    }
 }
 
 impl RunTiming {
@@ -851,34 +890,13 @@ pub(crate) fn run_input(
 ) -> anyhow::Result<InputResult> {
     let backend = ember::backend::CpuBackend;
     let model = &prepared.model;
-    let architecture = &prepared.architecture;
-    let index = experiment.lock().expect("v05 experiment lock").input_index;
-    let input = &resolved.inputs[index];
-    eprintln!(
-        "experiment: input {} ({}) tokens={} mode={}",
-        index + 1,
-        input.id,
-        input.text.len(),
-        resolved.execution.mode.name()
-    );
-    let model_context = ModelContext::new(
-        family_for_arch(architecture),
-        Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
-        architecture,
-        prepared.n_layers,
-        prepared.embed_dim,
-    )
-    .with_provenance(Some(&prepared.model_sha), Some(&prepared.tokenizer_sha));
-    let seed = if resolved.generation.temperature > 0.0 && resolved.experiment.seed != 0 {
-        Some(resolved.experiment.seed)
-    } else {
-        None
-    };
-    let context_limit = model.max_seq_len(&backend);
-    let mut runner = match pass {
-        None => ExperimentRunner::new(V05Adapter(Arc::clone(experiment))),
-        Some(pass) => ExperimentRunner::new(pass),
-    };
+    let InputSetup {
+        input,
+        model_context,
+        seed,
+        context_limit,
+        mut runner,
+    } = input_setup(prepared, resolved, experiment, pass);
     let generated_text = match role {
         None => {
             crate::cli_generation::generate_with_experiment(
@@ -926,6 +944,106 @@ pub(crate) fn run_input(
     experiment.into_result().map_err(anyhow::Error::msg)
 }
 
+/// What driving one input needs, shared by [`run_input`] and [`start_input`].
+struct InputSetup<'a> {
+    input: &'a ember::v05::spec::InputSpec,
+    model_context: ModelContext<'a>,
+    seed: Option<u64>,
+    context_limit: usize,
+    runner: ExperimentRunner,
+}
+
+fn input_setup<'a>(
+    prepared: &'a PreparedRun,
+    resolved: &'a ember::v05::spec::ExperimentSpecV1,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    pass: Option<crate::cli_experiment_shared::SharedPass>,
+) -> InputSetup<'a> {
+    let architecture = &prepared.architecture;
+    let index = experiment.lock().expect("v05 experiment lock").input_index;
+    let input = &resolved.inputs[index];
+    eprintln!(
+        "experiment: input {} ({}) tokens={} mode={}",
+        index + 1,
+        input.id,
+        input.text.len(),
+        resolved.execution.mode.name()
+    );
+    let model_context = ModelContext::new(
+        family_for_arch(architecture),
+        Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
+        architecture,
+        prepared.n_layers,
+        prepared.embed_dim,
+    )
+    .with_provenance(Some(&prepared.model_sha), Some(&prepared.tokenizer_sha));
+    let seed = if resolved.generation.temperature > 0.0 && resolved.experiment.seed != 0 {
+        Some(resolved.experiment.seed)
+    } else {
+        None
+    };
+    let context_limit = prepared.model.max_seq_len(&ember::backend::CpuBackend);
+    let runner = match pass {
+        None => ExperimentRunner::new(V05Adapter(Arc::clone(experiment))),
+        Some(pass) => ExperimentRunner::new(pass),
+    };
+    InputSetup {
+        input,
+        model_context,
+        seed,
+        context_limit,
+        runner,
+    }
+}
+
+/// [`run_input`] up to its first decode forward: the input's prefill is
+/// done and its first token chosen. The caller advances it (together with
+/// other inputs' generations) through `cli_generation::decode_together` and
+/// collects the result with [`finish_input`]. Only for models
+/// `cli_generation::batched_decode_ineligibility` accepts.
+pub(crate) fn start_input<'a>(
+    prepared: &'a PreparedRun,
+    resolved: &'a ember::v05::spec::ExperimentSpecV1,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    pass: Option<crate::cli_experiment_shared::SharedPass>,
+    role: Option<crate::cli_generation::PrefixRole<'_>>,
+    cancel: Option<&ember::cancel::CancelToken>,
+) -> anyhow::Result<crate::cli_generation::SteppedGeneration<'a>> {
+    let InputSetup {
+        input,
+        model_context,
+        seed,
+        context_limit,
+        runner,
+    } = input_setup(prepared, resolved, experiment, pass);
+    crate::cli_generation::SteppedGeneration::start(
+        &ember::backend::CpuBackend,
+        &prepared.model,
+        runner,
+        model_context,
+        &prepared.tokenizer,
+        &input.text,
+        resolved.generation.max_new_tokens,
+        resolved.generation.temperature,
+        context_limit,
+        seed,
+        role,
+        cancel,
+    )
+}
+
+/// Finish a generation from [`start_input`] and collect the input's result.
+pub(crate) fn finish_input(
+    prepared: &PreparedRun,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    generation: crate::cli_generation::SteppedGeneration<'_>,
+) -> anyhow::Result<InputResult> {
+    let generated_text = generation.finish(&prepared.tokenizer)?;
+    let mut experiment = experiment.lock().expect("v05 experiment lock");
+    experiment.set_generated_text(generated_text);
+    experiment.into_result().map_err(anyhow::Error::msg)
+}
+
 /// Assemble, write, and self-verify a bundle from finished input results.
 pub(crate) fn finish_bundle(
     prepared: &PreparedRun,
@@ -955,6 +1073,7 @@ pub(crate) fn finish_bundle(
         peak_rss_kb: peak_rss_kb(),
         threads: active.threads,
         prefix_reuse: prefix.as_ref().map(|record| record.to_json()),
+        decode_batch: timing.decode.to_json(),
     };
     let mut resolved_with_output = (*resolved).clone();
     resolved_with_output.output.directory = target.output_directory.to_path_buf();

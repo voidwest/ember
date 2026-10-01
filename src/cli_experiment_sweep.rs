@@ -3,12 +3,14 @@
 //!
 //! A sweep runs as one shared pass: the baseline computes the prompt prefix
 //! once and every point resumes from it at its own layer
-//! (`crate::cli_experiment_shared`). Points run one after another. Running
-//! them concurrently would not change the numerics of the kernels, but the
-//! model forward is not reentrant on one thread: the fused decode path and
-//! the greedy logits buffer live in thread-local `RefCell`s, and a rayon
-//! worker that steals another point's task while inside a forward would
-//! re-borrow them. Each point's forward already uses the whole pool.
+//! (`crate::cli_experiment_shared`). On the Q8_0 fast decode path the
+//! baseline and every point then decode together: each decode step is one
+//! batched forward over all generations still running, which reads every
+//! weight once for the whole batch (bit-identical per sequence). Otherwise
+//! points run one after another. Running them on concurrent threads would
+//! not help: the model forward is not reentrant on one thread (the fused
+//! decode path and the greedy logits buffer live in thread-local
+//! `RefCell`s), and each forward already uses the whole pool.
 
 use crate::cli_experiment::{
     describe_prefix, prepare_run, RunArgs, RunOutcome, RunTarget, ValidateArgs,

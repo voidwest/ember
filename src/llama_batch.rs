@@ -31,7 +31,9 @@
 //!   (adjacent-pair RoPE, bias-free Q8_0 projections) are supported; see
 //!   [`Llama::supports_batched_decode`]. Tracing must be off.
 //!
-//! The experiment runner, GUI and sweeps do not use this entry point yet.
+//! Shared experiment passes (CLI `--variant` runs and sweeps, the GUI pair
+//! runner and GUI sweeps) decode their runs together through this entry
+//! point (`cli_experiment_shared::run_batched_pass` in the binary).
 
 use super::*;
 

@@ -211,29 +211,22 @@ fn native_worker_cancels_a_run_promptly_and_keeps_nothing() {
     tx.send(WorkerMsg::Prepare(model)).unwrap();
     assert!(matches!(receive(), WorkerReply::Prepared(info) if info.is_ok()));
     let before = bundles();
-    // Cancel twice: once in the baseline leg, once in the intervention leg
-    // (after the baseline bundle was written, which must then be removed).
-    for in_intervention in [false, true] {
+    // Cancel twice: early (around the prefill) and late, well into the
+    // pair's decode. On a Q8_0 model both runs of the pair decode together
+    // in one batch, so neither bundle may be written; on the sequential
+    // route a late cancel lands in the intervention leg, after the baseline
+    // bundle was written, which must then be removed.
+    for late in [false, true] {
         let token = ember::cancel::CancelToken::new();
         tx.send(WorkerMsg::Run(config.clone(), token.clone()))
             .unwrap();
-        if in_intervention {
-            // Wait for the baseline bundle to be published.
-            let deadline = Instant::now() + Duration::from_secs(600);
-            while bundles().len() == before.len() {
-                assert!(Instant::now() < deadline, "the baseline never finished");
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        } else {
-            std::thread::sleep(Duration::from_millis(400));
-        }
+        std::thread::sleep(Duration::from_millis(if late { 700 } else { 400 }));
         let fired = Instant::now();
         token.cancel();
         let reply = receive();
         let waited = fired.elapsed();
         assert!(matches!(reply, WorkerReply::Cancelled), "{reply:?}");
-        println!("cancel (intervention leg: {in_intervention}) honoured in {waited:?}");
+        println!("cancel (late: {late}) honoured in {waited:?}");
         // A decode step, or at worst the prefill it landed in.
         assert!(
             waited < Duration::from_secs(5),
