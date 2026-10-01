@@ -156,37 +156,33 @@ impl BundleWriter {
         };
         let mut guard = StagingGuard(staging.clone(), self.retain_incomplete);
 
-        // 1. write all deterministic files + runtime.json
+        // 1. write all deterministic files + runtime.json. Checksums are
+        // taken from the bytes handed to the writer; internal verification
+        // (step 7) reads every file back from the staging directory and
+        // compares it with these checksums, so nothing on disk is trusted
+        // without being re-read.
+        let mut stage = StagedFiles::new(&staging);
+        let mut checksums: BTreeMap<String, String> = BTreeMap::new();
         for (relative, bytes) in &self.files {
-            write_staged(&staging, relative, bytes)?;
+            stage.write(relative, bytes)?;
+            checksums.insert(relative.clone(), sha256_hex(bytes));
         }
         let runtime_bytes = serde_json::to_vec_pretty(&runtime_json)
             .map_err(|error| format!("runtime.json serialization failed: {error}"))?;
-        write_staged(&staging, "runtime.json", &runtime_bytes)?;
+        stage.write("runtime.json", &runtime_bytes)?;
+        checksums.insert("runtime.json".to_string(), sha256_hex(&runtime_bytes));
 
         // 2. write semantic-manifest.json (a bundle file itself, included
         // in the payload inventory)
         let semantic_bytes = serde_json::to_vec_pretty(&semantic_manifest)
             .map_err(|error| format!("semantic-manifest.json serialization failed: {error}"))?;
-        write_staged(&staging, "semantic-manifest.json", &semantic_bytes)?;
+        stage.write("semantic-manifest.json", &semantic_bytes)?;
+        let semantic_file_hash = sha256_hex(&semantic_bytes);
 
         // 3. checksums over everything except manifest.json
-        let mut checksums: BTreeMap<String, String> = BTreeMap::new();
-        for relative in self.files.keys() {
-            checksums.insert(
-                relative.clone(),
-                sha256_hex(&std::fs::read(staging.join(relative)).map_err(|error| {
-                    format!(
-                        "failed to read staged '{}': {error}",
-                        staging.join(relative).display()
-                    )
-                })?),
-            );
-        }
-        checksums.insert("runtime.json".to_string(), sha256_hex(&runtime_bytes));
         checksums.insert(
             "semantic-manifest.json".to_string(),
-            sha256_hex(&semantic_bytes),
+            semantic_file_hash.clone(),
         );
 
         // 4. identity
@@ -195,10 +191,7 @@ impl BundleWriter {
         // the semantic manifest's own file (which cannot list itself);
         // verification recomputes the same inventory.
         let mut payload_inventory = semantic_manifest.payloads.clone();
-        payload_inventory.insert(
-            "semantic-manifest.json".to_string(),
-            sha256_hex(&semantic_bytes),
-        );
+        payload_inventory.insert("semantic-manifest.json".to_string(), semantic_file_hash);
         let payload_hash = BundleIdentity::payload_hash(&payload_inventory)?;
 
         // 5. manifest.json (not part of any hash)
@@ -215,7 +208,7 @@ impl BundleWriter {
         };
         let manifest_bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|error| format!("manifest.json serialization failed: {error}"))?;
-        write_staged(&staging, "manifest.json", &manifest_bytes)?;
+        stage.write("manifest.json", &manifest_bytes)?;
 
         // 6. checksums.sha256 including manifest.json
         let mut checksum_lines: Vec<String> = Vec::new();
@@ -225,7 +218,10 @@ impl BundleWriter {
         checksum_lines.push(format!("{}  manifest.json", sha256_hex(&manifest_bytes)));
         checksum_lines.sort();
         let checksums_bytes = format!("{}\n", checksum_lines.join("\n")).into_bytes();
-        write_staged(&staging, "checksums.sha256", &checksums_bytes)?;
+        stage.write("checksums.sha256", &checksums_bytes)?;
+        // Every staged byte is on stable storage before verification reads
+        // it back, and so before the rename can publish it.
+        stage.flush_to_stable_storage()?;
 
         // 7. Verify before touching the destination. A bad replacement must
         // not destroy an existing, valid bundle even with overwrite enabled.
@@ -297,17 +293,83 @@ fn publish_directory(_: &Path, _: &Path, _: bool) -> Result<(), String> {
     Err("atomic bundle directory publication is supported on Linux and macOS".into())
 }
 
-fn write_staged(staging: &Path, relative: &str, bytes: &[u8]) -> Result<(), String> {
-    let relative = validate_relative_path(relative)?;
-    let path = staging.join(relative);
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("cannot create '{}': {error}", parent.display()))?;
+/// Files written into the writer's private staging directory.
+///
+/// The staging directory is created fresh by this process and becomes
+/// visible under the bundle's name only through the final directory rename,
+/// so the per-file temporary-file-and-rename step [`crate::atomic_file`]
+/// uses for files written in place adds nothing here: each file is created
+/// with `create_new` and written once.
+///
+/// Durability matches `atomic_file` (whose `sync_all` is `F_FULLFSYNC` on
+/// macOS): every byte is on stable storage before publication. On macOS each
+/// file is `fsync`ed as it is written, which hands its data to the drive, and
+/// one `F_FULLFSYNC` after the last file flushes the drive's entire write
+/// cache, covering every file fsynced before it. A full flush per file cost
+/// several milliseconds each, most of a sweep's bundle-writing time.
+/// Elsewhere every file gets `sync_all`, as before.
+struct StagedFiles<'a> {
+    staging: &'a Path,
+    last: Option<std::fs::File>,
+}
+
+impl<'a> StagedFiles<'a> {
+    fn new(staging: &'a Path) -> Self {
+        StagedFiles {
+            staging,
+            last: None,
+        }
     }
-    crate::atomic_file::atomic_write(&path, bytes)
-        .map_err(|error| format!("cannot write '{}': {error}", path.display()))
+
+    fn write(&mut self, relative: &str, bytes: &[u8]) -> Result<(), String> {
+        use std::io::Write as _;
+        let relative = validate_relative_path(relative)?;
+        let path = self.staging.join(relative);
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create '{}': {error}", parent.display()))?;
+        }
+        let failed = |error: std::io::Error| format!("cannot write '{}': {error}", path.display());
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(failed)?;
+        file.write_all(bytes).map_err(failed)?;
+        sync_to_device(&file).map_err(failed)?;
+        self.last = Some(file);
+        Ok(())
+    }
+
+    fn flush_to_stable_storage(&mut self) -> Result<(), String> {
+        match self.last.take() {
+            Some(file) => flush_device_cache(&file)
+                .map_err(|error| format!("cannot flush the staged bundle to storage: {error}")),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn sync_to_device(file: &std::fs::File) -> std::io::Result<()> {
+    rustix::fs::fsync(file).map_err(std::io::Error::from)
+}
+
+#[cfg(target_os = "macos")]
+fn flush_device_cache(file: &std::fs::File) -> std::io::Result<()> {
+    rustix::fs::fcntl_fullfsync(file).map_err(std::io::Error::from)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn sync_to_device(file: &std::fs::File) -> std::io::Result<()> {
+    file.sync_all()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn flush_device_cache(_: &std::fs::File) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// Reject absolute paths, traversal components, and empty segments.
@@ -535,6 +597,37 @@ mod tests {
             semantic_hash,
             "semantic hash must change with content"
         );
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn published_files_and_checksums_match_the_written_bytes() {
+        // Checksums are computed from the in-memory bytes; they must equal
+        // the hashes of the files as published on disk.
+        let root = temp_root();
+        let (writer, semantic) = valid_writer(&root, false, false);
+        let added = writer.files.clone();
+        writer.finalize(semantic, serde_json::json!({})).unwrap();
+        for (relative, bytes) in &added {
+            assert_eq!(
+                &std::fs::read(root.join(relative)).unwrap(),
+                bytes,
+                "{relative}"
+            );
+        }
+        let checksums = std::fs::read_to_string(root.join("checksums.sha256")).unwrap();
+        let mut listed = 0;
+        for line in checksums.lines() {
+            let (sum, relative) = line.split_once("  ").unwrap();
+            assert_eq!(
+                sum,
+                sha256_hex(&std::fs::read(root.join(relative)).unwrap()),
+                "{relative}"
+            );
+            listed += 1;
+        }
+        // every file but checksums.sha256 itself
+        assert_eq!(listed, added.len() + 3);
         std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 

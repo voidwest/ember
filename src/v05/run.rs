@@ -282,8 +282,6 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
         warnings: materials.warnings.clone(),
         complete: true,
     };
-    let semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
-
     // runtime.json (excluded from hashes).
     let mut runtime_json = serde_json::json!({
         "timestamp": format!("epoch-seconds-{}", crate::extraction::unix_timestamp()),
@@ -325,7 +323,6 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
     ) {
         object.insert("decode_batch".into(), batch.clone());
     }
-    let _ = semantic_hash; // stored in manifest.json by the writer
 
     Ok(AssembledBundle {
         files,
