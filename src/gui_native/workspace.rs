@@ -327,7 +327,11 @@ impl Console {
                         )))
                     }),
             )
-            .children(per_layer(&self.site).then(|| self.layer_track(colors, cx)).flatten())
+            .children(
+                per_layer(&self.site)
+                    .then(|| self.layer_track(colors, cx))
+                    .flatten(),
+            )
             .when(needs_source, |section| {
                 section
                     .child(field(
@@ -687,10 +691,18 @@ impl Console {
             .child(mono("L0", Type::MICRO, colors.text_faint))
             .child(div().flex_1())
             .when(!heat.is_empty(), |row| {
-                row.child(label("tint: effect in the last sweep", Type::MICRO, colors.text_faint))
-                    .child(div().flex_1())
+                row.child(label(
+                    "tint: effect in the last sweep",
+                    Type::MICRO,
+                    colors.text_faint,
+                ))
+                .child(div().flex_1())
             })
-            .child(mono(format!("L{}", count.saturating_sub(1)), Type::MICRO, colors.text_faint));
+            .child(mono(
+                format!("L{}", count.saturating_sub(1)),
+                Type::MICRO,
+                colors.text_faint,
+            ));
         Some(
             div()
                 .flex()

@@ -2775,7 +2775,9 @@ impl Render for Console {
             // The status line appears only when it has something to say: a
             // run in flight, or history that could not be saved. A permanent
             // 'Ready' strip is chrome, not information.
-            .when(self.statusbar_needed(), |shell| shell.child(statusbar.flex_none()))
+            .when(self.statusbar_needed(), |shell| {
+                shell.child(statusbar.flex_none())
+            })
             .when(self.palette_open, |shell| {
                 shell.child(self.palette_overlay(&colors, cx))
             })
