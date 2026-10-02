@@ -15,7 +15,7 @@
 use anyhow::Context;
 use clap::Args;
 use ember::backend::{Backend, CpuBackend};
-use ember::extraction::{git_commit, sha256_bytes, sha256_file_result};
+use ember::extraction::{build_commit, sha256_bytes, sha256_file_result};
 use ember::loader::load_gguf_with_k_strategy;
 use ember::model::ForwardModel;
 use ember::npy::read_npy_2d;
@@ -185,7 +185,7 @@ pub(crate) fn run_handoff_inject_command(
         "generated_text": text,
         "prefill_ms": prefill_ms,
         "decode_ms": decode_ms,
-        "ember_git_commit": git_commit().unwrap_or_else(|| "unknown".to_string()),
+        "ember_git_commit": build_commit().unwrap_or("unknown"),
         "trust_note": "assembled tail-row == prompt-embedding correspondence is NOT rechecked here; see verify_envelope.py (re-tokenize + GGUF matrix re-read)",
     });
     std::fs::write(

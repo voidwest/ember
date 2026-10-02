@@ -1,6 +1,6 @@
 use crate::backend::{Backend, CpuBackend};
 use crate::extraction::{
-    canonical_config_toml, git_commit, layer_relative_path, load_input_samples, pooling_for_mode,
+    build_commit, canonical_config_toml, layer_relative_path, load_input_samples, pooling_for_mode,
     read_jsonl_records, run_dir, sample_order_hash, select_token_positions, sha256_file_result,
     source_field_for_position, source_span_for_position, source_value_for_position,
     stable_bytes_hash, stable_prompt_hash, unix_timestamp, validate_artifact_contract,
@@ -109,7 +109,7 @@ where
             name: ExecutionBackendName::Native.as_str().to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             executable: None,
-            commit: git_commit(),
+            commit: build_commit().map(str::to_string),
             details: serde_json::json!({
                 "compute_backend": "CpuBackend",
                 "crate": env!("CARGO_PKG_NAME"),

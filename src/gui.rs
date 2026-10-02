@@ -1959,7 +1959,7 @@ fn state_payload(session: &Arc<Mutex<GuiSession>>) -> ApiEnvelope {
     let session = lock_session(session);
     ApiEnvelope::ok(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "commit": ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()),
+        "commit": ember::extraction::build_commit().unwrap_or("unknown"),
         "models": discover_models(),
         "hook_stages": hook_stages(),
         "session": session_info_payload(&session),

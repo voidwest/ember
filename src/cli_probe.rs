@@ -7,7 +7,7 @@ use crate::{Args, RunMetadata};
 use anyhow::Context;
 use ember::backend::Backend;
 use ember::extraction::{
-    byte_span_to_character_span, git_commit, non_special_token_indices, sha256_file_result,
+    byte_span_to_character_span, non_special_token_indices, sha256_file_result,
     token_indices_for_offsets, unique_substring_byte_span, unix_timestamp,
 };
 use ember::model::ForwardModel;
@@ -835,7 +835,7 @@ where
             "correctness_sha256": sha256_file_result(&correctness_path)?,
             "token_selections": token_selections[oi],
             "run_timestamp_unix": unix_timestamp(),
-            "git_commit": git_commit(),
+            "git_commit": ember::extraction::build_commit(),
             "batched_probe_extraction": true,
             "row_order": "source stimulus array order",
             "row_indices": stimulus_info

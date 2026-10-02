@@ -1163,12 +1163,10 @@ pub(crate) fn finish_bundle(
 }
 
 /// The commit recorded as `ember_commit` in every bundle this process
-/// writes. `git rev-parse HEAD` is asked once per process rather than once
-/// per bundle: a 17-point sweep otherwise spawns `git` 17 times (~10 ms
-/// each) for the same answer.
+/// writes: the commit the binary was built from. It is part of the semantic
+/// manifest, so it must not depend on the directory the run starts in.
 fn ember_commit() -> &'static str {
-    static COMMIT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    COMMIT.get_or_init(|| ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()))
+    ember::extraction::build_commit().unwrap_or("unknown")
 }
 
 fn peak_rss_kb() -> Option<u64> {

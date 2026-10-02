@@ -540,7 +540,7 @@ where
             name: ExecutionBackendName::Native.as_str().to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             executable: None,
-            commit: git_commit(),
+            commit: ember::extraction::build_commit().map(str::to_string),
             details: serde_json::json!({
                 "compute_backend": "CpuBackend",
                 "crate": env!("CARGO_PKG_NAME"),
