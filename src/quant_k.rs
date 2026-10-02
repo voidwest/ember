@@ -1118,7 +1118,8 @@ mod tests {
             return;
         };
         let q_loader = crate::loader::load_gguf(&q_path).unwrap();
-        let f16_loader = crate::loader::load_gguf(&f16_path).unwrap();
+        let mut f16_loader = crate::loader::load_gguf(&f16_path).unwrap();
+        f16_loader.materialize_half_tensors();
         let mut checked = 0usize;
         for (name, tensor) in &q_loader.tensors {
             let crate::loader::LoadedTensor::F32(tensor) = tensor else {

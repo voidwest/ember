@@ -19,6 +19,11 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- F16/BF16 models: weights stay in the GGUF mapping and are widened inside
+  the matmul instead of being converted (and transposed) to f32 at load.
+  Logits are bit-identical in reference and planned modes; on Llama-3.2-1B
+  F16 peak RSS drops from 6.9 to 2.4 GiB, load+build from ~7.3 s to <0.1 s,
+  and decode runs ~3.8x (reference) and ~20x (planned) faster.
 - Browser console: a non-loopback `--host` no longer disables the API
   checks. The console token is required in every mode and POSTs must be
   same-origin; only the loopback `Host` allowlist is limited to loopback

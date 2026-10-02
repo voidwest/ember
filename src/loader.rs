@@ -107,6 +107,27 @@ fn read_float_values<const WIDTH: usize>(
     Ok(values)
 }
 
+/// Read `count` little-endian 16-bit values (an F16/BF16 tensor payload).
+fn read_half_bits(reader: &mut impl Read, count: usize) -> Result<Vec<u16>> {
+    count
+        .checked_mul(2)
+        .ok_or_else(|| LoaderError::overflow("16-bit tensor byte size overflow"))?;
+    let mut values = Vec::new();
+    values.try_reserve_exact(count).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve 16-bit tensor: {error}"))
+    })?;
+    values.resize(count, 0u16);
+    let mut raw = [0u8; FLOAT_READ_BUFFER_BYTES];
+    for chunk in values.chunks_mut(FLOAT_READ_BUFFER_BYTES / 2) {
+        let raw = &mut raw[..chunk.len() * 2];
+        reader.read_exact(raw)?;
+        for (value, encoded) in chunk.iter_mut().zip(raw.chunks_exact(2)) {
+            *value = u16::from_le_bytes([encoded[0], encoded[1]]);
+        }
+    }
+    Ok(values)
+}
+
 /// Limits for values that cross from GGUF metadata into model construction.
 ///
 /// These bounds are deliberately generous for supported models, but keep
@@ -195,13 +216,21 @@ pub mod limits {
 
 /// a tensor as loaded from a gguf file.
 ///
-/// f32 and f16 tensors are stored as `CpuTensor`.  q8_0 tensors are kept
+/// f32 tensors are stored as `CpuTensor`.  f16/bf16 tensors keep their
+/// 16-bit encoding (`HalfWeight`, mmap-shared for file loads) and are
+/// widened to f32 where they are used.  q8_0 tensors are kept
 /// in raw block-compressed form (`QuantizedWeight`) - they are never
 /// dequantized to f32, keeping the in-memory footprint at the quantized size.
 #[derive(Clone)]
 pub enum LoadedTensor {
-    /// dequantized f32 tensor (for f32, f16, and small/direct-access tensors)
+    /// f32 tensor (f32 GGUF tensors, eager-f32 K tensors, and anything a
+    /// builder widened with [`GgufLoader::materialize_half_tensors`])
     F32(CpuTensor),
+    /// f16/bf16 tensor in its GGUF encoding. [`HalfWeight::to_f32_tensor`]
+    /// yields exactly the `F32` tensor earlier loaders produced for it.
+    ///
+    /// [`HalfWeight::to_f32_tensor`]: crate::half_weight::HalfWeight::to_f32_tensor
+    Half(crate::half_weight::HalfWeight),
     /// raw q8_0 block-compressed weight (consumed by packed integer matmul)
     Q8_0(QuantizedWeight),
     /// raw q4_k/q6_k super-block-compressed weight, kept resident under a
@@ -247,7 +276,8 @@ pub struct GgufLoader {
     /// metadata key-value pairs from the gguf header
     pub metadata: HashMap<String, GgufValue>,
     /// named tensors.  linear weights are stored as `LoadedTensor::Q8_0`
-    /// when the gguf dtype is q8_0; everything else is `LoadedTensor::F32`.
+    /// when the gguf dtype is q8_0, f16/bf16 tensors as `LoadedTensor::Half`;
+    /// everything else is `LoadedTensor::F32`.
     pub tensors: HashMap<String, LoadedTensor>,
     /// the K-family strategy requested at load time.
     pub k_strategy: crate::quant_k::KStrategy,
@@ -340,6 +370,7 @@ impl GgufLoader {
     pub(crate) fn take_f32(&mut self, name: &str) -> Result<CpuTensor> {
         match self.take_tensor(name)? {
             LoadedTensor::F32(tensor) => Ok(tensor),
+            LoadedTensor::Half(weight) => Ok(weight.to_f32_tensor()),
             LoadedTensor::Q8_0(weight) => {
                 check_f32_dequantization_size(name, weight.out_features(), weight.in_features())?;
                 Ok(weight.dequantize_all())
@@ -360,6 +391,7 @@ impl GgufLoader {
         };
         let tensor = match self.tensors.remove(name.as_str()) {
             Some(LoadedTensor::F32(tensor)) => tensor,
+            Some(LoadedTensor::Half(weight)) => weight.to_f32_tensor(),
             Some(LoadedTensor::Q8_0(weight)) => {
                 check_f32_dequantization_size(name, weight.out_features(), weight.in_features())?;
                 weight.dequantize_all()
@@ -373,6 +405,22 @@ impl GgufLoader {
         Ok(Some(tensor))
     }
 
+    /// Widen every F16/BF16 tensor to the f32 tensor the eager loader used
+    /// to produce (bit-identical: [`HalfWeight::to_f32_tensor`]).
+    ///
+    /// Builders that consume `LoadedTensor::F32` directly call this first;
+    /// the Llama builder instead keeps linear and embedding weights in their
+    /// 16-bit encoding.
+    ///
+    /// [`HalfWeight::to_f32_tensor`]: crate::half_weight::HalfWeight::to_f32_tensor
+    pub fn materialize_half_tensors(&mut self) {
+        for tensor in self.tensors.values_mut() {
+            if let LoadedTensor::Half(weight) = tensor {
+                *tensor = LoadedTensor::F32(weight.to_f32_tensor());
+            }
+        }
+    }
+
     /// Check the aggregate f32 storage that model builders may materialize
     /// from mapped compressed tensors after the loader's mmap allocation
     /// accounting has completed. Linear weights stay compressed; this covers
@@ -384,7 +432,10 @@ impl GgufLoader {
         let mut total = 0u64;
         for (name, tensor) in &self.tensors {
             let (out_features, in_features) = match tensor {
-                LoadedTensor::F32(_) => continue,
+                // A Half tensor's f32 size is budgeted at load
+                // (`estimated_tensor_allocation_bytes`), as when the loader
+                // widened it eagerly.
+                LoadedTensor::F32(_) | LoadedTensor::Half(_) => continue,
                 LoadedTensor::Q8_0(weight) => (weight.out_features(), weight.in_features()),
                 LoadedTensor::KQuant(weight) => (weight.out_features(), weight.in_features()),
             };
@@ -437,7 +488,10 @@ impl GgufLoader {
                 continue;
             }
             let (out_features, in_features) = match tensor {
-                LoadedTensor::F32(_) => continue,
+                // A Half tensor's f32 size is budgeted at load
+                // (`estimated_tensor_allocation_bytes`), as when the loader
+                // widened it eagerly.
+                LoadedTensor::F32(_) | LoadedTensor::Half(_) => continue,
                 LoadedTensor::Q8_0(weight) => (weight.out_features(), weight.in_features()),
                 LoadedTensor::KQuant(weight) => (weight.out_features(), weight.in_features()),
             };
@@ -505,7 +559,8 @@ fn is_skipped_metadata_array(key: &str) -> bool {
 ///
 /// Q8_0 weights retain shared ranges into the read-only mapping, avoiding a
 /// second anonymous-memory copy and allowing the OS to page weights lazily.
-/// Dtypes that require conversion (F16/BF16) are materialized as F32.
+/// F16/BF16 tensors likewise stay in the mapping (`LoadedTensor::Half`) and
+/// are widened to f32 where they are used.
 ///
 /// Uses the eager-f32 K strategy — the v0.1/v0.2 reference behavior. Use
 /// [`load_gguf_with_k_strategy`] for the compressed-resident paths.
@@ -1009,12 +1064,32 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 let data = read_float_values(reader, element_count, f32::from_le_bytes)?;
                 Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
             }
-            1 => {
-                // Keep the logical GGUF shape; model builders transpose weights.
-                let data = read_float_values(reader, element_count, |bytes| {
-                    half::f16::from_bits(u16::from_le_bytes(bytes)).to_f32()
-                })?;
-                Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
+            1 | 30 => {
+                // Keep the 16-bit encoding and the GGUF-native dims; users
+                // widen values where they consume them (see half_weight).
+                let dtype = if info.dtype == 1 {
+                    crate::half_weight::HalfDtype::F16
+                } else {
+                    crate::half_weight::HalfDtype::Bf16
+                };
+                let mapped = mmap.as_ref().and_then(|mmap| {
+                    let start = usize::try_from(tensor_offset).ok()?;
+                    let end = start.checked_add(element_count.checked_mul(2)?)?;
+                    crate::half_weight::HalfWeight::from_mmap(
+                        dtype,
+                        info.dims.clone(),
+                        Arc::clone(mmap),
+                        start..end,
+                    )
+                });
+                let weight = match mapped {
+                    Some(weight) => weight,
+                    None => {
+                        let bits = read_half_bits(reader, element_count)?;
+                        crate::half_weight::HalfWeight::from_bits(dtype, info.dims, bits)
+                    }
+                };
+                Some(LoadedTensor::Half(weight))
             }
             8 => {
                 // q8_0: store raw, dequantize on the fly during matmul.
@@ -1195,12 +1270,6 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                     }
                 }
             }
-            30 => {
-                let data = read_float_values(reader, element_count, |bytes| {
-                    f32::from_bits(u32::from(u16::from_le_bytes(bytes)) << 16)
-                })?;
-                Some(LoadedTensor::F32(CpuTensor::from_data(info.dims, data)))
-            }
             _ => {
                 return Err(LoaderError::malformed(format!(
                     "tensor '{}' uses unsupported GGML dtype {}",
@@ -1208,10 +1277,10 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 )));
             }
         };
-        // f16/bf16 tensors and eager-f32 K tensors are read and converted
-        // here; the conversion share is reported separately from the
-        // resident/mmap-backed tensors.
-        let eager = matches!(info.dtype, 1 | 30)
+        // Eager-f32 K tensors (and f16/bf16 tensors that could not be
+        // mapped in place and were copied) are decoded here; that share is
+        // reported separately from the resident/mmap-backed tensors.
+        let eager = matches!(&loaded, Some(LoadedTensor::Half(weight)) if !weight.is_mapped())
             || k_decisions
                 .get(&info.name)
                 .is_some_and(|decision| decision.execution == crate::quant_k::KExecution::EagerF32);
@@ -2514,6 +2583,56 @@ mod tests {
         entries
     }
 
+    /// F16/BF16 tensors stay in their 16-bit encoding (shared with the file
+    /// mapping for file loads, copied for reader loads) and widen to exactly
+    /// the f32 tensor the eager loader produced, for every one of the 65,536
+    /// encodings (NaN payloads, infinities, subnormals, signed zeros).
+    #[test]
+    fn half_tensors_stay_encoded_and_widen_like_the_eager_loader() {
+        use crate::half_weight::{widen_scalar, HalfDtype};
+        let mut bytes = write_gguf_with_tensors(&[
+            ("f16.weight", &[256, 256], 1),
+            ("bf16.weight", &[256, 256], 30),
+        ]);
+        // Both payloads are 128 KiB (32-aligned), so they end the file.
+        let payload = bytes.len() - 2 * 131_072;
+        for (index, chunk) in bytes[payload..].chunks_exact_mut(2).enumerate() {
+            chunk.copy_from_slice(&((index % 65_536) as u16).to_le_bytes());
+        }
+        let path = write_temp_gguf("half", &bytes);
+        let mapped = load_gguf(&path).unwrap();
+        let read = load_gguf_from_reader(&mut std::io::Cursor::new(bytes)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        for (loader, expect_mapped) in [(mapped, true), (read, false)] {
+            for (name, dtype) in [
+                ("f16.weight", HalfDtype::F16),
+                ("bf16.weight", HalfDtype::Bf16),
+            ] {
+                let Some(LoadedTensor::Half(weight)) = loader.tensors.get(name) else {
+                    panic!("{name} was not kept as a Half tensor");
+                };
+                assert_eq!(weight.dtype(), dtype);
+                assert_eq!(weight.is_mapped(), expect_mapped, "{name}");
+                assert_eq!(weight.dims(), &[256, 256]);
+                let tensor = weight.to_f32_tensor();
+                assert_eq!(tensor.shape(), &[256, 256]);
+                for (bits, value) in (0..=u16::MAX).zip(tensor.data()) {
+                    assert_eq!(
+                        value.to_bits(),
+                        widen_scalar(dtype, bits).to_bits(),
+                        "{name} {bits:#06x}"
+                    );
+                }
+            }
+            let mut loader = loader;
+            loader.materialize_half_tensors();
+            assert!(loader
+                .tensors
+                .values()
+                .all(|tensor| matches!(tensor, LoadedTensor::F32(_))));
+        }
+    }
+
     /// The header-only load (used by `ember inspect`) reports exactly the
     /// metadata, tensor inventory and K decisions of the full load, across
     /// every loadable dtype (f32/f16/bf16/q8_0, native and fallback K), but
@@ -2656,6 +2775,7 @@ mod tests {
                 "expected compressed KQuant tensor, got {}",
                 match other {
                     Some(LoadedTensor::F32(_)) => "F32",
+                    Some(LoadedTensor::Half(_)) => "Half",
                     Some(LoadedTensor::Q8_0(_)) => "Q8_0",
                     Some(LoadedTensor::KQuant(_)) => "KQuant",
                     None => "none",

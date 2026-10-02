@@ -367,13 +367,18 @@ pub fn pool_layer_activation(
 
 /// the kind of weight backing a `Linear` layer.
 ///
-/// `F32` is the standard path - f32/f16 tensors loaded from gguf and
-/// stored as the backend's native tensor type.  `Q8_0` keeps weights in
+/// `F32` is the standard path - f32 tensors loaded from gguf and
+/// stored as the backend's native tensor type.  `Half` keeps f16/bf16
+/// weights in their GGUF encoding and widens them inside the matmul,
+/// bit-identically to an `F32` weight holding the widened values.  `Q8_0` keeps weights in
 /// their raw block-compressed form and dequantizes on the fly during
 /// matmul, saving ~4x memory.
 pub enum WeightKind<B: Backend> {
     /// f32 weight tensor, shape [in_features, out_features]
     F32(B::Tensor),
+    /// f16/bf16 weight in GGUF layout (`[out_features]` rows of
+    /// `in_features` values), widened block by block during `matmul_half`.
+    Half(crate::half_weight::HalfWeight),
     /// q8_0 block-compressed weight, never stored as f32.
     /// dequantized column-by-column during `matmul_q8_0`.
     Q8_0(QuantizedWeight),
@@ -385,6 +390,7 @@ pub enum WeightKind<B: Backend> {
 /// Read-only view of a `WeightKind` for the fast decode path.
 pub enum WeightKindView<'a> {
     F32(&'a CpuTensor),
+    Half(&'a crate::half_weight::HalfWeight),
     Q8_0(&'a QuantizedWeight),
     KQuant(&'a crate::quant_k::KQuantWeight),
 }
@@ -417,6 +423,17 @@ impl<B: Backend> Linear<B> {
         }
     }
 
+    /// create a linear layer with an f16/bf16 weight kept in its GGUF
+    /// encoding (`[in_features, out_features]` GGUF dims).
+    pub fn new_half(weight: crate::half_weight::HalfWeight, bias: Option<B::Tensor>) -> Self {
+        Self {
+            weight: WeightKind::Half(weight),
+            bias,
+            interleaved: None,
+            packed_decode: None,
+        }
+    }
+
     /// create a linear layer with a q8_0 quantized weight.
     /// the weight stays in block-compressed form; `forward()` calls `matmul_q8_0`.
     pub fn new_q8_0(qw: QuantizedWeight, bias: Option<B::Tensor>) -> Self {
@@ -443,6 +460,7 @@ impl<B: Backend> Linear<B> {
     fn forward_without_bias(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         let out = match &self.weight {
             WeightKind::F32(w) => backend.matmul(x, w)?,
+            WeightKind::Half(w) => backend.matmul_half(x, w)?,
             WeightKind::Q8_0(qw) => backend.matmul_q8_0(x, qw)?,
             WeightKind::KQuant(qw) => backend.matmul_k(x, qw)?,
         };
@@ -467,6 +485,7 @@ impl<B: Backend> Linear<B> {
     ) -> Result<(), B::Error> {
         match &self.weight {
             WeightKind::F32(w) => *out = backend.matmul(x, w)?,
+            WeightKind::Half(w) => *out = backend.matmul_half(x, w)?,
             WeightKind::Q8_0(qw) => backend.matmul_q8_0_reusing(x, qw, out)?,
             WeightKind::KQuant(qw) => backend.matmul_k_reusing(x, qw, out)?,
         }
@@ -562,6 +581,7 @@ impl<B: Backend> Linear<B> {
                 let shape = backend.shape(w);
                 shape.iter().product::<usize>() * 4
             }
+            WeightKind::Half(w) => w.byte_len(),
             WeightKind::Q8_0(qw) => qw.byte_len(),
             WeightKind::KQuant(qw) => qw.byte_len(),
         }
@@ -570,6 +590,7 @@ impl<B: Backend> Linear<B> {
     pub fn in_features(&self, backend: &B) -> usize {
         match &self.weight {
             WeightKind::F32(w) => backend.shape(w)[0],
+            WeightKind::Half(w) => w.in_features(),
             WeightKind::Q8_0(qw) => qw.in_features(),
             WeightKind::KQuant(qw) => qw.in_features(),
         }
@@ -578,6 +599,7 @@ impl<B: Backend> Linear<B> {
     pub fn out_features(&self, backend: &B) -> usize {
         match &self.weight {
             WeightKind::F32(w) => backend.shape(w)[1],
+            WeightKind::Half(w) => w.out_features(),
             WeightKind::Q8_0(qw) => qw.out_features(),
             WeightKind::KQuant(qw) => qw.out_features(),
         }
@@ -589,6 +611,7 @@ impl Linear<CpuBackend> {
     pub fn weight_kind(&self) -> WeightKindView<'_> {
         match &self.weight {
             WeightKind::F32(t) => WeightKindView::F32(t),
+            WeightKind::Half(w) => WeightKindView::Half(w),
             WeightKind::Q8_0(qw) => WeightKindView::Q8_0(qw),
             WeightKind::KQuant(qw) => WeightKindView::KQuant(qw),
         }
@@ -606,7 +629,7 @@ impl Linear<CpuBackend> {
         }
         match &self.weight {
             WeightKind::Q8_0(weight) => Some(weight),
-            WeightKind::F32(_) => None,
+            WeightKind::F32(_) | WeightKind::Half(_) => None,
             WeightKind::KQuant(_) => None,
         }
     }
@@ -708,7 +731,7 @@ impl Linear<CpuBackend> {
     pub(crate) fn has_mapped_q8_source(&self) -> bool {
         match &self.weight {
             WeightKind::Q8_0(weight) => weight.is_mapped(),
-            WeightKind::F32(_) => false,
+            WeightKind::F32(_) | WeightKind::Half(_) => false,
             WeightKind::KQuant(_) => false,
         }
     }
@@ -1006,6 +1029,9 @@ impl Gpt2<CpuBackend> {
     /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
     /// the number of layers and heads (default 12 each if missing).
     pub fn from_loader(mut loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
+        // GPT-2 consumes f32 tensors only; widen f16/bf16 ones exactly as
+        // the loader used to.
+        loader.materialize_half_tensors();
         if let Some(architecture) = loader.metadata.get("general.architecture") {
             match architecture {
                 crate::loader::GgufValue::Str(architecture) => anyhow::ensure!(
@@ -1241,6 +1267,9 @@ fn gpt2_linear_shape(
         LoadedTensor::KQuant(_) => {
             anyhow::bail!("{name} uses unsupported compressed K-quant tensors")
         }
+        LoadedTensor::Half(_) => {
+            anyhow::bail!("{name}: f16/bf16 tensors must be widened before GPT-2 construction")
+        }
     }
 }
 
@@ -1261,6 +1290,9 @@ fn gpt2_embedding_shape(
         LoadedTensor::Q8_0(weight) => Ok((weight.out_features(), weight.in_features())),
         LoadedTensor::KQuant(_) => {
             anyhow::bail!("{name} uses unsupported compressed K-quant tensors")
+        }
+        LoadedTensor::Half(_) => {
+            anyhow::bail!("{name}: f16/bf16 tensors must be widened before GPT-2 construction")
         }
     }
 }
@@ -1324,6 +1356,9 @@ fn take_gpt2_embedding(
         }
         LoadedTensor::KQuant(_) => {
             anyhow::bail!("gpt2 does not support compressed K-quant tensors in v0.3")
+        }
+        LoadedTensor::Half(_) => {
+            anyhow::bail!("{name}: f16/bf16 tensors must be widened before GPT-2 construction")
         }
     }
 }
@@ -1429,6 +1464,9 @@ fn take_gpt2_linear(
         LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, bias)),
         LoadedTensor::KQuant(_) => {
             anyhow::bail!("gpt2 does not support compressed K-quant tensors in v0.3")
+        }
+        LoadedTensor::Half(_) => {
+            anyhow::bail!("{name}: f16/bf16 tensors must be widened before GPT-2 construction")
         }
     }
 }

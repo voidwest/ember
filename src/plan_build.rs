@@ -421,6 +421,18 @@ impl Llama<CpuBackend> {
                 t.data().len() * 4,
                 false,
             ),
+            // An f16/bf16 table is recorded exactly as the eager f32 table
+            // it replaces (same kernel, same widened values), so the plan
+            // and its hash do not depend on when the widening happens.
+            LlamaEmbedding::Half(w) => builder.add_weight(
+                "token_embd.weight",
+                vec![w.rows(), w.row_len()],
+                "f32",
+                "eager_f32",
+                KernelId::EmbeddingF32Row,
+                w.len() * 4,
+                false,
+            ),
             LlamaEmbedding::Q8_0(w) => builder.add_weight(
                 "token_embd.weight",
                 vec![w.out_features(), w.in_features()],
@@ -1099,6 +1111,16 @@ fn plan_linear(
             "eager_f32",
             KernelId::EagerF32,
             t.data().len() * 4,
+            false,
+        ),
+        // Recorded as the eager f32 weight it replaces; see the embedding.
+        WeightKindView::Half(w) => builder.add_weight(
+            name,
+            vec![w.out_features(), w.in_features()],
+            "f32",
+            "eager_f32",
+            KernelId::EagerF32,
+            w.len() * 4,
             false,
         ),
         WeightKindView::Q8_0(w) => builder.add_weight(

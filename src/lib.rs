@@ -55,6 +55,7 @@ pub mod embedding;
 pub mod experiments;
 pub mod extraction;
 pub mod gemma4;
+pub mod half_weight;
 pub mod inspect;
 #[doc(hidden)]
 pub mod k_matmul;

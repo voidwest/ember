@@ -279,6 +279,16 @@ impl Llama<CpuBackend> {
                     x_row
                         .copy_from_slice(&table.data()[token * embed_dim..(token + 1) * embed_dim]);
                 }
+                LlamaEmbedding::Half(table) => {
+                    if sequence.token_id as usize >= table.rows() {
+                        return Err(CpuError::ShapeMismatch(format!(
+                            "embedding token {} out of bounds for vocabulary {}",
+                            sequence.token_id,
+                            table.rows()
+                        )));
+                    }
+                    table.dequantize_row(sequence.token_id as usize, x_row);
+                }
                 LlamaEmbedding::Q8_0(table) => {
                     if sequence.token_id as usize >= table.out_features() {
                         return Err(CpuError::ShapeMismatch(format!(

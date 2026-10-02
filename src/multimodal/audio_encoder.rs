@@ -627,6 +627,7 @@ impl AudioModel {
             }
             match loader.tensors.get(name) {
                 Some(crate::loader::LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(crate::loader::LoadedTensor::Half(weight)) => Ok(weight.dims().to_vec()),
                 Some(crate::loader::LoadedTensor::Q8_0(weight)) => {
                     Ok(vec![weight.in_features(), weight.out_features()])
                 }

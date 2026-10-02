@@ -1,6 +1,9 @@
 use crate::artifact::DispatchPath;
 /// Shared rejection message: gemma4's K-quant path is not implemented.
 const NO_K_QUANT: &str = "gemma4 does not support compressed K-quant tensors in v0.3";
+/// Gemma widens f16/bf16 tensors on entry (`materialize_half_tensors`), so
+/// a `Half` tensor reaching a match is an internal ordering error.
+const HALF_NOT_WIDENED: &str = "internal: f16/bf16 tensor reached Gemma construction unwidened";
 
 use crate::backend::{Backend, CpuBackend, CpuError};
 use crate::experiments::{
@@ -1157,6 +1160,9 @@ impl Gemma4<CpuBackend> {
         mut loader: GgufLoader,
         packed_cache: Option<&crate::packed_cache::PackedCache>,
     ) -> anyhow::Result<Self> {
+        // Gemma consumes f32 tensors only; widen f16/bf16 ones exactly as
+        // the loader used to.
+        loader.materialize_half_tensors();
         if let Some(architecture) = loader.metadata.get("general.architecture") {
             match architecture {
                 GgufValue::Str(architecture) => anyhow::ensure!(
@@ -1186,6 +1192,9 @@ impl Gemma4<CpuBackend> {
                 LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
                 LoadedTensor::KQuant(_) => {
                     anyhow::bail!(NO_K_QUANT)
+                }
+                LoadedTensor::Half(_) => {
+                    anyhow::bail!(HALF_NOT_WIDENED)
                 }
             };
 
@@ -1332,6 +1341,7 @@ impl Gemma4<CpuBackend> {
             }
             match loader.tensors.get(name) {
                 Some(LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(LoadedTensor::Half(weight)) => Ok(weight.dims().to_vec()),
                 Some(LoadedTensor::Q8_0(weight)) => {
                     Ok(vec![weight.in_features(), weight.out_features()])
                 }
@@ -1750,6 +1760,9 @@ impl Gemma4<CpuBackend> {
             Some(LoadedTensor::KQuant(_)) => {
                 anyhow::bail!(NO_K_QUANT)
             }
+            Some(LoadedTensor::Half(_)) => {
+                anyhow::bail!(HALF_NOT_WIDENED)
+            }
             None => Gemma4Head::TiedEmbedding(embed_tokens.clone()),
         };
 
@@ -1773,6 +1786,9 @@ impl Gemma4<CpuBackend> {
                         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
                         LoadedTensor::KQuant(_) => {
                             anyhow::bail!(NO_K_QUANT)
+                        }
+                        LoadedTensor::Half(_) => {
+                            anyhow::bail!(HALF_NOT_WIDENED)
                         }
                     };
                     let norm = loader.take_f32("per_layer_proj_norm.weight")?;
@@ -2837,6 +2853,9 @@ fn take_gemma4_linear(loader: &mut GgufLoader, name: &str) -> anyhow::Result<Lin
         LoadedTensor::KQuant(_) => {
             anyhow::bail!(NO_K_QUANT)
         }
+        LoadedTensor::Half(_) => {
+            anyhow::bail!(HALF_NOT_WIDENED)
+        }
     }
 }
 
@@ -2851,6 +2870,7 @@ fn take_optional_f32_only(loader: &mut GgufLoader, names: &[String]) -> Option<C
         LoadedTensor::F32(tensor) => Some(tensor),
         LoadedTensor::Q8_0(_) => unreachable!("tensor kind checked before removal"),
         LoadedTensor::KQuant(_) => unreachable!("tensor kind checked before removal"),
+        LoadedTensor::Half(_) => unreachable!("tensor kind checked before removal"),
     }
 }
 
@@ -2868,6 +2888,7 @@ fn take_optional_q8(
         LoadedTensor::Q8_0(weight) => Some(weight),
         LoadedTensor::F32(_) => unreachable!("tensor kind checked before removal"),
         LoadedTensor::KQuant(_) => unreachable!("tensor kind checked before removal"),
+        LoadedTensor::Half(_) => unreachable!("tensor kind checked before removal"),
     }
 }
 

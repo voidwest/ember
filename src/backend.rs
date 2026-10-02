@@ -58,6 +58,18 @@ pub trait Backend {
     fn zeroes(&self, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
     fn matmul(&self, a: &Self::Tensor, b: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
 
+    /// matrix multiply with an f16/bf16 weight kept in its GGUF encoding.
+    ///
+    /// `x` is `[seq_len, in_features]`; `w` has GGUF dims
+    /// `[in_features, out_features]`. Bit-identical to [`Backend::matmul`]
+    /// with the f32 weight the eager loader used to build (the widened
+    /// values, transposed to `[in_features, out_features]` row-major).
+    fn matmul_half(
+        &self,
+        x: &Self::Tensor,
+        w: &crate::half_weight::HalfWeight,
+    ) -> Result<Self::Tensor, Self::Error>;
+
     /// matrix multiply with an on-the-fly dequantized q8_0 weight.
     ///
     /// `x` is a standard f32 tensor `[seq_len, in_features]`; `w` is a
@@ -157,6 +169,16 @@ pub trait Backend {
         dst: &mut Self::Tensor,
         dst_index: usize,
         table: &Self::Tensor,
+        table_index: usize,
+    ) -> Result<(), Self::Error>;
+    /// Widen one row of an f16/bf16 table (GGUF dims `[cols, rows]`)
+    /// into `dst`; bit-identical to [`Backend::assign_row_from_table`] on
+    /// the widened table.
+    fn assign_row_from_half(
+        &self,
+        dst: &mut Self::Tensor,
+        dst_index: usize,
+        table: &crate::half_weight::HalfWeight,
         table_index: usize,
     ) -> Result<(), Self::Error>;
     /// Dequantize one row from a Q8_0 table directly into `dst`.
@@ -1192,6 +1214,34 @@ impl Backend for CpuBackend {
         Ok(a.par_matmul(b))
     }
 
+    fn matmul_half(
+        &self,
+        x: &CpuTensor,
+        w: &crate::half_weight::HalfWeight,
+    ) -> Result<CpuTensor, CpuError> {
+        if x.ndim() != 2 || w.dims().len() != 2 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_half: input and weight must be 2D, got {:?} and {:?}",
+                x.shape(),
+                w.dims()
+            )));
+        }
+        let (seq_len, in_features) = (x.shape()[0], x.shape()[1]);
+        if in_features != w.in_features() {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_half: inner dims must match (got {} vs {})",
+                in_features,
+                w.in_features()
+            )));
+        }
+        let output_len = seq_len.checked_mul(w.out_features()).ok_or_else(|| {
+            CpuError::ShapeMismatch("matmul_half: output shape product overflow".into())
+        })?;
+        let mut out = vec![0.0f32; output_len];
+        crate::half_weight::half_matmul_into(x.data(), seq_len, w, &mut out);
+        Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
+    }
+
     fn matmul_q8_0(&self, x: &CpuTensor, w: &QuantizedWeight) -> Result<CpuTensor, CpuError> {
         let (seq_len, output_len) = q8_matmul_output_len(x, w)?;
         let mut out = vec![0.0f32; output_len];
@@ -1481,6 +1531,32 @@ impl Backend for CpuBackend {
         let table_start = table_index * cols;
         dst.data_mut()[dst_start..dst_start + cols]
             .copy_from_slice(&table.data()[table_start..table_start + cols]);
+        Ok(())
+    }
+    fn assign_row_from_half(
+        &self,
+        dst: &mut CpuTensor,
+        dst_index: usize,
+        table: &crate::half_weight::HalfWeight,
+        table_index: usize,
+    ) -> Result<(), Self::Error> {
+        if table.dims().len() != 2 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "assign_row_from_half: table must be 2D, got {:?}",
+                table.dims()
+            )));
+        }
+        validate_quant_row_shapes(
+            "assign_row_from_half",
+            dst,
+            dst_index,
+            table.rows(),
+            table.row_len(),
+            table_index,
+        )?;
+        let cols = table.row_len();
+        let start = dst_index * cols;
+        table.dequantize_row(table_index, &mut dst.data_mut()[start..start + cols]);
         Ok(())
     }
     fn assign_row_from_q8_0(

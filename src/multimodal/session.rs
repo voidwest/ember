@@ -242,6 +242,7 @@ fn encode_scaffold(tokenizer: &EmberTokenizer, text: &str) -> Result<Vec<u32>> {
 fn lookup_embeddings_for(model: &Ultravox, backend: &CpuBackend, ids: &[u32]) -> Result<CpuTensor> {
     let dim = match &model.llm.embed_tokens {
         crate::llama::LlamaEmbedding::F32(t) => t.shape()[1],
+        crate::llama::LlamaEmbedding::Half(w) => w.row_len(),
         crate::llama::LlamaEmbedding::Q8_0(w) => w.in_features(),
         crate::llama::LlamaEmbedding::KQuant(w) => w.in_features(),
     };
@@ -250,6 +251,9 @@ fn lookup_embeddings_for(model: &Ultravox, backend: &CpuBackend, ids: &[u32]) ->
         match &model.llm.embed_tokens {
             crate::llama::LlamaEmbedding::F32(table) => {
                 backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
+            }
+            crate::llama::LlamaEmbedding::Half(table) => {
+                backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
             }
             crate::llama::LlamaEmbedding::Q8_0(table) => {
                 backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;
