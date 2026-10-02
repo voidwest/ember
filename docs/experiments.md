@@ -128,7 +128,11 @@ projects the intervened state.
 1. **Resolve**: the TOML spec is parsed strictly (unknown fields and
    unknown schema majors fail); defaults are applied and recorded.
 2. **Load and validate**: model and tokenizer SHA-256 are verified
-   against the spec when provided; mismatches fail closed.
+   against the spec when provided; mismatches fail closed. The tokenizer
+   is read once, and those bytes are hashed and checked against the pin
+   before they are parsed. The model is hashed while it loads; a model
+   load error, then a model mismatch, still takes precedence over any
+   tokenizer error.
 3. **Tokenize and align**: token selection is exact, byte-based, and
    fail-closed (see `docs/token-selection.md`).
 4. **Execute**: every input is generated through the existing v0.4
@@ -165,8 +169,8 @@ prefill there instead of recomputing it:
   full forward uses. Captures the variant requests before the boundary are
   recorded during the baseline by an observer instance of the variant's own
   experiment and handed over; captures, interventions and snapshots at or
-  after the boundary fire in the variant's run as usual. Decode is never
-  shared.
+  after the boundary fire in the variant's run as usual. Decode steps are
+  never shared between runs, but they can be batched (below).
 - **Identity.** A variant bundle is bit-identical to running its spec
   alone: same semantic hash, same payload hash. Only `runtime.json`
   differs; its `prefix_reuse` object records the role (`base`, `variant`,
@@ -185,6 +189,22 @@ runs one shared pass for all layers: every layer's baseline observes a single
 generation (co-baselines: non-intervening specs with the same inputs,
 settings and generated-step sites) and each layer's intervention resumes at
 its own layer.
+
+**Batched decode.** On models with the Q8_0 fast decode path (the example
+Llama-3.2-1B Q8_0 model), the runs of a shared pass -- `--variant` runs, a
+sweep's baseline and points, the GUI pair and GUI sweep -- also decode
+together: for each input, after the base and every variant have prefilled,
+each decode step is one batched forward over every generation still running,
+reading each weight once for the whole batch. Each sequence keeps its own KV
+cache, position, hooks, captures, interventions, sampler/seed and stopping
+condition, and leaves the batch when it stops. Batched decode is
+bit-identical per sequence to single decode, so every bundle is unchanged.
+`runtime.json` (not part of the identity) records `decode_batch`:
+`{"path": "batched", "batch_size": N, "generations": M}`, or
+`{"path": "sequential", "reason": ...}` when the pass cannot batch (a model
+off the Q8_0 fast path, tracing, `EMBER_FUSED_GREEDY`, runs with different
+thread counts or execution modes, or a single generation).
+`EMBER_BATCHED_DECODE=0` forces the sequential pass.
 
 ## Layer sweeps
 

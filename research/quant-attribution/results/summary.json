@@ -1,0 +1,392 @@
+{
+  "llama-3.2-1b": {
+    "q8_0": {
+      "preregistered_rule_holds": false,
+      "preregistered_failures": [
+        {
+          "pair": "france-italy",
+          "spearman": 0.9190196512521325,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "germany-spain",
+          "spearman": 0.8779410414558372,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "japan-russia",
+          "spearman": 0.9130526507702926,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "egypt-greece",
+          "spearman": 0.9033255631231903,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "poland-austria",
+          "spearman": 0.875242547760747,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "portugal-sweden",
+          "spearman": 0.8894112437979398,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        }
+      ],
+      "pairs": 6,
+      "min_spearman_actual_vs_f16": 0.875242547760747,
+      "median_spearman_actual_vs_f16": 0.9033255631231903,
+      "max_abs_fraction_diff": 0.015981014999999932,
+      "top1_matches_f16": 1,
+      "mean_top5_overlap": 0.9333333333333332,
+      "min_material_jaccard": 1.0,
+      "x_handoff_layer_matches_f16": 6,
+      "x_handoff_layer_shift": [
+        0
+      ],
+      "x_min_component_spearman": 0.8245916818546757,
+      "x_component_top1_matches_f16": 6,
+      "x_mean_component_top5_overlap": 1.0,
+      "x_negligible_share_f16": 0.7513888888888888,
+      "x_min_spearman_sites_ge_5pct": 0.997364953886693,
+      "x_max_f16_top1_top2_gap": 0.003936410999999973,
+      "x_max_top1_shortfall_in_f16": 0.011106638000000002,
+      "x_all_pairs_answer_correctly": true,
+      "gap_ratio_range": [
+        0.9849442935143407,
+        0.9982320108051927
+      ]
+    },
+    "q6_k": {
+      "preregistered_rule_holds": false,
+      "preregistered_failures": [
+        {
+          "pair": "france-italy",
+          "spearman": 0.8234764527905473,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "germany-spain",
+          "spearman": 0.8043189355070438,
+          "top1_matches": false,
+          "material_jaccard": 0.9583333333333334
+        },
+        {
+          "pair": "japan-russia",
+          "spearman": 0.8096196090628643,
+          "top1_matches": false,
+          "material_jaccard": 0.9583333333333334
+        },
+        {
+          "pair": "egypt-greece",
+          "spearman": 0.8565002799880191,
+          "top1_matches": false,
+          "material_jaccard": 0.9583333333333334
+        },
+        {
+          "pair": "poland-austria",
+          "spearman": 0.8246814864976321,
+          "top1_matches": false,
+          "material_jaccard": 0.96
+        },
+        {
+          "pair": "portugal-sweden",
+          "spearman": 0.8541292806695403,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        }
+      ],
+      "pairs": 6,
+      "min_spearman_actual_vs_f16": 0.8043189355070438,
+      "median_spearman_actual_vs_f16": 0.8246814864976321,
+      "max_abs_fraction_diff": 0.06503886199999998,
+      "top1_matches_f16": 2,
+      "mean_top5_overlap": 0.9,
+      "min_material_jaccard": 0.9583333333333334,
+      "x_handoff_layer_matches_f16": 5,
+      "x_handoff_layer_shift": [
+        -1,
+        0
+      ],
+      "x_min_component_spearman": 0.7203077258920805,
+      "x_component_top1_matches_f16": 6,
+      "x_mean_component_top5_overlap": 1.0,
+      "x_negligible_share_f16": 0.7513888888888888,
+      "x_min_spearman_sites_ge_5pct": 0.9945635759589248,
+      "x_max_f16_top1_top2_gap": 0.003936410999999973,
+      "x_max_top1_shortfall_in_f16": 0.007931189999999866,
+      "x_all_pairs_answer_correctly": true,
+      "gap_ratio_range": [
+        0.9520612216751715,
+        0.9972855934449858
+      ]
+    },
+    "q4_k_m": {
+      "preregistered_rule_holds": false,
+      "preregistered_failures": [
+        {
+          "pair": "france-italy",
+          "spearman": 0.8057959690407046,
+          "top1_matches": true,
+          "material_jaccard": 0.8518518518518519
+        },
+        {
+          "pair": "germany-spain",
+          "spearman": 0.8003166252798171,
+          "top1_matches": true,
+          "material_jaccard": 0.9583333333333334
+        },
+        {
+          "pair": "japan-russia",
+          "spearman": 0.783553199894082,
+          "top1_matches": false,
+          "material_jaccard": 0.9583333333333334
+        },
+        {
+          "pair": "egypt-greece",
+          "spearman": 0.7707032691314294,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "poland-austria",
+          "spearman": 0.8190678352368178,
+          "top1_matches": false,
+          "material_jaccard": 0.8846153846153846
+        },
+        {
+          "pair": "portugal-sweden",
+          "spearman": 0.7025754556859273,
+          "top1_matches": false,
+          "material_jaccard": 0.9166666666666666
+        }
+      ],
+      "pairs": 6,
+      "min_spearman_actual_vs_f16": 0.7025754556859273,
+      "median_spearman_actual_vs_f16": 0.8003166252798171,
+      "max_abs_fraction_diff": 0.08539779599999997,
+      "top1_matches_f16": 3,
+      "mean_top5_overlap": 0.7000000000000001,
+      "min_material_jaccard": 0.8518518518518519,
+      "x_handoff_layer_matches_f16": 5,
+      "x_handoff_layer_shift": [
+        -1,
+        0
+      ],
+      "x_min_component_spearman": 0.6471263896295688,
+      "x_component_top1_matches_f16": 6,
+      "x_mean_component_top5_overlap": 0.9666666666666667,
+      "x_negligible_share_f16": 0.7513888888888888,
+      "x_min_spearman_sites_ge_5pct": 0.9723648444578677,
+      "x_max_f16_top1_top2_gap": 0.003936410999999973,
+      "x_max_top1_shortfall_in_f16": 0.014867411999999969,
+      "x_all_pairs_answer_correctly": true,
+      "gap_ratio_range": [
+        0.9481152561729044,
+        1.0092731965573456
+      ]
+    }
+  },
+  "qwen2.5-1.5b": {
+    "q8_0": {
+      "preregistered_rule_holds": false,
+      "preregistered_failures": [
+        {
+          "pair": "france-italy",
+          "spearman": 0.8176554717199193,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "germany-spain",
+          "spearman": 0.7958962033146579,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "japan-russia",
+          "spearman": 0.8405876750536945,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "egypt-greece",
+          "spearman": 0.8510197434902442,
+          "top1_matches": true,
+          "material_jaccard": 0.9722222222222222
+        },
+        {
+          "pair": "poland-austria",
+          "spearman": 0.8980757456485612,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "portugal-sweden",
+          "spearman": 0.8852905043105614,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        }
+      ],
+      "pairs": 6,
+      "min_spearman_actual_vs_f16": 0.7958962033146579,
+      "median_spearman_actual_vs_f16": 0.8510197434902442,
+      "max_abs_fraction_diff": 0.03783745900000002,
+      "top1_matches_f16": 2,
+      "mean_top5_overlap": 0.6666666666666666,
+      "min_material_jaccard": 0.9722222222222222,
+      "x_handoff_layer_matches_f16": 6,
+      "x_handoff_layer_shift": [
+        0
+      ],
+      "x_min_component_spearman": 0.7110341404321291,
+      "x_component_top1_matches_f16": 6,
+      "x_mean_component_top5_overlap": 1.0,
+      "x_negligible_share_f16": 0.8698412698412699,
+      "x_min_spearman_sites_ge_5pct": 0.9338789401183049,
+      "x_max_f16_top1_top2_gap": 0.00369799000000004,
+      "x_max_top1_shortfall_in_f16": 0.005742750000000019,
+      "x_all_pairs_answer_correctly": true,
+      "gap_ratio_range": [
+        1.0017532627137113,
+        1.0217693813321829
+      ]
+    },
+    "q6_k": {
+      "preregistered_rule_holds": false,
+      "preregistered_failures": [
+        {
+          "pair": "france-italy",
+          "spearman": 0.4331300731609474,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "germany-spain",
+          "spearman": 0.6462772904894094,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "japan-russia",
+          "spearman": 0.6763089950792216,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "egypt-greece",
+          "spearman": 0.6826501258540093,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "poland-austria",
+          "spearman": 0.7387531544489473,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "portugal-sweden",
+          "spearman": 0.6583688866860388,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        }
+      ],
+      "pairs": 6,
+      "min_spearman_actual_vs_f16": 0.4331300731609474,
+      "median_spearman_actual_vs_f16": 0.6763089950792216,
+      "max_abs_fraction_diff": 0.0458027036,
+      "top1_matches_f16": 1,
+      "mean_top5_overlap": 0.6,
+      "min_material_jaccard": 1.0,
+      "x_handoff_layer_matches_f16": 6,
+      "x_handoff_layer_shift": [
+        0
+      ],
+      "x_min_component_spearman": 0.25604668096746896,
+      "x_component_top1_matches_f16": 6,
+      "x_mean_component_top5_overlap": 0.9666666666666667,
+      "x_negligible_share_f16": 0.8698412698412699,
+      "x_min_spearman_sites_ge_5pct": 0.8833157766793615,
+      "x_max_f16_top1_top2_gap": 0.00369799000000004,
+      "x_max_top1_shortfall_in_f16": 0.007017859999999931,
+      "x_all_pairs_answer_correctly": true,
+      "gap_ratio_range": [
+        0.9828526558343921,
+        1.002329524696654
+      ]
+    },
+    "q4_k_m": {
+      "preregistered_rule_holds": false,
+      "preregistered_failures": [
+        {
+          "pair": "france-italy",
+          "spearman": 0.6170193096421389,
+          "top1_matches": false,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "germany-spain",
+          "spearman": 0.6239728654209581,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "japan-russia",
+          "spearman": 0.5981829726166296,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "egypt-greece",
+          "spearman": 0.6132234175923497,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        },
+        {
+          "pair": "poland-austria",
+          "spearman": 0.6826867320394828,
+          "top1_matches": false,
+          "material_jaccard": 0.9722222222222222
+        },
+        {
+          "pair": "portugal-sweden",
+          "spearman": 0.5640569371960957,
+          "top1_matches": true,
+          "material_jaccard": 1.0
+        }
+      ],
+      "pairs": 6,
+      "min_spearman_actual_vs_f16": 0.5640569371960957,
+      "median_spearman_actual_vs_f16": 0.6170193096421389,
+      "max_abs_fraction_diff": 0.085182493,
+      "top1_matches_f16": 4,
+      "mean_top5_overlap": 0.5,
+      "min_material_jaccard": 0.9722222222222222,
+      "x_handoff_layer_matches_f16": 6,
+      "x_handoff_layer_shift": [
+        0
+      ],
+      "x_min_component_spearman": 0.43150374904059985,
+      "x_component_top1_matches_f16": 6,
+      "x_mean_component_top5_overlap": 0.9666666666666667,
+      "x_negligible_share_f16": 0.8698412698412699,
+      "x_min_spearman_sites_ge_5pct": 0.8665257223396758,
+      "x_max_f16_top1_top2_gap": 0.00369799000000004,
+      "x_max_top1_shortfall_in_f16": 0.007017859999999931,
+      "x_all_pairs_answer_correctly": true,
+      "gap_ratio_range": [
+        0.9650482498945397,
+        1.0406406759471907
+      ]
+    }
+  }
+}

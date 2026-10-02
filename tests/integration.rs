@@ -554,9 +554,10 @@ fn test_load_f16_keeps_logical_shape() {
         .tensors
         .get("test.weight")
         .expect("tensor 'test.weight' not found");
+    // F16 stays encoded; widening yields the eager loader's f32 tensor.
     let f16_tensor = match tensor {
-        LoadedTensor::F32(t) => t,
-        _ => panic!("expected f16 tensor to load as F32"),
+        LoadedTensor::Half(weight) => weight.to_f32_tensor(),
+        _ => panic!("expected f16 tensor to load as Half"),
     };
     assert_eq!(f16_tensor.shape(), &[2, 4]);
     assert_eq!(f16_tensor.data()[7], 7.0);

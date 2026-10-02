@@ -19,6 +19,35 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- Provenance: bundles, probe and handoff artifacts, backend metadata and the
+  console now record the commit the binary was built from. They used to ask
+  `git` in the working directory, so the same binary recorded a different
+  `ember_commit`, and a different semantic hash, depending on where it ran.
+  Benchmark and support records keep the working-tree commit next to the
+  build commit on purpose.
+- Docs: the semantic hash binds the execution plan, which records the kernel
+  tier, CPU features, thread count and compiler. The bundle and
+  reproducibility docs no longer claim it is host-independent; across hosts,
+  `exact`/`output-equivalent` verdicts are the comparison to use.
+- CI: the golden-path model gate also runs on arm64 Linux and arm64 macOS,
+  so the NEON kernels are exercised on a real model, not only in unit tests.
+- F16/BF16 models: weights stay in the GGUF mapping and are widened inside
+  the matmul instead of being converted (and transposed) to f32 at load.
+  Logits are bit-identical in reference and planned modes; on Llama-3.2-1B
+  F16 peak RSS drops from 6.9 to 2.4 GiB, load+build from ~7.3 s to <0.1 s,
+  and decode runs ~3.8x (reference) and ~20x (planned) faster.
+- Browser console: a non-loopback `--host` no longer disables the API
+  checks. The console token is required in every mode and POSTs must be
+  same-origin; only the loopback `Host` allowlist is limited to loopback
+  binds. See docs/v06-gui.md.
+- Unsafe hygiene: every `unsafe` block and impl now carries a `// SAFETY:`
+  comment, enforced by `clippy::undocumented_unsafe_blocks`. The Q8_0 decode
+  and batch dispatchers assert the input and weight lengths the x86 kernels
+  rely on.
+- Tooling: `scripts/ci_local.sh` mirrors the model-free CI gates, and
+  `.githooks/pre-push` runs its quick set (enable with
+  `git config core.hooksPath .githooks`). `fuzz/` is its own workspace root,
+  so it resolves from a nested worktree.
 - Experiments: shared-prefix reuse. `experiment run <baseline> --variant
   <spec>...` and the GUI's baseline/intervention pair compute the prompt
   prefill up to the first intervened block once; each variant resumes from

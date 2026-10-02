@@ -13,7 +13,7 @@ use ember::experiments::{
     ExecutionContext, ExecutionPhase, Experiment, ExperimentError, ExperimentRunner,
     GenerationContext, LayerContext, ModelContext, ModelFamily, TensorAccess,
 };
-use ember::extraction::sha256_file_result;
+use ember::extraction::{sha256_file_result, sha256_file_result_unless};
 use ember::llama::Llama;
 use ember::loader::load_gguf_with_k_strategy;
 use ember::model::ForwardModel;
@@ -32,6 +32,7 @@ use ember::v05::spec::{RawExperimentSpec, EXPERIMENT_SCHEMA_V1};
 use ember::v05::token_select::{tokenize_for_selection, TextNormalization};
 use ember::v05::verify::{load_verified_bundle, verify_bundle, LoadedBundle, VerifyOptions};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// `ember experiment ...` subcommands.
@@ -411,23 +412,17 @@ pub(crate) fn execute_resolved(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let threads = pool_threads(resolved)?;
-
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .context("failed to build the experiment thread pool")?
-        .install(|| {
-            let mut prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
-            execute_prepared(
-                &mut prepared,
-                resolved,
-                spec_text,
-                output_directory,
-                retain_incomplete,
-                None,
-            )
-        })
+    in_session_pool(pool_threads(resolved)?, || {
+        let mut prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
+        execute_prepared(
+            &mut prepared,
+            resolved,
+            spec_text,
+            output_directory,
+            retain_incomplete,
+            None,
+        )
+    })
 }
 
 /// A fully loaded, reusable experiment session.
@@ -443,6 +438,9 @@ pub(crate) struct PreparedRun {
     pub embed_dim: usize,
     pub model_sha: String,
     pub tokenizer_sha: String,
+    /// `tokenizer.vocab_size()`, counted once: the tokenizers crate builds
+    /// the whole vocabulary map to answer it, and every bundle records it.
+    pub tokenizer_vocab_size: usize,
     pub gguf_metadata: serde_json::Value,
     pub model_path: PathBuf,
     /// The model section the session was prepared from; shared execution
@@ -505,6 +503,55 @@ pub(crate) fn prepare_run(
     k_strategy: KStrategy,
     k_allow_fallback: bool,
 ) -> anyhow::Result<PreparedRun> {
+    // Hashing the whole GGUF (~0.7 s for 1.3 GB) and reading, hashing and
+    // parsing the tokenizer do not depend on building the model, so they run
+    // on helper threads while it loads. Results are checked in the order
+    // they were when everything ran in sequence, with the same errors, and
+    // the tokenizer is parsed only after its bytes match the spec's pin.
+    let abandon = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        // After an early error (or a panic) the helpers' results go unused;
+        // stop them instead of waiting out a whole-model hash when the scope
+        // joins. A drop guard covers the unwinding path too.
+        let _abandon_on_exit = AbandonOnDrop(&abandon);
+        let model_hash = scope.spawn(|| sha256_file_result_unless(&resolved.model.path, &abandon));
+        prepare_run_overlapped(
+            resolved,
+            k_strategy,
+            k_allow_fallback,
+            scope,
+            model_hash,
+            &abandon,
+        )
+    })
+}
+
+/// Sets the flag when dropped: tells `prepare_run`'s helper threads that
+/// their results will not be used.
+struct AbandonOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for AbandonOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Join a helper thread, re-raising its panic as one would have been raised
+/// had its work run on the calling thread.
+fn join_helper<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
+fn prepare_run_overlapped<'scope, 'env>(
+    resolved: &'env ember::v05::spec::ExperimentSpecV1,
+    k_strategy: KStrategy,
+    k_allow_fallback: bool,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    model_hash: std::thread::ScopedJoinHandle<'scope, anyhow::Result<String>>,
+    abandon: &'env AtomicBool,
+) -> anyhow::Result<PreparedRun> {
     // -- model --
     let loader = load_gguf_with_k_strategy(&resolved.model.path, k_strategy, k_allow_fallback)?;
     let architecture =
@@ -515,12 +562,21 @@ pub(crate) fn prepare_run(
              '{architecture}'"
         );
     }
+    let tokenizer_path = resolved
+        .model
+        .tokenizer
+        .clone()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| default_tokenizer_for_arch(&architecture).to_string());
+    let resolved_tokenizer = resolve_tokenizer(&tokenizer_path);
+    let tokenizer_pin = resolved.model.tokenizer_expected_sha256.as_str();
+    let tokenizer_job = scope.spawn(move || resolved_tokenizer.load_pinned(tokenizer_pin, abandon));
     let gguf_metadata = gguf_metadata_json(&loader);
     let model = Llama::from_loader_with_max_seq_len(loader, None)?;
     let n_layers = model.config.n_layers;
     let embed_dim = model.config.embed_dim;
 
-    let model_sha = sha256_file_result(&resolved.model.path)
+    let model_sha = join_helper(model_hash)
         .with_context(|| format!("failed to hash model '{}'", resolved.model.path.display()))?;
     if !resolved.model.expected_sha256.is_empty() && resolved.model.expected_sha256 != model_sha {
         anyhow::bail!(
@@ -532,26 +588,9 @@ pub(crate) fn prepare_run(
     }
 
     // -- tokenizer --
-    let tokenizer_path = resolved
-        .model
-        .tokenizer
-        .clone()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| default_tokenizer_for_arch(&architecture).to_string());
-    let resolved_tokenizer = resolve_tokenizer(&tokenizer_path);
-    let tokenizer_sha = resolved_tokenizer.sha256()?;
-    if !resolved.model.tokenizer_expected_sha256.is_empty()
-        && resolved.model.tokenizer_expected_sha256 != tokenizer_sha
-    {
-        anyhow::bail!(
-            "tokenizer SHA-256 mismatch: spec expects {} but '{}' hashes to {}",
-            resolved.model.tokenizer_expected_sha256,
-            resolved_tokenizer.identity(),
-            tokenizer_sha
-        );
-    }
-    let tokenizer = resolved_tokenizer.load()?;
+    let (tokenizer_sha, tokenizer) = join_helper(tokenizer_job)?;
     tokenizer.validate_model_vocab(model.config.vocab_size)?;
+    let tokenizer_vocab_size = tokenizer.vocab_size();
 
     Ok(PreparedRun {
         model,
@@ -561,6 +600,7 @@ pub(crate) fn prepare_run(
         embed_dim,
         model_sha,
         tokenizer_sha,
+        tokenizer_vocab_size,
         gguf_metadata,
         model_path: resolved.model.path.clone(),
         model_spec: resolved.model.clone(),
@@ -591,31 +631,36 @@ pub(crate) fn execute_prepared(
     ember::v05::verify::VerificationReport,
     Vec<InputResult>,
 )> {
-    let threads = pool_threads(resolved)?;
-    if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
-        return execute_prepared_inner(
+    in_session_pool(pool_threads(resolved)?, move || {
+        execute_prepared_inner(
             prepared,
             resolved,
             spec_text,
             output_directory,
             retain_incomplete,
             cancel,
-        );
+        )
+    })
+}
+
+/// Run `f` as a CPU inference session on a pool of `threads` workers
+/// (directly when the caller already runs on one of that size).
+///
+/// The session mark (`ember::model::with_cpu_session`) lets the sequential
+/// decode loops inside `f` use the spin-waiting decode team although they run
+/// on a Rayon worker; without it every decode region fell back to Rayon.
+pub(crate) fn in_session_pool<T: Send>(
+    threads: usize,
+    f: impl FnOnce() -> anyhow::Result<T> + Send,
+) -> anyhow::Result<T> {
+    if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
+        return ember::model::with_cpu_session(f);
     }
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
-        .context("failed to build the prepared experiment thread pool")?
-        .install(move || {
-            execute_prepared_inner(
-                prepared,
-                resolved,
-                spec_text,
-                output_directory,
-                retain_incomplete,
-                cancel,
-            )
-        })
+        .context("failed to build the experiment thread pool")?
+        .install(move || ember::model::with_cpu_session(f))
 }
 
 fn execute_prepared_inner(
@@ -711,11 +756,50 @@ pub(crate) struct ActiveSpec {
     pub threads: usize,
 }
 
-/// Wall time and generated-token count accumulated over a run's inputs.
+/// Wall time and generated-token count accumulated over a run's inputs,
+/// and how its decode steps ran.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct RunTiming {
     pub elapsed: std::time::Duration,
     pub generated: usize,
+    pub decode: DecodeRoute,
+}
+
+/// How a run's decode steps executed; `runtime.json` records it as
+/// `decode_batch` (never part of the semantic identity).
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecodeRoute {
+    /// A standalone run: its own sequential decode; nothing is recorded.
+    #[default]
+    Standalone,
+    /// Every decode step shared one batched forward with the other runs of
+    /// a shared pass still generating (`batch_size`: the largest batch).
+    Batched {
+        batch_size: usize,
+        generations: usize,
+    },
+    /// A shared pass whose runs decoded one after another, and why.
+    Sequential { reason: &'static str },
+}
+
+impl DecodeRoute {
+    fn to_json(self) -> Option<serde_json::Value> {
+        match self {
+            DecodeRoute::Standalone => None,
+            DecodeRoute::Batched {
+                batch_size,
+                generations,
+            } => Some(serde_json::json!({
+                "path": "batched",
+                "batch_size": batch_size,
+                "generations": generations,
+            })),
+            DecodeRoute::Sequential { reason } => Some(serde_json::json!({
+                "path": "sequential",
+                "reason": reason,
+            })),
+        }
+    }
 }
 
 impl RunTiming {
@@ -852,34 +936,13 @@ pub(crate) fn run_input(
 ) -> anyhow::Result<InputResult> {
     let backend = ember::backend::CpuBackend;
     let model = &prepared.model;
-    let architecture = &prepared.architecture;
-    let index = experiment.lock().expect("v05 experiment lock").input_index;
-    let input = &resolved.inputs[index];
-    eprintln!(
-        "experiment: input {} ({}) tokens={} mode={}",
-        index + 1,
-        input.id,
-        input.text.len(),
-        resolved.execution.mode.name()
-    );
-    let model_context = ModelContext::new(
-        family_for_arch(architecture),
-        Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
-        architecture,
-        prepared.n_layers,
-        prepared.embed_dim,
-    )
-    .with_provenance(Some(&prepared.model_sha), Some(&prepared.tokenizer_sha));
-    let seed = if resolved.generation.temperature > 0.0 && resolved.experiment.seed != 0 {
-        Some(resolved.experiment.seed)
-    } else {
-        None
-    };
-    let context_limit = model.max_seq_len(&backend);
-    let mut runner = match pass {
-        None => ExperimentRunner::new(V05Adapter(Arc::clone(experiment))),
-        Some(pass) => ExperimentRunner::new(pass),
-    };
+    let InputSetup {
+        input,
+        model_context,
+        seed,
+        context_limit,
+        mut runner,
+    } = input_setup(prepared, resolved, experiment, pass);
     let generated_text = match role {
         None => {
             crate::cli_generation::generate_with_experiment(
@@ -927,6 +990,106 @@ pub(crate) fn run_input(
     experiment.into_result().map_err(anyhow::Error::msg)
 }
 
+/// What driving one input needs, shared by [`run_input`] and [`start_input`].
+struct InputSetup<'a> {
+    input: &'a ember::v05::spec::InputSpec,
+    model_context: ModelContext<'a>,
+    seed: Option<u64>,
+    context_limit: usize,
+    runner: ExperimentRunner,
+}
+
+fn input_setup<'a>(
+    prepared: &'a PreparedRun,
+    resolved: &'a ember::v05::spec::ExperimentSpecV1,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    pass: Option<crate::cli_experiment_shared::SharedPass>,
+) -> InputSetup<'a> {
+    let architecture = &prepared.architecture;
+    let index = experiment.lock().expect("v05 experiment lock").input_index;
+    let input = &resolved.inputs[index];
+    eprintln!(
+        "experiment: input {} ({}) tokens={} mode={}",
+        index + 1,
+        input.id,
+        input.text.len(),
+        resolved.execution.mode.name()
+    );
+    let model_context = ModelContext::new(
+        family_for_arch(architecture),
+        Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
+        architecture,
+        prepared.n_layers,
+        prepared.embed_dim,
+    )
+    .with_provenance(Some(&prepared.model_sha), Some(&prepared.tokenizer_sha));
+    let seed = if resolved.generation.temperature > 0.0 && resolved.experiment.seed != 0 {
+        Some(resolved.experiment.seed)
+    } else {
+        None
+    };
+    let context_limit = prepared.model.max_seq_len(&ember::backend::CpuBackend);
+    let runner = match pass {
+        None => ExperimentRunner::new(V05Adapter(Arc::clone(experiment))),
+        Some(pass) => ExperimentRunner::new(pass),
+    };
+    InputSetup {
+        input,
+        model_context,
+        seed,
+        context_limit,
+        runner,
+    }
+}
+
+/// [`run_input`] up to its first decode forward: the input's prefill is
+/// done and its first token chosen. The caller advances it (together with
+/// other inputs' generations) through `cli_generation::decode_together` and
+/// collects the result with [`finish_input`]. Only for models
+/// `cli_generation::batched_decode_ineligibility` accepts.
+pub(crate) fn start_input<'a>(
+    prepared: &'a PreparedRun,
+    resolved: &'a ember::v05::spec::ExperimentSpecV1,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    pass: Option<crate::cli_experiment_shared::SharedPass>,
+    role: Option<crate::cli_generation::PrefixRole<'_>>,
+    cancel: Option<&ember::cancel::CancelToken>,
+) -> anyhow::Result<crate::cli_generation::SteppedGeneration<'a>> {
+    let InputSetup {
+        input,
+        model_context,
+        seed,
+        context_limit,
+        runner,
+    } = input_setup(prepared, resolved, experiment, pass);
+    crate::cli_generation::SteppedGeneration::start(
+        &ember::backend::CpuBackend,
+        &prepared.model,
+        runner,
+        model_context,
+        &prepared.tokenizer,
+        &input.text,
+        resolved.generation.max_new_tokens,
+        resolved.generation.temperature,
+        context_limit,
+        seed,
+        role,
+        cancel,
+    )
+}
+
+/// Finish a generation from [`start_input`] and collect the input's result.
+pub(crate) fn finish_input(
+    prepared: &PreparedRun,
+    experiment: &Arc<Mutex<V05Experiment>>,
+    generation: crate::cli_generation::SteppedGeneration<'_>,
+) -> anyhow::Result<InputResult> {
+    let generated_text = generation.finish(&prepared.tokenizer)?;
+    let mut experiment = experiment.lock().expect("v05 experiment lock");
+    experiment.set_generated_text(generated_text);
+    experiment.into_result().map_err(anyhow::Error::msg)
+}
+
 /// Assemble, write, and self-verify a bundle from finished input results.
 pub(crate) fn finish_bundle(
     prepared: &PreparedRun,
@@ -956,6 +1119,7 @@ pub(crate) fn finish_bundle(
         peak_rss_kb: peak_rss_kb(),
         threads: active.threads,
         prefix_reuse: prefix.as_ref().map(|record| record.to_json()),
+        decode_batch: timing.decode.to_json(),
     };
     let mut resolved_with_output = (*resolved).clone();
     resolved_with_output.output.directory = target.output_directory.to_path_buf();
@@ -967,7 +1131,7 @@ pub(crate) fn finish_bundle(
         spec_text: target.spec_text.to_string(),
         resolved: resolved_with_output,
         ember_version: env!("CARGO_PKG_VERSION").to_string(),
-        ember_commit: ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()),
+        ember_commit: ember_commit().to_string(),
         model_meta: ModelBundleMeta {
             sha256: prepared.model_sha.clone(),
             architecture: prepared.architecture.clone(),
@@ -978,7 +1142,7 @@ pub(crate) fn finish_bundle(
         },
         tokenizer_meta: TokenizerBundleMeta {
             sha256: prepared.tokenizer_sha.clone(),
-            vocab_size: prepared.tokenizer.vocab_size(),
+            vocab_size: prepared.tokenizer_vocab_size,
         },
         plan: (*active.plan).clone(),
         results: results.clone(),
@@ -996,6 +1160,13 @@ pub(crate) fn finish_bundle(
         results,
         prefix,
     })
+}
+
+/// The commit recorded as `ember_commit` in every bundle this process
+/// writes: the commit the binary was built from. It is part of the semantic
+/// manifest, so it must not depend on the directory the run starts in.
+fn ember_commit() -> &'static str {
+    ember::extraction::build_commit().unwrap_or("unknown")
 }
 
 fn peak_rss_kb() -> Option<u64> {

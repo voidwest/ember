@@ -38,6 +38,10 @@ pub fn arm_k_supported() -> bool {
 }
 
 const PARALLEL_LEAF_OUTPUTS: usize = 256;
+/// Columns per decode-team chunk for single-token matvecs: small enough that
+/// a slow or late member holds back little work, large enough that claiming a
+/// chunk (one CAS) is noise next to the dots.
+const DECODE_TEAM_CHUNK_COLUMNS: usize = 64;
 const PARALLEL_MIN_MACS: usize = 512_000;
 
 #[cfg(test)]
@@ -434,12 +438,18 @@ mod x86 {
     #[inline]
     unsafe fn k4_shuffle(index: usize) -> __m256i {
         debug_assert!(index < 8);
+        // SAFETY: callers pass `index < 8`, so the unaligned 32-byte load
+        // stays inside the 256-byte table; the gated kernels that call this
+        // guarantee AVX.
         unsafe { _mm256_loadu_si256(K4_SCALE_SHUFFLES.as_ptr().add(32 * index).cast()) }
     }
 
     #[inline]
     unsafe fn q6_shuffle(index: usize) -> __m128i {
         debug_assert!(index < 8);
+        // SAFETY: callers pass `index < 8`, so the unaligned 16-byte load
+        // stays inside the 128-byte table; SSE2 is part of the x86_64
+        // baseline.
         unsafe { _mm_loadu_si128(Q6_SCALE_SHUFFLES.as_ptr().add(16 * index).cast()) }
     }
 
@@ -479,6 +489,8 @@ mod x86 {
     #[inline]
     #[target_feature(enable = "avx2")]
     unsafe fn quantize_eight(values: *const f32, inverse_scale: __m256, dst: *mut i8) -> __m256i {
+        // SAFETY: the caller guarantees eight readable `f32` at `values` and
+        // eight writable bytes at `dst` (the 64-bit store), both unaligned.
         unsafe {
             let scaled = _mm256_mul_ps(_mm256_loadu_ps(values), inverse_scale);
             let rounded =
@@ -511,6 +523,10 @@ mod x86 {
         src: &[f32],
         dst: &mut Vec<Q8KBlock>,
     ) -> Result<(), &'static str> {
+        // SAFETY: the caller guarantees the feature set. `values` is a whole
+        // `QK_K`-element chunk and `block.qs` holds `QK_K` quants, so each
+        // `quantize_eight` call at `offset` or `offset + 8` (`offset <=
+        // QK_K - 16`) reads and writes eight in-bounds elements.
         unsafe {
             debug_assert!(src.len().is_multiple_of(QK_K));
             let blocks = src.len() / QK_K;
@@ -569,6 +585,8 @@ mod x86 {
 
     #[inline]
     unsafe fn hsum_f32x4(value: __m128) -> f32 {
+        // SAFETY: register-only SSE operations; SSE is part of the x86_64
+        // baseline and no memory is accessed.
         unsafe {
             let sum = _mm_add_ps(value, _mm_movehl_ps(value, value));
             let sum = _mm_add_ss(sum, _mm_shuffle_ps::<0x55>(sum, sum));
@@ -612,6 +630,12 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> f32 {
+        // SAFETY: the caller guarantees the feature set and that `data` holds
+        // row `column` of `blocks_per_row` Q4_K super-blocks, one per `input`
+        // element. Within a 144-byte block the unaligned reads cover the
+        // 16-byte header and four 32-byte quant groups ending at byte 144;
+        // each activation load reads 32 of a `Q8KBlock`'s 256 quants or its
+        // sixteen `bsums`.
         unsafe {
             let row = data
                 .as_ptr()
@@ -692,6 +716,12 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> f32 {
+        // SAFETY: the caller guarantees the feature set and that `data` holds
+        // row `column` of `blocks_per_row` Q6_K super-blocks, one per `input`
+        // element. Within a 210-byte block the unaligned reads cover the low
+        // bits (bytes 0..128), high bits (128..192), scales (192..208) and the
+        // scale word (208..210); each activation load reads 32 of a
+        // `Q8KBlock`'s 256 quants or its sixteen `bsums`.
         unsafe {
             let row = data
                 .as_ptr()
@@ -777,6 +807,12 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> f32 {
+        // SAFETY: the caller guarantees the feature set and that `data` holds
+        // row `column` of `blocks_per_row` Q4_K super-blocks, one per `input`
+        // element. Within a 144-byte block the unaligned reads cover the
+        // 16-byte header and four 32-byte quant groups ending at byte 144;
+        // each activation load reads 32 of a `Q8KBlock`'s 256 quants or its
+        // sixteen `bsums`.
         unsafe {
             let row = data
                 .as_ptr()
@@ -864,6 +900,12 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> f32 {
+        // SAFETY: the caller guarantees the feature set and that `data` holds
+        // row `column` of `blocks_per_row` Q6_K super-blocks, one per `input`
+        // element. Within a 210-byte block the unaligned reads cover the low
+        // bits (bytes 0..128), high bits (128..192), scales (192..208) and the
+        // scale word (208..210); each activation load reads 32 of a
+        // `Q8KBlock`'s 256 quants or its sixteen `bsums`.
         unsafe {
             let row = data
                 .as_ptr()
@@ -955,6 +997,11 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
+        // SAFETY: the caller guarantees the feature set. `block` is a
+        // bounds-checked 144-byte slice, so the four 32-byte quant loads from
+        // offset 16 end at byte 144; `input` is indexed with bounds checks and
+        // each activation load reads 32 of a `Q8KBlock`'s 256 quants, eight
+        // of its sixteen `bsums`, or the eight-byte `mins` array.
         unsafe {
             debug_assert_eq!(input.len(), 4 * blocks_per_row);
             let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
@@ -1034,6 +1081,13 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
+        // SAFETY: the caller guarantees the feature set and that `presplit`
+        // holds 256 bytes per super-block of this weight, so the 32-byte
+        // loads at `qstart + group * 64 (+ 32)` stay inside block
+        // `block_index` of row `column`. `block` and `input` are
+        // bounds-checked; each activation load reads 32 of a `Q8KBlock`'s 256
+        // quants, eight of its sixteen `bsums`, or the eight-byte `mins`
+        // array.
         unsafe {
             debug_assert_eq!(input.len(), 4 * blocks_per_row);
             let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
@@ -1113,6 +1167,11 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
+        // SAFETY: the caller guarantees the feature set. `block` is a
+        // bounds-checked 210-byte slice: the low-bit loads end at byte 128,
+        // the high-bit loads at byte 192, and `scales` is the 16-byte slice
+        // 192..208. `input` is indexed with bounds checks and each activation
+        // load reads 32 of a `Q8KBlock`'s 256 quants or its sixteen `bsums`.
         unsafe {
             debug_assert_eq!(input.len(), 4 * blocks_per_row);
             let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
@@ -1209,6 +1268,13 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
+        // SAFETY: the caller guarantees the feature set and that `presplit`
+        // holds 256 bytes per super-block of this weight, so the 32-byte
+        // loads at `qstart + half * 128 + segment * 32` stay inside block
+        // `block_index` of row `column`. `block` and `input` are
+        // bounds-checked, `scales` is the 16-byte slice 192..208, and each
+        // activation load reads 32 of a `Q8KBlock`'s 256 quants or its
+        // sixteen `bsums`.
         unsafe {
             debug_assert_eq!(input.len(), 4 * blocks_per_row);
             let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
@@ -1483,6 +1549,29 @@ fn parallel_body(
         return;
     }
     let _ = packed4;
+    // Single-token decode: hand fixed column chunks to the spin-waiting decode
+    // team (performance cores only, no fork/join per projection). Each column
+    // is computed by the same serial kernel, so the result is independent of
+    // which member claims it. Falls through to the Rayon tree when the team
+    // is unavailable (a nested call from a Rayon worker, or a busy team).
+    if rows == 1 {
+        let out_features = w.out_features();
+        let chunks = out_features.div_ceil(DECODE_TEAM_CHUNK_COLUMNS);
+        let out = crate::decode_pool::SharedMut::new(dst);
+        let ran = crate::decode_pool::run(chunks, &|chunk| {
+            let first = chunk * DECODE_TEAM_CHUNK_COLUMNS;
+            let count = DECODE_TEAM_CHUNK_COLUMNS.min(out_features - first);
+            // SAFETY: chunks cover disjoint column ranges of `dst`, which
+            // outlives the region.
+            let columns = unsafe { out.range(first, count) };
+            for (offset, value) in columns.iter_mut().enumerate() {
+                *value += dot_column(w, first + offset, input);
+            }
+        });
+        if ran {
+            return;
+        }
+    }
     // Split into ~two leaves per worker so work-stealing can smooth the tail
     // (low-column projections such as K/V otherwise leave most workers idle).
     // Floor at 128 columns per leaf: below that, per-leaf dispatch and
@@ -1685,6 +1774,31 @@ mod tests {
             KQuantDtype::Q6K => seeded_q6_blocks(blocks, seed),
         };
         KQuantWeight::try_new(bytes, [out, input], dtype).unwrap()
+    }
+
+    /// A single-token matvec issued outside a Rayon pool takes the decode
+    /// team; whichever member claims a column chunk, the result must equal
+    /// the serial product bit for bit, including the accumulate-into-`dst`
+    /// contract and a last chunk shorter than the chunk width.
+    #[test]
+    fn decode_team_matvec_is_bit_identical_to_serial() {
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            for outputs in [
+                PARALLEL_LEAF_OUTPUTS + 1,
+                4 * DECODE_TEAM_CHUNK_COLUMNS + 17,
+            ] {
+                let input_features = 8 * QK_K;
+                let weight = weight(dtype, outputs, input_features, 0x5eed + outputs as u64);
+                let src = seeded_activations(input_features, 0xfeed);
+                let initial: Vec<f32> = (0..outputs).map(|i| i as f32 * 0.125 - 3.0).collect();
+                let mut serial = initial.clone();
+                matmul_k_q8_into(&src, 1, &weight, &mut serial, false).unwrap();
+                let mut team = initial.clone();
+                matmul_k_q8_into(&src, 1, &weight, &mut team, true).unwrap();
+                let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&team), bits(&serial), "{dtype:?} outputs={outputs}");
+            }
+        }
     }
 
     #[cfg(target_arch = "aarch64")]

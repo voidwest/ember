@@ -19,7 +19,7 @@
 
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
         <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
-        <link rel="stylesheet" href="/homepage.css?v=20260901-lab">
+        <link rel="stylesheet" href="/homepage.css?v=20260930">
 
         <meta property="og:image" content="https://voidwest.dev/og/voidwest.png">
         <meta property="og:image:width" content="1200">
@@ -31,60 +31,22 @@
     </head>
 
     <body class="home">
-        <nav class="site-nav" aria-label="التنقل الأساسي">
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html" aria-current="page">voidwest</a>
-
             <div class="nav-links">
-                <a href="#recent">حديثًا</a>
-                <a href="#building">أبني</a>
-                <a href="#testing">أسئلة</a>
-                <a href="#writing">ملاحظات</a>
                 <a href="/ember/index.ar.html">ember</a>
-                <a href="/cv/index.ar.html">عني</a>
+                <a href="/research-notes/index.ar.html">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
             </div>
-
             <div class="nav-actions">
-                <a class="nav-lang" href="/" lang="en">EN</a>
-
-                <button
-                    class="theme-toggle"
-                    type="button"
-                    aria-label="بدّل للوضع الداكن"
-                    aria-pressed="true"
-                >
-                    <svg
-                        class="theme-icon theme-icon-moon"
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/>
-                    </svg>
-
-                    <svg
-                        class="theme-icon theme-icon-sun"
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <circle cx="12" cy="12" r="4.2"/>
-                        <path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/>
-                    </svg>
-                </button>
+                <a class="nav-lang" href="/">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
             </div>
         </nav>
+        <!-- docs:nav end -->
 
         <main>
             <svg
@@ -227,28 +189,6 @@
 
                 <div class="lab-log">
                     <article>
-                        <time datetime="2026-08-30">2026.08.30</time>
-                        <p class="entry-kind">بحث</p>
-
-                        <div>
-                            <h3>
-                                من Jais 1 إلى Jais 2:
-                                وش تغيّر في اختبار الصرف العربي؟
-                            </h3>
-
-                            <p>
-                                أغلب التحسن جاي من العدد، والنتيجة تغيّرت لما
-                                غيّرنا واجهة التمثيل أو تقسيم الكلمات.
-                                العنوان أقل حماس، بس فايدته أكبر.
-                            </p>
-                        </div>
-
-                        <a href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">
-                            اقرأ ←
-                        </a>
-                    </article>
-
-                    <article>
                         <time datetime="2026-09-28">2026.09.28</time>
                         <p class="entry-kind">إصدار</p>
 
@@ -273,6 +213,46 @@
                     </article>
 
                     <article>
+                        <time datetime="2026-09-13">2026.09.13</time>
+                        <p class="entry-kind">بحث</p>
+
+                        <div>
+                            <h3>الـ<bdi>probe</bdi> يقدر يقرأها، بس النموذج يقدر يستخدمها؟</h3>
+
+                            <p>
+                                الفرق بين استرجاع الهوية بالـ<bdi>probe</bdi> ونقلها فعلياً
+                                إلى <bdi>receiver</bdi>، وليش تحسن التدريب ما ضمن تحسن النقل.
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/the-probe-can-read-it.ar.html">
+                            اقرأ ←
+                        </a>
+                    </article>
+
+                    <article>
+                        <time datetime="2026-08-30">2026.08.30</time>
+                        <p class="entry-kind">بحث</p>
+
+                        <div>
+                            <h3>
+                                من Jais 1 إلى Jais 2:
+                                وش تغيّر في اختبار الصرف العربي؟
+                            </h3>
+
+                            <p>
+                                أغلب التحسن جاي من العدد، والنتيجة تغيّرت لما
+                                غيّرنا واجهة التمثيل أو تقسيم الكلمات.
+                                العنوان أقل حماس، بس فايدته أكبر.
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">
+                            اقرأ ←
+                        </a>
+                    </article>
+
+                    <article>
                         <time datetime="2026-08-16">2026.08.16</time>
                         <p class="entry-kind">نوع عطل</p>
 
@@ -289,27 +269,6 @@
 
                         <a href="/research-notes/a-model-file-is-more-than-weights.ar.html">
                             ملاحظات ←
-                        </a>
-                    </article>
-
-                    <article>
-                        <time datetime="2026-08-09">2026.08.09</time>
-                        <p class="entry-kind">تجربة</p>
-
-                        <div>
-                            <h3>
-                                قبل ما نوصل ذاكرات <bdi>KV</bdi> بين النماذج،
-                                لازم أول نخليها قابلة للقياس
-                            </h3>
-
-                            <p>
-                                ثبّت اللقطات وإعادة التشغيل المطابقة داخل النموذج نفسه قبل ما أجرّب
-                                الربط بين النماذج، عشان ما نرمي كل عطل على الرابط.
-                            </p>
-                        </div>
-
-                        <a href="/research-notes/before-mapping-kv-caches.ar.html">
-                            اقرأ ←
                         </a>
                     </article>
                 </div>
@@ -568,16 +527,6 @@
                 </header>
 
                 <div class="writing-list">
-                    <a href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">
-                        <time datetime="2026-08-30">08.30</time>
-                        <span>
-                            من Jais 1 إلى Jais 2:
-                            وش تغيّر في اختبار الصرف العربي؟
-                        </span>
-                        <small>العربية / الاختبارات</small>
-                        <span aria-hidden="true">←</span>
-                    </a>
-
                     <a href="/research-notes/lexical-splits-morphology-probing.ar.html">
                         <time datetime="2026-08-27">08.27</time>
                         <span>
@@ -588,15 +537,6 @@
                         <span aria-hidden="true">←</span>
                     </a>
 
-                    <a href="/research-notes/a-model-file-is-more-than-weights.ar.html">
-                        <time datetime="2026-08-16">08.16</time>
-                        <span>
-                            ملف النموذج مو بس أوزان
-                        </span>
-                        <small>GGUF / fuzzing</small>
-                        <span aria-hidden="true">←</span>
-                    </a>
-
                     <a href="/research-notes/before-mapping-kv-caches.ar.html">
                         <time datetime="2026-08-09">08.09</time>
                         <span>
@@ -604,6 +544,24 @@
                             لازم أول نخليها قابلة للقياس
                         </span>
                         <small>KV cache / artifacts</small>
+                        <span aria-hidden="true">←</span>
+                    </a>
+
+                    <a href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">
+                        <time datetime="2026-08-01">08.01</time>
+                        <span>
+                            الملف قال <bdi>Q4</bdi>. والـ<bdi>runtime</bdi> قال <bdi>f32</bdi>.
+                        </span>
+                        <small>GGUF / quantization</small>
+                        <span aria-hidden="true">←</span>
+                    </a>
+
+                    <a href="/research-notes/crossover-point-cpu-llm-decode.ar.html">
+                        <time datetime="2026-07-25">07.25</time>
+                        <span>
+                            متى تساعد زيادة عدد الـ<bdi>threads</bdi> في مرحلة <bdi>decode</bdi>؟
+                        </span>
+                        <small>CPU / decode</small>
                         <span aria-hidden="true">←</span>
                     </a>
                 </div>

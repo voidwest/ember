@@ -30,19 +30,27 @@ run both default and `--no-default-features` checks.
 
 ## Local validation
 
-CI pins Rust 1.92.0 (`rustup override set 1.92.0` locally makes your
-toolchain match CI — newer toolchains emit different clippy lints). The
-exact CI gates are:
+`rust-toolchain.toml` pins Rust 1.98.1, which the default GUI build needs;
+CI also checks the headless crate on the 1.92.0 MSRV. `scripts/ci_local.sh`
+runs the model-free CI gates with the same flags as
+`.github/workflows/ci.yml`:
 
 ```bash
-cargo fmt --all -- --check
-cargo check --locked --all-targets
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets
-.venv/bin/python -m pytest tests probes/test_probe_workflows.py -q
-.venv/bin/python scripts/check_docs.py --check
-bash -n bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh tools/crossover_sweep.sh
+scripts/ci_local.sh        # fmt, clippy (default, headless, other architecture,
+                           # MSRV, python bindings), fuzz lockfile, docs
+scripts/ci_local.sh full   # the above plus the Rust and Python test suites
 ```
+
+The quick set only checks and lints, so it does not replace
+`target/debug/ember`. Run it before every push, or let git do it:
+
+```bash
+git config core.hooksPath .githooks   # once per clone; enables the pre-push hook
+```
+
+`EMBER_SKIP_PREPUSH=1 git push` skips the hook for one push. The other
+architecture and the MSRV are linted only when their toolchains are
+installed; the script prints the `rustup` command for anything it skipped.
 
 ## Repository layout and boundaries
 
@@ -128,15 +136,15 @@ you reviewed, for example `docs/...`, `fix/...`, `test/...`, or `perf/...`.
 
 ### 2. Build a baseline, then choose the smallest patch
 
-Rust 1.92.0 is pinned by `rust-toolchain.toml`. No model is needed for the
-unit-test path. The default feature includes the gpui/Vulkan native console;
+Rust 1.98.1 is pinned by `rust-toolchain.toml`; the headless crate also
+builds on the 1.92.0 MSRV. No model is needed for the unit-test path. The default feature includes the gpui/Vulkan native console;
 use the headless check when display/X11/ALSA development libraries are not
 available:
 
 ```bash
 rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
-cargo check --locked --no-default-features --all-targets
-cargo test --locked --no-default-features --all-targets
+cargo +1.92.0 check --locked --no-default-features --all-targets
+cargo +1.92.0 test --locked --no-default-features --all-targets
 ```
 
 For a normal checkout, establish the full baseline when the host has the CI
@@ -225,10 +233,12 @@ Python 3.11+ interpreter and run the applicable CI checks:
   --model smoke:dummy.gguf --generate-tokens 1 --dry-run
 .venv/bin/python scripts/check_docs.py
 .venv/bin/python -m pytest tests probes/test_probe_workflows.py -q
-bash -n bench_compare.sh probes/run_all_5k.sh \
+for script in bench_compare.sh probes/run_all_5k.sh \
   scripts/research_example_capture_patch.sh scripts/conference_demo.sh \
   scripts/validate_k_parity.sh tools/crossover_sweep.sh \
-  tools/verify_k_quant_llamacpp.sh
+  tools/verify_k_quant_llamacpp.sh scripts/ci_local.sh .githooks/pre-push; do
+  bash -n "$script"   # one per call: extra paths would be passed as arguments
+done
 ```
 
 Docs-only changes need `git diff --check`, the Markdown links checked from

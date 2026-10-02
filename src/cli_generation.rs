@@ -921,6 +921,361 @@ pub(crate) fn generate_with_experiment_prefix(
     )
 }
 
+/// Whether `EMBER_FUSED_GREEDY` selects the fused greedy decode entry point.
+fn fused_greedy_requested() -> bool {
+    std::env::var("EMBER_FUSED_GREEDY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Why experiment generations on `model` cannot share batched decode
+/// forwards ([`decode_together`]), or `None` when they can.
+///
+/// Batched decode reproduces the Q8_0 fast single-token decode exactly; any
+/// other decode route (generic, planned, K-quant, traced, fused greedy) keeps
+/// the sequential loop. `EMBER_BATCHED_DECODE=0` forces the sequential loop
+/// (for comparisons; bundles are identical either way).
+pub(crate) fn batched_decode_ineligibility(
+    model: &ember::llama::Llama<CpuBackend>,
+) -> Option<&'static str> {
+    if std::env::var("EMBER_BATCHED_DECODE").is_ok_and(|value| value == "0") {
+        Some("EMBER_BATCHED_DECODE=0 disables batched decode")
+    } else if !model.supports_batched_decode() {
+        Some("the model does not decode on the Q8_0 fast path")
+    } else if trace::is_tracing() {
+        Some("op tracing is active")
+    } else if fused_greedy_requested() {
+        Some("EMBER_FUSED_GREEDY selects the fused greedy decode")
+    } else {
+        None
+    }
+}
+
+/// Run a prefill through `execution`, as `generate_with_execution` does.
+fn stepped_prefill<E>(
+    execution: &mut E,
+    backend: &CpuBackend,
+    model: &ember::llama::Llama<CpuBackend>,
+    all_tokens: &[u32],
+    cache: &mut ember::kv_cache::KVCache,
+) -> anyhow::Result<ember::tensor::CpuTensor>
+where
+    E: GenerationExecution<CpuBackend, ember::llama::Llama<CpuBackend>>,
+{
+    execution.before_prefill(all_tokens)?;
+    Ok(execution.forward_last_logits(
+        backend,
+        model,
+        all_tokens,
+        cache,
+        0,
+        ExecutionPhase::Prefill,
+    )?)
+}
+
+/// One experiment generation (`generate_with_experiment` or
+/// `generate_with_experiment_prefix` without tracing, top-k/top-p or fused
+/// greedy), split at its decode forwards so several generations can share
+/// each one ([`decode_together`]).
+///
+/// Every step is the sequential loop's own logic in the same order: the
+/// cancellation check, greedy or seeded sampling from the previous logits,
+/// token validation, the stop conditions, then the single-token decode at
+/// `prompt_len + step` with the same hook context. Only the forward itself
+/// is shared, and batched decode is bit-identical per sequence to the single
+/// decode it replaces (`ember::llama::batch`).
+pub(crate) struct SteppedGeneration<'m> {
+    runner: ExperimentRunner,
+    model_context: ModelContext<'m>,
+    rng: SeededRng,
+    temperature: f32,
+    max_tokens: usize,
+    vocab_size: usize,
+    eos_ids: Vec<u32>,
+    all_tokens: Vec<u32>,
+    prompt_len: usize,
+    cache: ember::kv_cache::KVCache,
+    /// The latest `[vocab]` logits (after every hook).
+    logits: Vec<f32>,
+    generated: Vec<u32>,
+    decode_evaluations: usize,
+    step: usize,
+    /// The token the next decode forward feeds, when one is due.
+    pending: Option<[u32; 1]>,
+}
+
+impl<'m> SteppedGeneration<'m> {
+    /// Tokenize, prefill (through `role` when given) and choose the first
+    /// token. `runner` is the input's experiment runner.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start(
+        backend: &CpuBackend,
+        model: &ember::llama::Llama<CpuBackend>,
+        mut runner: ExperimentRunner,
+        model_context: ModelContext<'m>,
+        tokenizer: &ember::tokenizer::EmberTokenizer,
+        prompt: &str,
+        max_tokens: usize,
+        temperature: f32,
+        context_limit: usize,
+        rng_seed: Option<u64>,
+        role: Option<PrefixRole<'_>>,
+        cancel: Option<&CancelToken>,
+    ) -> anyhow::Result<Self> {
+        let rng = match rng_seed {
+            Some(seed) => SeededRng::Std(Box::new(rand::rngs::StdRng::seed_from_u64(seed))),
+            None => SeededRng::Thread(rand::thread_rng()),
+        };
+        let all_tokens = tokenizer
+            .encode(prompt)
+            .context("failed to tokenize prompt")?;
+        if all_tokens.is_empty() {
+            anyhow::bail!("cannot generate from a prompt that produces no token IDs");
+        }
+        let vocab_size = model.vocab_size(backend);
+        validate_token_ids_for_model(&all_tokens, vocab_size, "prompt")?;
+        log::info!("prompt has {} tokens", all_tokens.len());
+        let prompt_len = all_tokens.len();
+        let max_seq_len = ensure_sequence_fits(prompt_len, max_tokens, context_limit)?;
+        if cancelled_by(cancel) {
+            log::info!("generation cancelled before prefill");
+            return Err(anyhow::Error::new(Cancelled));
+        }
+        log::info!("prefilling KV cache for {} tokens", prompt_len);
+        let mut cache = model.create_cache(backend, max_seq_len);
+        let active = ActiveGeneration {
+            runner: &mut runner,
+            model_context,
+            tracing: TracingState::from(false),
+        };
+        let logits = match role {
+            None => {
+                let mut active = active;
+                stepped_prefill(&mut active, backend, model, &all_tokens, &mut cache)?
+            }
+            Some(role) => {
+                let mut execution = PrefixGeneration { active, role };
+                stepped_prefill(&mut execution, backend, model, &all_tokens, &mut cache)?
+            }
+        };
+        validate_last_logits(backend, &logits, vocab_size)?;
+        let logits = backend.data(&logits).to_vec();
+        let mut generation = Self {
+            runner,
+            model_context,
+            rng,
+            temperature,
+            max_tokens,
+            vocab_size,
+            eos_ids: tokenizer.eos_token_ids(),
+            all_tokens,
+            prompt_len,
+            cache,
+            logits,
+            generated: Vec::with_capacity(max_tokens),
+            decode_evaluations: 0,
+            step: 0,
+            pending: None,
+        };
+        generation.choose_next(tokenizer, cancel)?;
+        Ok(generation)
+    }
+
+    /// Whether a decode forward is due.
+    pub(crate) fn is_decoding(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The top of decode step `self.step`: pick the next token from the
+    /// current logits and decide whether it needs a decode forward.
+    fn choose_next(
+        &mut self,
+        tokenizer: &ember::tokenizer::EmberTokenizer,
+        cancel: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        self.pending = None;
+        if self.step >= self.max_tokens {
+            return Ok(());
+        }
+        if cancelled_by(cancel) {
+            log::info!(
+                "generation cancelled after {} generated tokens",
+                self.generated.len()
+            );
+            return Err(anyhow::Error::new(Cancelled));
+        }
+        let next_token = if self.temperature == 0.0 {
+            argmax_token(&self.logits)
+        } else {
+            sample_token(&self.logits, self.temperature, None, None, &mut self.rng)
+        };
+        log::debug!("step {}: predicted token {}", self.step, next_token);
+        let next_token = validate_generated_token(tokenizer, next_token, self.vocab_size)?;
+        if self.eos_ids.contains(&next_token) {
+            log::info!("eos token reached after {} generated tokens", self.step);
+            return Ok(());
+        }
+        self.all_tokens.push(next_token);
+        self.generated.push(next_token);
+        if has_next_decode_evaluation(self.step, self.max_tokens) {
+            self.pending = Some([next_token]);
+        }
+        Ok(())
+    }
+
+    /// Absolute position of the pending decode token.
+    fn decode_position(&self) -> usize {
+        self.prompt_len + self.step
+    }
+
+    /// The pending decode forward on its own (the sequential route).
+    fn decode_alone(
+        &mut self,
+        backend: &CpuBackend,
+        model: &ember::llama::Llama<CpuBackend>,
+    ) -> anyhow::Result<()> {
+        let token = self.pending.expect("a decode forward is due");
+        let start_pos = self.decode_position();
+        let mut active = ActiveGeneration {
+            runner: &mut self.runner,
+            model_context: self.model_context,
+            tracing: TracingState::from(false),
+        };
+        let logits = <ActiveGeneration<'_, '_> as GenerationExecution<
+            CpuBackend,
+            ember::llama::Llama<CpuBackend>,
+        >>::forward_last_logits(
+            &mut active,
+            backend,
+            model,
+            &token,
+            &mut self.cache,
+            start_pos,
+            ExecutionPhase::Decode,
+        )?;
+        validate_last_logits(backend, &logits, self.vocab_size)?;
+        self.logits.copy_from_slice(backend.data(&logits));
+        Ok(())
+    }
+
+    /// After the pending decode forward wrote `self.logits`: finish step
+    /// `self.step` and start the next one.
+    fn complete_step(
+        &mut self,
+        tokenizer: &ember::tokenizer::EmberTokenizer,
+        cancel: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        self.decode_evaluations += 1;
+        self.step += 1;
+        self.choose_next(tokenizer, cancel)
+    }
+
+    /// Decode the generated text and report completion to the runner.
+    pub(crate) fn finish(
+        mut self,
+        tokenizer: &ember::tokenizer::EmberTokenizer,
+    ) -> anyhow::Result<String> {
+        debug_assert!(self.pending.is_none(), "finish after the last decode step");
+        let output = tokenizer.decode(&self.generated)?;
+        if log::log_enabled!(log::Level::Debug) {
+            let decoded_prompt = tokenizer.decode(&self.all_tokens[..self.prompt_len])?;
+            log::debug!("prompt: {:?}", decoded_prompt);
+            log::debug!("generated: {:?}", output);
+        }
+        let mut active = ActiveGeneration {
+            runner: &mut self.runner,
+            model_context: self.model_context,
+            tracing: TracingState::from(false),
+        };
+        <ActiveGeneration<'_, '_> as GenerationExecution<
+            CpuBackend,
+            ember::llama::Llama<CpuBackend>,
+        >>::generation_complete(
+            &mut active,
+            self.prompt_len,
+            self.generated.len(),
+            self.decode_evaluations,
+            &self.all_tokens[..self.prompt_len],
+            &self.generated,
+        )?;
+        Ok(output)
+    }
+}
+
+/// Run every generation's remaining decode steps, sharing each decode
+/// forward among all generations still decoding: one
+/// `forward_decode_batch_with_experiments` call per step, each sequence with
+/// its own KV cache, position, hooks, sampler and stop condition. A
+/// generation that stops leaves the batch; a lone remaining generation
+/// decodes on the single-sequence route. Returns the largest batch.
+///
+/// Callers check [`batched_decode_ineligibility`] first.
+pub(crate) fn decode_together(
+    backend: &CpuBackend,
+    model: &ember::llama::Llama<CpuBackend>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    generations: &mut [&mut SteppedGeneration<'_>],
+    cancel: Option<&CancelToken>,
+) -> anyhow::Result<usize> {
+    let mut largest = 0;
+    loop {
+        let mut live: Vec<&mut SteppedGeneration<'_>> = generations
+            .iter_mut()
+            .filter(|generation| generation.is_decoding())
+            .map(|generation| &mut **generation)
+            .collect();
+        largest = largest.max(live.len());
+        match live.len() {
+            0 => return Ok(largest),
+            1 => live[0].decode_alone(backend, model)?,
+            _ => {
+                let mut sequences = Vec::with_capacity(live.len());
+                let mut experiments = Vec::with_capacity(live.len());
+                for generation in live.iter_mut() {
+                    let start_pos = generation.decode_position();
+                    let SteppedGeneration {
+                        runner,
+                        model_context,
+                        cache,
+                        logits,
+                        pending,
+                        ..
+                    } = &mut **generation;
+                    let token = pending.as_ref().expect("a decode forward is due");
+                    sequences.push(ember::llama::DecodeBatchSequence {
+                        token_id: token[0],
+                        cache,
+                        start_pos,
+                        logits: logits.as_mut_slice(),
+                    });
+                    experiments.push(ember::llama::DecodeBatchExperiment {
+                        runner,
+                        execution: ExecutionContext::new_with_token_ids(
+                            *model_context,
+                            ExecutionPhase::Decode,
+                            start_pos,
+                            token,
+                            TracingState::from(false),
+                        ),
+                    });
+                }
+                model.forward_decode_batch_with_experiments(
+                    backend,
+                    &mut sequences,
+                    &mut experiments,
+                )?;
+                drop((sequences, experiments));
+                for generation in &live {
+                    validate_last_logits_values(&generation.logits, generation.vocab_size)?;
+                }
+            }
+        }
+        for generation in live {
+            generation.complete_step(tokenizer, cancel)?;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn generate<B: Backend>(
     backend: &B,
@@ -1059,9 +1414,7 @@ where
     // off by default: its exact-scalar accumulation can differ from the
     // SIMD full-logits path's argmax on near-tie tokens, which would change
     // greedy output. Opt in with EMBER_FUSED_GREEDY=1.
-    let fused_greedy = std::env::var("EMBER_FUSED_GREEDY")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let fused_greedy = fused_greedy_requested();
 
     // v0.5: a fixed seed makes temperature sampling deterministic
     // (StdRng/ChaCha); None keeps the historical thread-local RNG.

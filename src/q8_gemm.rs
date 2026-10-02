@@ -89,6 +89,7 @@ fn pack_rows(x: &[u8], rows: usize, blocks: usize, packed: &mut Vec<Q8x4Block>) 
 struct OutPtr(*mut f32);
 // SAFETY: tasks write pairwise-disjoint (row, column) elements; see `run`.
 unsafe impl Send for OutPtr {}
+// SAFETY: as for `Send`; shared access never aliases a written element.
 unsafe impl Sync for OutPtr {}
 
 impl OutPtr {
@@ -191,6 +192,8 @@ mod neon {
     #[target_feature(enable = "neon,dotprod")]
     unsafe fn sdot_lane<const I: i32>(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
         let mut result = acc;
+        // SAFETY: the caller guarantees dotprod; indexed `sdot` works on the
+        // three registers only and touches no memory.
         unsafe {
             std::arch::asm!(
                 "sdot {acc:v}.4s, {a:v}.16b, {b:v}.4b[{i}]",
@@ -207,6 +210,8 @@ mod neon {
     #[inline]
     #[target_feature(enable = "fp16")]
     unsafe fn load_scale(ptr: *const u8) -> f32 {
+        // SAFETY: the caller guarantees two readable bytes at `ptr` (read
+        // unaligned) and fp16; `fcvt` only converts the loaded register.
         unsafe {
             let bits = u16::from_le(std::ptr::read_unaligned(ptr.cast::<u16>()));
             let value: f32;
@@ -226,6 +231,11 @@ mod neon {
         w: *const u8,
         row_bytes: usize,
     ) -> [[float32x4_t; G]; C] {
+        // SAFETY: the caller guarantees the CPU features, `G * blocks` packed
+        // blocks at `packed`, and `C` weight rows of `row_bytes` at `w`. Each
+        // packed block holds 128 quants (eight 16-byte loads) and four
+        // scales; each 34-byte weight block holds a two-byte scale followed
+        // by the 32 quants read at offsets 2 and 18.
         unsafe {
             let mut acc = [[vdupq_n_f32(0.0); G]; C];
             for b in 0..blocks {
@@ -277,6 +287,9 @@ mod neon {
         g0: usize,
         c0: usize,
     ) {
+        // SAFETY: `values` is a local four-element array; the caller
+        // guarantees `out` covers `rows * out_features` elements and owns
+        // columns `c0..c0 + C`, and only rows `< rows` are written.
         unsafe {
             for (c, column) in acc.iter().enumerate() {
                 for (g, lanes) in column.iter().enumerate() {
@@ -308,6 +321,10 @@ mod neon {
     ) {
         let row_bytes = blocks * Q8_0_TYPE_SIZE;
         let x = packed[g * blocks..].as_ptr();
+        // SAFETY: `task` passes `g + G <= g1` with `g1 * blocks` packed
+        // blocks available, and `c < c1 <= out_features` with `data` holding
+        // `out_features` rows, so every tile reads whole rows and `store`
+        // writes only this task's columns.
         unsafe {
             let mut c = c0;
             while c + TILE_COLS <= c1 {
@@ -344,6 +361,8 @@ mod neon {
         out: *mut f32,
     ) {
         debug_assert!(packed.len() >= g1 * blocks);
+        // SAFETY: the caller contract above is forwarded unchanged; the
+        // loops keep `g + G <= g1`.
         unsafe {
             let mut g = g0;
             while g + TILE_GROUPS <= g1 {

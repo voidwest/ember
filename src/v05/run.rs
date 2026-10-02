@@ -46,6 +46,10 @@ pub struct RuntimeMetrics {
     /// Which shared-prefix path produced the run (`crate::v05::prefix`);
     /// omitted for a standalone run.
     pub prefix_reuse: Option<serde_json::Value>,
+    /// Whether the run's decode steps were batched with other runs of a
+    /// shared pass, and the batch size (`decode_batch`); omitted for a
+    /// standalone run.
+    pub decode_batch: Option<serde_json::Value>,
 }
 
 /// Everything the assembler needs.
@@ -278,8 +282,6 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
         warnings: materials.warnings.clone(),
         complete: true,
     };
-    let semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
-
     // runtime.json (excluded from hashes).
     let mut runtime_json = serde_json::json!({
         "timestamp": format!("epoch-seconds-{}", crate::extraction::unix_timestamp()),
@@ -315,7 +317,12 @@ pub fn assemble_bundle(materials: &BundleMaterials) -> Result<AssembledBundle, S
     ) {
         object.insert("prefix_reuse".into(), prefix.clone());
     }
-    let _ = semantic_hash; // stored in manifest.json by the writer
+    if let (Some(batch), Some(object)) = (
+        materials.runtime.decode_batch.as_ref(),
+        runtime_json.as_object_mut(),
+    ) {
+        object.insert("decode_batch".into(), batch.clone());
+    }
 
     Ok(AssembledBundle {
         files,
@@ -723,6 +730,7 @@ directory = "runs/bundle-test"
                 peak_rss_kb: Some(42_000),
                 threads: 1,
                 prefix_reuse: None,
+                decode_batch: None,
             },
             artifacts: BTreeMap::new(),
         }

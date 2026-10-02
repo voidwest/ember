@@ -9,6 +9,8 @@ use std::arch::aarch64::*;
 #[inline]
 #[target_feature(enable = "neon,dotprod")]
 unsafe fn dot_acc(mut acc: int32x4_t, x: int8x16_t, y: int8x16_t) -> int32x4_t {
+    // SAFETY: the caller guarantees dotprod; `sdot` works on the three
+    // registers only and touches no memory.
     unsafe {
         std::arch::asm!("sdot {acc:v}.4s, {x:v}.16b, {y:v}.16b",
             acc = inout(vreg) acc, x = in(vreg) x, y = in(vreg) y,
@@ -20,6 +22,7 @@ unsafe fn dot_acc(mut acc: int32x4_t, x: int8x16_t, y: int8x16_t) -> int32x4_t {
 #[inline]
 #[target_feature(enable = "neon,dotprod")]
 unsafe fn dot(x: int8x16_t, y: int8x16_t) -> int32x4_t {
+    // SAFETY: same CPU-feature contract as `dot_acc`; no memory is accessed.
     unsafe { dot_acc(vdupq_n_s32(0), x, y) }
 }
 
@@ -34,6 +37,10 @@ pub(super) unsafe fn q4<const N: usize>(
     let row = &data[column * blocks * Q4_K_BLOCK_BYTES..][..blocks * Q4_K_BLOCK_BYTES];
     assert_eq!(N * blocks, input.len());
     let mut sum = [0.0f32; N];
+    // SAFETY: the caller guarantees dotprod. Each `block` is a whole Q4_K
+    // super-block, so the 16-byte weight loads at `16 + g * 32 + j` end at or
+    // before byte 144; each activation load at `g * 64 + 32 + j` ends at or
+    // before quant 256 of a bounds-checked `Q8KBlock`.
     unsafe {
         for (b, block) in row.chunks_exact(Q4_K_BLOCK_BYTES).enumerate() {
             let d = half::f16::from_bits(u16::from_le_bytes([block[0], block[1]])).to_f32();
@@ -85,6 +92,11 @@ pub(super) unsafe fn q6<const N: usize>(
     let row = &data[column * blocks * Q6_K_BLOCK_BYTES..][..blocks * Q6_K_BLOCK_BYTES];
     assert_eq!(N * blocks, input.len());
     let mut sum = [0.0f32; N];
+    // SAFETY: the caller guarantees dotprod. Each `block` is a whole Q6_K
+    // super-block, so the low-bit loads end at or before byte 128 and the
+    // high-bit loads at or before byte 192; each activation load at
+    // `half * 128 + segment * 32 + j` ends at or before quant 256 of a
+    // bounds-checked `Q8KBlock`.
     unsafe {
         for (b, block) in row.chunks_exact(Q6_K_BLOCK_BYTES).enumerate() {
             let d = half::f16::from_bits(u16::from_le_bytes([block[208], block[209]])).to_f32();

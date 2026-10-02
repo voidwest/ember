@@ -132,7 +132,11 @@ jobs:
         run: |
           python -m compileall -q python probes stimuli scripts tests
           python probes/run_probe_matrix.py --model smoke:dummy.gguf --generate-tokens 1 --dry-run
-          bash -n bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh scripts/conference_demo.sh scripts/validate_k_parity.sh tools/crossover_sweep.sh tools/verify_k_quant_llamacpp.sh
+          # One script per `bash -n`: given several paths it parses only the
+          # first and passes the rest to it as arguments.
+          for script in bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh scripts/conference_demo.sh scripts/validate_k_parity.sh tools/crossover_sweep.sh tools/verify_k_quant_llamacpp.sh scripts/ci_local.sh .githooks/pre-push; do
+            bash -n "$script"
+          done
 
       - name: python bindings
         # Optional PyO3 layer over the same core. The binding tests
@@ -245,7 +249,23 @@ jobs:
     # capture, verify, intervene, restore bit-exactly, reproduce. Every other
     # job runs without a model, so without this nothing in CI exercises a
     # real forward pass on the path the project calls golden.
-    runs-on: ubuntu-latest
+    #
+    # It runs on both architectures: the unit tests cover the NEON kernels
+    # one at a time, but only a model run proves that the ARM dispatch path
+    # captures, restores and reproduces bit-exactly end to end. macOS arm64
+    # is the primary development host; Linux arm64 is the server target.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            label: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            label: arm64-linux
+          - runner: macos-latest
+            label: arm64-macos
+    name: golden-path (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -259,8 +279,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-golden-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-golden-cargo-
+          key: ${{ runner.os }}-${{ runner.arch }}-golden-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-golden-cargo-
 
       - name: cache the pinned model
         # Keyed by the model's pinned SHA-256; download_models.sh re-checks it.
@@ -282,6 +302,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: golden-path-evidence
+          name: golden-path-evidence-${{ matrix.label }}
           path: ${{ runner.temp }}/golden-path
           if-no-files-found: ignore

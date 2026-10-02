@@ -70,16 +70,26 @@ signed evidence envelope over `manifest.json`
 
 ## What is deterministic vs runtime
 
-Deterministic (in the semantic hash): schema versions, experiment name
-and semantic configuration, model/tokenizer SHA-256, architecture, layer
-count, execution mode, plan hash, hook sites, capture and intervention
-definitions, resolved token selectors and selected token IDs, generated
-token IDs, deterministic output text, payload checksums, deterministic
-warnings.
+Deterministic (in the semantic hash): schema versions, Ember version and
+the commit the binary was built from, experiment name and semantic
+configuration, model/tokenizer SHA-256, architecture, layer count, execution
+mode, plan hash, hook sites, capture and intervention definitions, resolved
+token selectors and selected token IDs, generated token IDs, deterministic
+output text, payload checksums, deterministic warnings.
 
-Runtime (in `runtime.json` only): timestamp, hostname, OS, CPU features,
-thread count, wall-clock timing, throughput, peak RSS, compiler version,
-process ID, model/tokenizer local paths, scratch bytes.
+The execution plan (`execution-plan.json`, a hashed payload, and its plan
+hash) records how the run executed on this host: the selected kernel per
+tensor, the CPU features it detected and requires, the worker thread count
+and strategy, and the compiler that built the binary. The semantic hash
+therefore identifies a run *for a given binary, host kernel tier and thread
+count*. Two runs on the same binary, CPU class and thread count produce the
+same semantic hash wherever they are started from. Across binaries, hosts or
+thread counts, compare outcomes instead (see
+[reproducibility](reproducibility.md#cross-machine-differences-the-host-profile)).
+
+Runtime (in `runtime.json` only): timestamp, hostname, OS, the full host
+profile, wall-clock timing, throughput, peak RSS, process ID,
+model/tokenizer local paths, scratch bytes.
 
 `resolved-experiment.json` carries the output directory (a placement
 decision) and is therefore excluded from the semantic payload inventory;

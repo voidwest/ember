@@ -418,6 +418,76 @@ impl PackedCache {
         }
     }
 
+    /// Copy every entry of the current cache file that this run did not
+    /// re-record into the file about to be published.
+    ///
+    /// The new file replaces the old one wholesale, and a run records only
+    /// what it had to pack. Without this, a run that packs a subset (one
+    /// rejected entry, or a configuration that packs fewer tensors) would
+    /// discard every entry it did not touch and force the next full run to
+    /// repack them all. An entry whose recorded range lies outside the old
+    /// file is dropped (the next run repacks it); a write error is returned.
+    fn carry_over_existing_entries(&self, state: &mut WriterState) -> std::io::Result<()> {
+        let missing: Vec<&HeaderEntry> = self
+            .entries
+            .iter()
+            .filter(|old| {
+                !state
+                    .entries
+                    .iter()
+                    .any(|new| new.name == old.name && new.kind == old.kind)
+            })
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let Some(mmap) = self.mapped() else {
+            return Ok(());
+        };
+        for old in missing {
+            let sections = [(old.offset, old.len), (old.aux_offset, old.aux_len)];
+            let mut bytes: [&[u8]; 2] = [&[], &[]];
+            let mut readable = true;
+            for (index, (offset, len)) in sections.into_iter().enumerate() {
+                if len == 0 {
+                    continue;
+                }
+                match Self::range(old, offset, len).and_then(|range| mmap.get(range)) {
+                    Some(section) => bytes[index] = section,
+                    None => readable = false,
+                }
+            }
+            if !readable {
+                log::debug!(
+                    "packed cache entry '{}' not carried over: out of range",
+                    old.name
+                );
+                continue;
+            }
+            let mut ranges = [(0u64, 0u64); 2];
+            for (index, section) in bytes.into_iter().enumerate() {
+                if section.is_empty() {
+                    continue;
+                }
+                if let Some(hasher) = state.hasher.as_mut() {
+                    hasher.update(section);
+                }
+                let offset = state.payload_written;
+                state.file.write_all(section)?;
+                state.payload_written += section.len() as u64;
+                ranges[index] = (offset, section.len() as u64);
+            }
+            state.entries.push(HeaderEntry {
+                offset: ranges[0].0,
+                len: ranges[0].1,
+                aux_offset: ranges[1].0,
+                aux_len: ranges[1].1,
+                ..old.clone()
+            });
+        }
+        Ok(())
+    }
+
     /// Publish the cache file (no-op when nothing was recorded) and prune the
     /// cache directory to its budget.
     pub fn finish_write(&self) {
@@ -425,10 +495,17 @@ impl PackedCache {
             Ok(guard) => guard,
             Err(_) => return,
         };
-        let Some(state) = guard.take() else {
+        let Some(mut state) = guard.take() else {
             return;
         };
         if state.entries.is_empty() {
+            let _ = std::fs::remove_file(&state.temp_path);
+            return;
+        }
+        if let Err(error) = self.carry_over_existing_entries(&mut state) {
+            // A failed copy leaves partial bytes in the payload; keep the
+            // existing file rather than publish a damaged one.
+            log::warn!("packed cache rewrite abandoned ({error}); keeping the existing file");
             let _ = std::fs::remove_file(&state.temp_path);
             return;
         }
@@ -1021,6 +1098,49 @@ mod tests {
         assert!(cache.get_interleaved("output.weight", 2048, 2048).is_none());
         assert!(cache.get_interleaved("output.weight", 4096, 1024).is_none());
         assert!(!cache.has_vnni("output.weight", 4096, 2048));
+    }
+
+    /// A run that packs only some tensors must not discard the entries it
+    /// did not touch when it republishes the file.
+    #[test]
+    fn partial_rewrite_keeps_untouched_entries() {
+        if !crate::simd::interleaved_q8_0_supported() {
+            return;
+        }
+        let (loader, _) = loader_fixture();
+        let (dir, model) = temp_cache_path("carry-over");
+        let pack = |out: usize, input: usize| {
+            let source = QuantizedWeight::try_new(q8_bytes(out, input), vec![out, input]).unwrap();
+            QuantizedWeightInterleaved::from_quantized(&source)
+        };
+        let head = pack(4096, 2048);
+        let gate = pack(512, 256);
+        let cache = open_cache(&model, &loader, &dir);
+        cache.record_interleaved("output.weight", &head);
+        cache.record_interleaved("blk.0.ffn_gate.weight", &gate);
+        cache.finish_write();
+
+        // A later run records only one new tensor and one it re-packed.
+        let cache = open_cache(&model, &loader, &dir);
+        let down = pack(256, 512);
+        let regated = pack(512, 256);
+        cache.record_interleaved("blk.0.ffn_down.weight", &down);
+        cache.record_interleaved("blk.0.ffn_gate.weight", &regated);
+        cache.finish_write();
+
+        let cache = open_cache(&model, &loader, &dir);
+        for (name, expected, out, input) in [
+            ("output.weight", &head, 4096, 2048),
+            ("blk.0.ffn_gate.weight", &regated, 512, 256),
+            ("blk.0.ffn_down.weight", &down, 256, 512),
+        ] {
+            let loaded = cache
+                .get_interleaved(name, out, input)
+                .unwrap_or_else(|| panic!("{name} survives the rewrite"));
+            assert_eq!(loaded.quants(), expected.quants(), "{name} quants");
+            assert_eq!(loaded.scales(), expected.scales(), "{name} scales");
+        }
+        assert_eq!(cache.entries.len(), 3, "no duplicate entries");
     }
 
     #[test]

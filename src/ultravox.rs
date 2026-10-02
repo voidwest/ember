@@ -178,6 +178,7 @@ impl UltravoxAssembler {
         // token embeddings through the same row-copy ops the token path uses
         let embed_dim = match embed_table {
             LlamaEmbedding::F32(t) => t.shape()[1],
+            LlamaEmbedding::Half(w) => w.row_len(),
             LlamaEmbedding::Q8_0(w) => w.in_features(),
             LlamaEmbedding::KQuant(w) => w.in_features(),
         };
@@ -186,6 +187,9 @@ impl UltravoxAssembler {
             match embed_table {
                 LlamaEmbedding::F32(table) => {
                     backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
+                }
+                LlamaEmbedding::Half(table) => {
+                    backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
                 }
                 LlamaEmbedding::Q8_0(table) => {
                     backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;

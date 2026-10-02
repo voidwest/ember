@@ -19,6 +19,18 @@ pub struct EmberTokenizer {
 
 impl EmberTokenizer {
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        Self::from_bytes(Self::read_file(path)?)
+    }
+
+    /// Read a tokenizer file with every check [`Self::from_file`] applies
+    /// (no symlinks, a regular file, at most [`MAX_TOKENIZER_BYTES`], not
+    /// replaced or resized while read) without parsing it.
+    ///
+    /// `from_file(path)` is `from_bytes(read_file(path)?)`. A caller that
+    /// must check the bytes first -- a pinned SHA-256 -- reads them here,
+    /// checks them, and passes the same buffer to [`Self::from_bytes`], so
+    /// the parser only ever sees the bytes that were checked.
+    pub fn read_file<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>> {
         use std::io::Read;
 
         let path = path.as_ref();
@@ -112,7 +124,7 @@ impl EmberTokenizer {
                 path
             );
         }
-        Self::from_bytes(bytes)
+        Ok(bytes)
     }
 
     /// Load a tokenizer directly from a serialized `tokenizer.json` payload.

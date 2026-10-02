@@ -693,6 +693,14 @@ fn planned_linear_into(
             }
             Ok(())
         }
+        WeightKindView::Half(w) => {
+            debug_assert_eq!(src.len(), w.in_features());
+            debug_assert_eq!(dst.len(), w.out_features());
+            // Same per-output sequential sum as the F32 arm above, widening
+            // the weight as it goes (bit-identical; see half_weight).
+            crate::half_weight::half_matvec_sequential_into(src, w, dst, accumulate, parallel);
+            Ok(())
+        }
         WeightKindView::Q8_0(w) => {
             if accumulate {
                 return Err(CpuError::Kernel(
@@ -718,7 +726,8 @@ fn planned_linear_into(
 /// the Gate A equivalence check against the plan's resolved kernel.
 fn planned_kernel_for(linear: &Linear<CpuBackend>) -> KernelId {
     match linear.weight_kind() {
-        WeightKindView::F32(_) => KernelId::EagerF32,
+        // Half weights compute the eager-f32 kernel's exact arithmetic.
+        WeightKindView::F32(_) | WeightKindView::Half(_) => KernelId::EagerF32,
         WeightKindView::Q8_0(_) => KernelId::Q8Packed,
         WeightKindView::KQuant(w) => {
             let dtype = w.dtype().name();
@@ -729,7 +738,7 @@ fn planned_kernel_for(linear: &Linear<CpuBackend>) -> KernelId {
 
 fn planned_embedding_kernel(embedding: &LlamaEmbedding<CpuBackend>) -> KernelId {
     match embedding {
-        LlamaEmbedding::F32(_) => KernelId::EmbeddingF32Row,
+        LlamaEmbedding::F32(_) | LlamaEmbedding::Half(_) => KernelId::EmbeddingF32Row,
         LlamaEmbedding::Q8_0(_) => KernelId::EmbeddingQ8Row,
         LlamaEmbedding::KQuant(weight) => {
             resolve_embedding_kernel(weight.dtype().name(), k_execution_name(weight.execution()))
@@ -762,6 +771,11 @@ fn planned_scheduler(
         WeightKindView::KQuant(weight)
             if crate::k_quant_matmul::scheduler_name(1, weight, parallel_requested)
                 == "column-parallel-rayon" =>
+        {
+            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
+        }
+        WeightKindView::Half(weight)
+            if crate::half_weight::half_matvec_runs_parallel(weight, parallel_requested) =>
         {
             crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
         }
@@ -804,6 +818,17 @@ fn embed_row_into(
                 )));
             }
             dst.copy_from_slice(&table.data()[row * cols..(row + 1) * cols]);
+            Ok(())
+        }
+        LlamaEmbedding::Half(table) => {
+            let row = token as usize;
+            if row >= table.rows() {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "embedding row {row} out of bounds for {} rows",
+                    table.rows()
+                )));
+            }
+            table.dequantize_row(row, dst);
             Ok(())
         }
         LlamaEmbedding::Q8_0(table) => {
@@ -910,7 +935,8 @@ fn k_quantization(dtype: crate::quant_k::KQuantDtype) -> &'static str {
 
 fn linear_quantization(linear: &Linear<CpuBackend>) -> &'static str {
     match linear.weight_kind() {
-        WeightKindView::F32(_) => "F32",
+        // Half weights execute the eager-f32 kernel, as the plan records.
+        WeightKindView::F32(_) | WeightKindView::Half(_) => "F32",
         WeightKindView::Q8_0(_) => "Q8_0",
         WeightKindView::KQuant(weight) => k_quantization(weight.dtype()),
     }
@@ -918,7 +944,7 @@ fn linear_quantization(linear: &Linear<CpuBackend>) -> &'static str {
 
 fn embedding_quantization(embedding: &LlamaEmbedding<CpuBackend>) -> &'static str {
     match embedding {
-        LlamaEmbedding::F32(_) => "F32",
+        LlamaEmbedding::F32(_) | LlamaEmbedding::Half(_) => "F32",
         LlamaEmbedding::Q8_0(_) => "Q8_0",
         LlamaEmbedding::KQuant(weight) => k_quantization(weight.dtype()),
     }

@@ -149,7 +149,9 @@ def check_html(errors: list[str]) -> None:
         )
         marker_presence = [marker in text for marker in managed_markers]
         managed = all(marker_presence)
-        if any(marker_presence) and not managed:
+        # Custom-chrome pages (the homepage) may share only the generated nav.
+        nav_only = marker_presence == [False, False, True, False]
+        if any(marker_presence) and not managed and not nav_only:
             missing = [
                 marker
                 for marker, present in zip(managed_markers, marker_presence, strict=True)

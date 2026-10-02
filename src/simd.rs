@@ -99,11 +99,11 @@ pub fn dequantize_q8_0_row(
         "q8_0 destination too short: need {required_values} floats, got {}",
         dst.len()
     );
-    // Safety: the arch-specific kernels are only called when the
-    // corresponding CPU feature is detected at runtime.
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
+            // SAFETY: features checked; the asserts above bound both the
+            // source block range and the destination.
             unsafe {
                 return x86_64::dequantize_row_avx2(data, block_start, blocks_per_row, dst);
             }
@@ -112,6 +112,8 @@ pub fn dequantize_q8_0_row(
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; the asserts above bound both the
+            // source block range and the destination.
             unsafe {
                 return aarch64::dequantize_row_neon(data, block_start, blocks_per_row, dst);
             }
@@ -139,6 +141,7 @@ pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::rms_norm_into_avx2(x, weight, eps, dst);
             }
@@ -185,6 +188,7 @@ pub fn silu_mul_into(gate: &[f32], up: &[f32], dst: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::silu_mul_into_avx2(gate, up, dst);
             }
@@ -205,6 +209,7 @@ pub fn silu_into(src: &[f32], dst: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::silu_into_avx2(src, dst);
             }
@@ -250,6 +255,7 @@ pub fn rms_norm_residual_into(
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::rms_norm_residual_into_avx2(x, weight, eps, residual, dst);
             }
@@ -388,6 +394,13 @@ pub(crate) fn fast_exp_scalar(src: &[f32], dst: &mut [f32]) {
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64 {
+    //! # Safety blanket
+    //! Every `unsafe fn` in this module requires the caller to have
+    //! runtime-checked the `#[target_feature]` set on the function, and to
+    //! pass slices with the length relationships the function's dispatcher
+    //! asserts (the `SAFETY` comment in each body names that dispatcher).
+    //! Tests that call a kernel directly build buffers of exactly those
+    //! sizes behind the same feature check.
     use super::*;
     use std::arch::x86_64::*;
 
@@ -407,6 +420,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn rms_norm_into_avx2(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `rms_norm_into`
+        // asserts `weight` and `dst` match `x.len()`, and every 8-lane
+        // load/store is guarded by `i + 8 <= n`.
         unsafe {
             let n = x.len();
             // 1. sum of squares
@@ -462,6 +478,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn silu_mul_into_avx2(gate: &[f32], up: &[f32], dst: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `silu_mul_into`
+        // asserts all three lengths equal, and every 8-lane load/store is
+        // guarded by `i + 8 <= n`.
         unsafe {
             let n = gate.len();
             let one = _mm256_set1_ps(1.0);
@@ -493,6 +512,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn silu_into_avx2(src: &[f32], dst: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `silu_into` asserts
+        // equal lengths, and every 8-lane load/store is guarded by `i + 8 <=
+        // n`.
         unsafe {
             let n = src.len();
             let one = _mm256_set1_ps(1.0);
@@ -526,6 +548,9 @@ mod x86_64 {
         residual: &[f32],
         dst: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `rms_norm_residual_into` asserts all four lengths equal, and every
+        // 8-lane load/store is guarded by `i + 8 <= n`.
         unsafe {
             let n = x.len();
             // sum of squares
@@ -590,6 +615,11 @@ mod x86_64 {
         blocks_per_row: usize,
         dst: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `dequantize_q8_0_row` asserts that blocks `block_start..block_start
+        // + blocks_per_row` lie inside `data` and that `dst` holds 32 values
+        // per block, which bounds the 34-byte block reads and the four 8-lane
+        // stores.
         unsafe {
             for b in 0..blocks_per_row {
                 let byte_offset = (block_start + b) * Q8_0_TYPE_SIZE;
@@ -647,6 +677,11 @@ mod x86_64 {
         blocks_per_row: usize,
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `matmul_q8_0_decode_dispatch_chunk` asserts that `x` holds
+        // `blocks_per_row` blocks and `data` holds `blocks_per_row` blocks for
+        // each of the `out.len()` rows, so every 34-byte block read is in
+        // bounds.
         unsafe {
             let ones = _mm256_set1_epi16(1);
             for (row, out_val) in out.iter_mut().enumerate() {
@@ -698,6 +733,11 @@ mod x86_64 {
         blocks_per_row: usize,
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `matmul_q8_0_decode_dispatch_chunk` asserts that `x` holds
+        // `blocks_per_row` blocks and `data` holds `blocks_per_row` blocks for
+        // each of the `out.len()` rows, so every 34-byte block read (and the
+        // prefetch address) is in bounds.
         unsafe {
             let grouped_rows = out.len() / 8 * 8;
             let grouped_blocks = blocks_per_row / 4 * 4;
@@ -834,6 +874,10 @@ mod x86_64 {
         out: &mut [f32],
         global_row_offset: usize,
     ) {
+        // SAFETY: the caller guarantees the CPU features; the dispatcher
+        // asserts `x` is one encoded row, and `QuantizedWeightVnni` validates
+        // that `data` holds one complete record per (tile, block) addressed
+        // here, including the padded last tile.
         unsafe {
             use crate::quant::{VNNI_BLOCK_RECORD_SIZE, VNNI_OUT_TILE};
 
@@ -923,6 +967,11 @@ mod x86_64 {
         out: &mut [f32],
         global_row_offset: usize,
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `matmul_q8_0_decode_interleaved` asserts `x` is one encoded row and
+        // that the row range lies inside the weight, whose validated
+        // `quants`/`scales` lengths cover every stripe (128 quant and 8 scale
+        // bytes per block) read below.
         unsafe {
             use crate::quant::INTERLEAVE;
             let grouped_rows = out_features / INTERLEAVE * INTERLEAVE;
@@ -1042,6 +1091,10 @@ mod x86_64 {
         blocks_per_row: usize,
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `matmul_q8_0_batch_dispatch_tile` asserts that `x` holds `rows`
+        // encoded rows and `data` holds `out_features` rows of
+        // `blocks_per_row` blocks, so every 34-byte block read is in bounds.
         unsafe {
             debug_assert!((1..=4).contains(&rows));
             let encoded_row_len = blocks_per_row * Q8_0_TYPE_SIZE;
@@ -1102,6 +1155,10 @@ mod x86_64 {
         blocks_per_row: usize,
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `matmul_q8_0_batch_dispatch_tile` asserts that `x` holds `rows`
+        // encoded rows and `data` holds `out_features` rows of
+        // `blocks_per_row` blocks, so every 34-byte block read is in bounds.
         unsafe {
             debug_assert!((1..=4).contains(&rows));
             let encoded_row_len = blocks_per_row * Q8_0_TYPE_SIZE;
@@ -1218,6 +1275,8 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn sum_squares_avx2(x: &[f32]) -> f32 {
+        // SAFETY: the caller guarantees the CPU features; every 8-lane load is
+        // guarded by `i + 8 <= n`.
         unsafe {
             let n = x.len();
             let mut acc0 = _mm256_setzero_ps();
@@ -1265,6 +1324,9 @@ mod x86_64 {
         weight: &[f32],
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features; `scale_weight_mul`
+        // asserts all three lengths equal, and every 8-lane load/store is
+        // guarded by `i + 8 <= n`.
         unsafe {
             let n = x.len();
             let s = _mm256_set1_ps(scale);
@@ -1291,6 +1353,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn elemul_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `elemul` asserts all
+        // three lengths equal, and every 8-lane load/store is guarded by `i +
+        // 8 <= n`.
         unsafe {
             let n = a.len();
             let mut i = 0;
@@ -1352,6 +1417,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn dot_product_avx2(a: &[f32], b: &[f32]) -> f32 {
+        // SAFETY: the caller guarantees the CPU features; `dot_product`
+        // asserts equal lengths, and every 8-lane load is guarded by `i + 8 <=
+        // n`.
         unsafe {
             let n = a.len();
             let mut acc0 = _mm256_setzero_ps();
@@ -1397,6 +1465,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma,f16c`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma,f16c")]
     pub(crate) unsafe fn dot_product_f16_avx2(a: &[f32], b: &[f16]) -> f32 {
+        // SAFETY: the caller guarantees the CPU features; `dot_product_f16`
+        // asserts equal lengths, and every load of eight `f32` or eight `f16`
+        // values is guarded by `i + 8 <= n`.
         unsafe {
             let n = a.len();
             let mut acc0 = _mm256_setzero_ps();
@@ -1442,6 +1513,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn add_assign_avx2(dst: &mut [f32], src: &[f32]) {
+        // SAFETY: the caller guarantees the CPU features; `add_assign` asserts
+        // equal lengths, and every 8-lane load/store is guarded by `i + 8 <=
+        // n`.
         unsafe {
             let n = dst.len();
             let mut i = 0;
@@ -1465,6 +1539,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn add_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `add` asserts all
+        // three lengths equal, and every 8-lane load/store is guarded by `i +
+        // 8 <= n`.
         unsafe {
             let n = a.len();
             let mut i = 0;
@@ -1488,6 +1565,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn weighted_add_avx2(acc: &mut [f32], src: &[f32], weight: f32) {
+        // SAFETY: the caller guarantees the CPU features; `weighted_add`
+        // asserts equal lengths, and every 8-lane load/store is guarded by `i
+        // + 8 <= n`.
         unsafe {
             let n = acc.len();
             let w = _mm256_set1_ps(weight);
@@ -1513,6 +1593,9 @@ mod x86_64 {
     /// Caller must ensure the required x86 feature set (`avx2,fma,f16c`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma,f16c")]
     pub(crate) unsafe fn weighted_add_f16_avx2(acc: &mut [f32], src: &[f16], weight: f32) {
+        // SAFETY: the caller guarantees the CPU features; `weighted_add_f16`
+        // asserts equal lengths, and every load of eight `f32` or eight `f16`
+        // values is guarded by `i + 8 <= n`.
         unsafe {
             let n = acc.len();
             let w = _mm256_set1_ps(weight);
@@ -1544,6 +1627,10 @@ mod x86_64 {
         cos: &[f32],
         sin: &[f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features; `rope_split_half`
+        // asserts `x.len() == n_heads * head_dim` and `cos`/`sin` hold
+        // `head_dim / 2` values; `d + 8 <= half` keeps both half-row loads
+        // inside head `h` and the table loads inside `cos`/`sin`.
         unsafe {
             let half = head_dim / 2;
             for h in 0..n_heads {
@@ -1599,6 +1686,10 @@ mod x86_64 {
         cos: &[f32],
         sin: &[f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features; `rope_adjacent_pair`
+        // asserts `x.len() == n_heads * head_dim` and `cos`/`sin` hold
+        // `head_dim / 2` values; `d + 4 <= half` keeps the 8-value load inside
+        // head `h` and the 4-value table loads inside `cos`/`sin`.
         unsafe {
             let half = head_dim / 2;
             for h in 0..n_heads {
@@ -1638,6 +1729,9 @@ mod x86_64 {
     /// after being written.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn fast_exp_raw(src: *const f32, dst: *mut f32, n: usize) {
+        // SAFETY: the caller guarantees the CPU features and `n`
+        // readable/writable values at `src`/`dst` (see the contract above);
+        // every access is at an index below `n`.
         unsafe {
             // f32-rounded constants (clippy's "approximate" lints are the
             // point here: these must be the f32 values the reference expf
@@ -1710,6 +1804,13 @@ mod x86_64 {
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64 {
+    //! # Safety blanket
+    //! Every `unsafe fn` in this module requires the caller to have
+    //! runtime-checked the `#[target_feature]` set on the function, and to
+    //! pass slices with the length relationships the function's dispatcher
+    //! asserts (the `SAFETY` comment in each body names that dispatcher).
+    //! Tests that call a kernel directly build buffers of exactly those
+    //! sizes behind the same feature check.
     use super::*;
     use std::arch::aarch64::*;
 
@@ -1719,6 +1820,8 @@ mod aarch64 {
     #[target_feature(enable = "neon,dotprod")]
     unsafe fn signed_dot(acc: int32x4_t, x: int8x16_t, w: int8x16_t) -> int32x4_t {
         let mut result = acc;
+        // SAFETY: the caller guarantees dotprod; `sdot` works on the three
+        // registers only and touches no memory.
         unsafe {
             std::arch::asm!(
                 "sdot {acc:v}.4s, {x:v}.16b, {w:v}.16b",
@@ -1734,6 +1837,10 @@ mod aarch64 {
     #[inline]
     #[target_feature(enable = "neon,dotprod,fp16")]
     unsafe fn q8_tile<const N: usize>(x: &[u8], data: &[u8], blocks: usize, dst: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features, `blocks` encoded
+        // blocks in `x` and `N` rows of `blocks` blocks in `data` (asserted by
+        // `matmul_q8_0_decode_dotprod`); each 34-byte block holds the two-byte
+        // scale and the 32 quants read at offsets 2 and 18.
         unsafe {
             let mut sums = [0.0f32; N];
             for b in 0..blocks {
@@ -1759,6 +1866,8 @@ mod aarch64 {
     #[inline]
     #[target_feature(enable = "fp16")]
     unsafe fn load_scale(ptr: *const u8) -> f32 {
+        // SAFETY: the caller guarantees two readable bytes at `ptr` (read
+        // unaligned) and fp16; `fcvt` only converts the loaded register.
         unsafe {
             let bits = u16::from_le(std::ptr::read_unaligned(ptr.cast::<u16>()));
             let value: f32;
@@ -1786,6 +1895,9 @@ mod aarch64 {
     ) {
         assert!(x.len() >= blocks * Q8_0_TYPE_SIZE);
         assert!(data.len() >= out.len() * blocks * Q8_0_TYPE_SIZE);
+        // SAFETY: the caller guarantees the CPU features; the asserts above
+        // give `x` one encoded row and `data` a row for every output, and each
+        // tile receives the data suffix starting at its first row.
         unsafe {
             let full_rows = out.len() / 2 * 2;
             for (tile, dst) in out[..full_rows].chunks_exact_mut(2).enumerate() {
@@ -1864,6 +1976,11 @@ mod aarch64 {
         out: *mut f32,
         out_stride: usize,
     ) {
+        // SAFETY: the caller guarantees the CPU features, `C` activation
+        // rows of `row_bytes` at `x` (each 34-byte block read at offsets 0,
+        // 2 and 18), a `layout` addressing every block of weight rows
+        // `row..row + R`, and `out` valid for `out[c * out_stride + row + r]`
+        // for every `(r, c)` written below.
         unsafe {
             let mut sums = [[0.0f32; C]; R];
             for b in 0..row_bytes / Q8_0_TYPE_SIZE {
@@ -1911,6 +2028,8 @@ mod aarch64 {
         out: *mut f32,
         out_stride: usize,
     ) {
+        // SAFETY: as for `q8_columns_tile` with four activation rows at `x`;
+        // `scales` and `lanes` are local four-element arrays.
         unsafe {
             let mut sums = [vdupq_n_f32(0.0); R];
             for b in 0..row_bytes / Q8_0_TYPE_SIZE {
@@ -1970,6 +2089,9 @@ mod aarch64 {
         out_stride: usize,
     ) {
         assert!(x.len() >= columns * row_bytes);
+        // SAFETY: the caller contract above is forwarded; the assert covers
+        // the activation rows, and every tile stays within `row_end` rows and
+        // `columns` columns.
         unsafe {
             // Wider batches are compute-bound, so taller row tiles amortize
             // the activation loads; single-column work keeps two streams.
@@ -2030,6 +2152,9 @@ mod aarch64 {
         out: &mut [f32],
         start: usize,
     ) {
+        // SAFETY: the caller guarantees the CPU features and that rows
+        // `start..start + out.len()` lie inside the weight; a four-row tile is
+        // only issued when its first row is stripe-aligned.
         unsafe {
             let mut done = 0;
             while done < out.len() && !(start + done).is_multiple_of(4) {
@@ -2055,6 +2180,10 @@ mod aarch64 {
         start: usize,
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features, one encoded row in
+        // `x`, and rows `start..start + N` inside one stripe of the weight.
+        // The validated `quants`/`scales` lengths give every stripe 128 quant
+        // and 8 scale bytes per block, which covers lanes `lane..lane + N`.
         unsafe {
             let stripe = start / 4;
             let lane = start % 4;
@@ -2090,6 +2219,9 @@ mod aarch64 {
     #[inline]
     #[target_feature(enable = "neon,fp16")]
     unsafe fn load_f16x4(ptr: *const f16) -> float32x4_t {
+        // SAFETY: the caller guarantees `ptr` is readable for four `f16`
+        // values and that fp16 is available; `fcvtl` only widens the loaded
+        // register.
         unsafe {
             let bits = vld1_u16(ptr.cast());
             let result: float32x4_t;
@@ -2106,6 +2238,9 @@ mod aarch64 {
     /// Requires NEON/FP16 and equal input lengths.
     #[target_feature(enable = "neon,fp16")]
     pub unsafe fn dot_product_f16_ordered(a: &[f32], b: &[f16]) -> f32 {
+        // SAFETY: the caller guarantees the CPU features and equal lengths
+        // (asserted by `dot_product_f16`); every 4-lane load is guarded by `i
+        // + 4 <= a.len()`.
         unsafe {
             // Rust's floating-point Sum identity is negative zero.
             let mut sum = -0.0f32;
@@ -2133,6 +2268,9 @@ mod aarch64 {
     /// Requires NEON/FP16 and equal source/destination lengths.
     #[target_feature(enable = "neon,fp16")]
     pub unsafe fn weighted_add_f16_neon(acc: &mut [f32], src: &[f16], weight: f32) {
+        // SAFETY: the caller guarantees the CPU features and equal lengths
+        // (asserted by `weighted_add_f16`); every 4-lane load/store is guarded
+        // by `i + 4 <= acc.len()`.
         unsafe {
             let mut i = 0;
             while i + 4 <= acc.len() {
@@ -2164,6 +2302,9 @@ mod aarch64 {
         assert_eq!(x.len(), N * row_bytes);
         assert!(data.len() >= outputs * row_bytes);
         assert_eq!(out.len(), N * outputs);
+        // SAFETY: the caller guarantees the CPU features; the asserts above
+        // give `x` exactly `N` encoded rows and `data` at least `outputs`
+        // rows, so every 34-byte block read is in bounds.
         unsafe {
             for column in 0..outputs {
                 let mut sums = [0.0f32; N];
@@ -2205,6 +2346,11 @@ mod aarch64 {
         blocks_per_row: usize,
         dst: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features;
+        // `dequantize_q8_0_row` asserts that blocks `block_start..block_start
+        // + blocks_per_row` lie inside `data` and that `dst` holds 32 values
+        // per block, which bounds the 34-byte block reads and the eight 4-lane
+        // stores.
         unsafe {
             for b in 0..blocks_per_row {
                 let byte_offset = (block_start + b) * Q8_0_TYPE_SIZE;
@@ -2226,8 +2372,10 @@ mod aarch64 {
                 // helper: dequantize 16 i8 values → 4 × float32x4_t
                 #[inline(always)]
                 unsafe fn process16(src: int8x16_t, scale: float32x4_t, out: *mut f32) {
+                    // SAFETY: internal helper, only called from the enclosing
+                    // kernel, which guarantees NEON and 16 writable values at
+                    // `out`.
                     unsafe {
-                        // Safety: Internal helper; only callable from other `unsafe fn`s in this module that already guarantee the required CPU features.
                         // low 8 i8 → i16
                         let i16_lo = vmovl_s8(vget_low_s8(src));
                         // high 8 i8 → i16
@@ -2253,11 +2401,6 @@ mod aarch64 {
         }
     }
 
-    /// Fused Q8_0 dot product using NEON.  32 quants per block in 8 batches
-    /// of 4 f32 values each (i8 → i16 → i32 → f32 → mul scale → fma with x).
-    ///
-    /// # Safety
-    ///
     /// SIMD sum of squares using NEON FMA.
     ///
     /// # Safety
@@ -2265,6 +2408,8 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn sum_squares_neon(x: &[f32]) -> f32 {
+        // SAFETY: the caller guarantees the CPU features; every 4-lane load is
+        // guarded by `i + 4 <= n`.
         unsafe {
             let n = x.len();
             let mut acc = vdupq_n_f32(0.0);
@@ -2301,6 +2446,9 @@ mod aarch64 {
         weight: &[f32],
         out: &mut [f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features; `scale_weight_mul`
+        // asserts all three lengths equal, and every 4-lane load/store is
+        // guarded by `i + 4 <= n`.
         unsafe {
             let n = x.len();
             let s = vdupq_n_f32(scale);
@@ -2339,6 +2487,11 @@ mod aarch64 {
         cos: &[f32],
         sin: &[f32],
     ) {
+        // SAFETY: the caller guarantees the CPU features; `rope_adjacent_pair`
+        // asserts `x.len() == n_heads * head_dim` and `cos`/`sin` hold
+        // `head_dim / 2` values; the `d + 8 <= half` and `d + 4 <= half`
+        // guards keep each 8-value pair load inside head `h` and each 4-value
+        // table load inside `cos`/`sin`.
         unsafe {
             let half = head_dim / 2;
             for h in 0..n_heads {
@@ -2384,6 +2537,9 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn elemul_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `elemul` asserts all
+        // three lengths equal, and every 4-lane load/store is guarded by `i +
+        // 4 <= n`.
         unsafe {
             let n = a.len();
             let mut i = 0;
@@ -2407,6 +2563,9 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
+        // SAFETY: the caller guarantees the CPU features; `dot_product`
+        // asserts equal lengths, and every 4-lane load is guarded by `i + 16
+        // <= n` or `i + 4 <= n`.
         unsafe {
             let n = a.len();
             // Pinned ggml F32 reduction: four independent NEON accumulators,
@@ -2448,6 +2607,9 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn add_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
+        // SAFETY: the caller guarantees the CPU features; `add` asserts all
+        // three lengths equal, and every 4-lane load/store is guarded by `i +
+        // 4 <= n`.
         unsafe {
             let n = a.len();
             let mut i = 0;
@@ -2471,6 +2633,9 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn weighted_add_neon(acc: &mut [f32], src: &[f32], weight: f32) {
+        // SAFETY: the caller guarantees the CPU features; `weighted_add`
+        // asserts equal lengths, and every 4-lane load/store is guarded by `i
+        // + 4 <= n`.
         unsafe {
             let n = acc.len();
             let w = vdupq_n_f32(weight);
@@ -2619,6 +2784,16 @@ fn matmul_q8_0_batch_dispatch_tile(
     blocks_per_row: usize,
     out: &mut [f32],
 ) {
+    // The x86 kernels read `x` and `data` through raw pointers.
+    let row_bytes = blocks_per_row * Q8_0_TYPE_SIZE;
+    assert!(
+        x.len() >= rows * row_bytes,
+        "q8_0 batch tile input too short"
+    );
+    assert!(
+        data.len() >= out_features * row_bytes,
+        "q8_0 batch tile weight too short"
+    );
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512vnni")
@@ -2627,6 +2802,8 @@ fn matmul_q8_0_batch_dispatch_tile(
             && is_x86_feature_detected!("f16c")
             && is_x86_feature_detected!("fma")
         {
+            // SAFETY: features checked; the asserts above bound `x` and
+            // `data`.
             unsafe {
                 return x86_64::matmul_q8_0_batch_avx512_vnni(
                     x,
@@ -2639,6 +2816,8 @@ fn matmul_q8_0_batch_dispatch_tile(
             }
         }
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
+            // SAFETY: features checked; the asserts above bound `x` and
+            // `data`.
             unsafe {
                 return x86_64::matmul_q8_0_batch_avx2(
                     x,
@@ -3173,6 +3352,13 @@ fn matmul_q8_0_decode_dispatch_chunk(
     blocks_per_row: usize,
     out: &mut [f32],
 ) {
+    // The x86 kernels read `x` and `data` through raw pointers.
+    let row_bytes = blocks_per_row * Q8_0_TYPE_SIZE;
+    assert!(x.len() >= row_bytes, "q8_0 decode input too short");
+    assert!(
+        data.len() >= out.len() * row_bytes,
+        "q8_0 decode weight too short"
+    );
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512vnni")
@@ -3181,6 +3367,8 @@ fn matmul_q8_0_decode_dispatch_chunk(
             && is_x86_feature_detected!("f16c")
             && is_x86_feature_detected!("fma")
         {
+            // SAFETY: features checked; the asserts above bound `x` and
+            // `data`.
             unsafe {
                 return x86_64::matmul_q8_0_decode_avx512_vnni(
                     x,
@@ -3192,6 +3380,8 @@ fn matmul_q8_0_decode_dispatch_chunk(
             }
         }
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
+            // SAFETY: features checked; the asserts above bound `x` and
+            // `data`.
             unsafe {
                 return x86_64::matmul_q8_0_decode_avx2(x, data, out.len(), blocks_per_row, out);
             }
@@ -3261,6 +3451,8 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
             && is_x86_feature_detected!("f16c")
             && is_x86_feature_detected!("fma")
         {
+            // SAFETY: features checked; the input length and row range are
+            // asserted above.
             unsafe {
                 return x86_64::matmul_q8_0_decode_interleaved_avx512_vnni(
                     x,
@@ -3370,12 +3562,14 @@ pub(crate) fn sum_squares(x: &[f32]) -> f32 {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; the kernel only reads `x`.
             return unsafe { x86_64::sum_squares_avx2(x) };
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; the kernel only reads `x`.
             return unsafe { aarch64::sum_squares_neon(x) };
         }
     }
@@ -3391,6 +3585,7 @@ pub(crate) fn elemul(a: &[f32], b: &[f32], out: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::elemul_avx2(a, b, out);
             }
@@ -3399,6 +3594,7 @@ pub(crate) fn elemul(a: &[f32], b: &[f32], out: &mut [f32]) {
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; lengths asserted equal above.
             unsafe {
                 return aarch64::elemul_neon(a, b, out);
             }
@@ -3417,6 +3613,7 @@ pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::dot_product_avx2(a, b);
             }
@@ -3425,6 +3622,7 @@ pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; lengths asserted equal above.
             unsafe {
                 return aarch64::dot_product_neon(a, b);
             }
@@ -3444,6 +3642,7 @@ pub(crate) fn dot_product_f16(a: &[f32], b: &[f16]) -> f32 {
             && is_x86_feature_detected!("fma")
             && is_x86_feature_detected!("f16c")
         {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::dot_product_f16_avx2(a, b);
             }
@@ -3465,6 +3664,7 @@ pub(crate) fn weighted_add(acc: &mut [f32], src: &[f32], weight: f32) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::weighted_add_avx2(acc, src, weight);
             }
@@ -3473,6 +3673,7 @@ pub(crate) fn weighted_add(acc: &mut [f32], src: &[f32], weight: f32) {
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; lengths asserted equal above.
             unsafe {
                 return aarch64::weighted_add_neon(acc, src, weight);
             }
@@ -3494,6 +3695,7 @@ pub(crate) fn weighted_add_f16(acc: &mut [f32], src: &[f16], weight: f32) {
             && is_x86_feature_detected!("fma")
             && is_x86_feature_detected!("f16c")
         {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::weighted_add_f16_avx2(acc, src, weight);
             }
@@ -3516,6 +3718,7 @@ pub(crate) fn add_assign(dst: &mut [f32], src: &[f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
+            // SAFETY: feature checked; lengths asserted equal above.
             unsafe {
                 return x86_64::add_assign_avx2(dst, src);
             }
@@ -3534,6 +3737,7 @@ pub(crate) fn add(a: &[f32], b: &[f32], out: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::add_avx2(a, b, out);
             }
@@ -3542,6 +3746,7 @@ pub(crate) fn add(a: &[f32], b: &[f32], out: &mut [f32]) {
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; lengths asserted equal above.
             unsafe {
                 return aarch64::add_neon(a, b, out);
             }
@@ -3563,6 +3768,7 @@ pub(crate) fn scale_weight_mul(x: &[f32], scale: f32, weight: &[f32], out: &mut 
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
+            // SAFETY: features checked; lengths asserted equal above.
             unsafe {
                 return x86_64::scale_weight_mul_avx2(x, scale, weight, out);
             }
@@ -3571,6 +3777,7 @@ pub(crate) fn scale_weight_mul(x: &[f32], scale: f32, weight: &[f32], out: &mut 
     #[cfg(target_arch = "aarch64")]
     {
         if is_aarch64_feature_detected!("neon") {
+            // SAFETY: feature checked; lengths asserted equal above.
             unsafe {
                 return aarch64::scale_weight_mul_neon(x, scale, weight, out);
             }
@@ -3610,6 +3817,7 @@ pub(crate) fn rope_split_half(
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: features checked; lengths asserted above.
             unsafe {
                 return x86_64::rope_split_half_avx2(x, n_heads, head_dim, cos, sin);
             }
@@ -3840,6 +4048,8 @@ mod tests {
                 let mut expected = vec![0.0; rows];
                 let mut actual = vec![0.0; rows];
                 matmul_q8_0_decode_scalar(&x[1..], &w[1..], rows, blocks, &mut expected);
+                // SAFETY: dotprod and fp16 are checked at the top of the
+                // test; `x` holds one row and `w` holds `rows` rows.
                 unsafe {
                     aarch64::matmul_q8_0_decode_dotprod(&x[1..], &w[1..], blocks, &mut actual);
                 }
@@ -4199,6 +4409,8 @@ mod tests {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
+                // SAFETY: features checked; `data` holds `blocks` blocks and
+                // the output holds 32 values per block.
                 unsafe {
                     x86_64::dequantize_row_avx2(&data, 0, blocks, &mut avx2_out);
                 }
@@ -4224,6 +4436,8 @@ mod tests {
         #[cfg(target_arch = "aarch64")]
         {
             if is_aarch64_feature_detected!("neon") {
+                // SAFETY: feature checked; `data` holds `blocks` blocks and
+                // the output holds 32 values per block.
                 unsafe {
                     aarch64::dequantize_row_neon(&data, 0, blocks, &mut _neon_out);
                 }

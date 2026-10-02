@@ -831,6 +831,11 @@ fn diagnose_english_layer_zero_projections() {
                 w.dequantize_row(token, &mut row);
                 row
             }
+            LoadedTensor::Half(w) => {
+                let mut row = vec![0.0; w.row_len()];
+                w.dequantize_row(token, &mut row);
+                row
+            }
             LoadedTensor::Q8_0(w) => {
                 let mut row = vec![0.0; w.in_features()];
                 w.dequantize_row(token, &mut row);
@@ -868,7 +873,7 @@ fn diagnose_english_layer_zero_projections() {
                     ember::model::Linear::new(ember::loader::gguf_to_row_major_f32(w), None)
                 }
                 LoadedTensor::KQuant(w) => ember::model::Linear::new_k(w, None),
-                LoadedTensor::Q8_0(_) => panic!("expected Q6 projection"),
+                LoadedTensor::Q8_0(_) | LoadedTensor::Half(_) => panic!("expected Q6 projection"),
             };
             let actual = linear.forward(&CpuBackend, &input).unwrap();
             assert!(actual.data().iter().all(|v| v.is_finite()));

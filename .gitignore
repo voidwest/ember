@@ -114,6 +114,10 @@ artifacts/golden-v03/**/*.bin
 !/research/embersec/comparative/
 !/research/embersec/comparative/**
 /research/embersec/comparative/**/__pycache__/
+# The quantization-transfer study is published with its script, design and
+# results; its bundles stay under runs/.
+!/research/quant-attribution/
+/research/quant-attribution/**/__pycache__/
 # cargo-fuzz source is tracked; generated outputs and working corpora are not.
 /fuzz/*
 !/fuzz/

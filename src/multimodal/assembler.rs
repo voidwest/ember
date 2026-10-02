@@ -100,6 +100,7 @@ pub(crate) fn embed_and_scatter(
     };
     let embed_dim = match embed_table {
         LlamaEmbedding::F32(t) => t.shape()[1],
+        LlamaEmbedding::Half(w) => w.row_len(),
         LlamaEmbedding::Q8_0(w) => w.in_features(),
         LlamaEmbedding::KQuant(w) => w.in_features(),
     };
@@ -108,6 +109,9 @@ pub(crate) fn embed_and_scatter(
         match embed_table {
             LlamaEmbedding::F32(table) => {
                 backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
+            }
+            LlamaEmbedding::Half(table) => {
+                backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
             }
             LlamaEmbedding::Q8_0(table) => {
                 backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;
@@ -251,6 +255,7 @@ impl EmbeddingAssembler for SmolVlmAssembler {
         //    LLM token path uses, so quantized tables work identically)
         let embed_dim = match embed_table {
             LlamaEmbedding::F32(t) => t.shape()[1],
+            LlamaEmbedding::Half(w) => w.row_len(),
             LlamaEmbedding::Q8_0(w) => w.in_features(),
             LlamaEmbedding::KQuant(w) => w.in_features(),
         };
@@ -259,6 +264,9 @@ impl EmbeddingAssembler for SmolVlmAssembler {
             match embed_table {
                 LlamaEmbedding::F32(table) => {
                     backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
+                }
+                LlamaEmbedding::Half(table) => {
+                    backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
                 }
                 LlamaEmbedding::Q8_0(table) => {
                     backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;

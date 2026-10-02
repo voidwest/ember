@@ -13,8 +13,11 @@
 //! demo loop (change layer/intervention -> Run -> compare -> verify) reuses
 //! one loaded model instead of reloading per run.
 
+use crate::cli_experiment::DecodeRoute;
 use crate::cli_experiment::{execute_prepared, prepare_run, PreparedRun, RunOutcome, RunTarget};
-use crate::cli_experiment_shared::{run_base_pass, run_variant, BasePass, SharedPrefix};
+use crate::cli_experiment_shared::{
+    batch_ineligibility, run_base_pass, run_batched_pass, run_variant, BasePass, SharedPrefix,
+};
 use anyhow::Context;
 use clap::Args as ClapArgs;
 use ember::plan::ExecutionMode;
@@ -89,14 +92,27 @@ struct SweepCache {
     key: String,
     model_path: String,
     baselines: std::collections::BTreeMap<usize, (RunOutput, String)>,
-    prefix: SharedPrefix,
-    /// layer -> (variant index in the pass, spec text, spec, output dir)
-    variants: std::collections::BTreeMap<
-        usize,
-        (usize, String, ember::v05::spec::ExperimentSpecV1, String),
-    >,
+    /// The recorded prefix pending intervention runs resume from (`None`
+    /// when the pass batched every intervention run).
+    prefix: Option<SharedPrefix>,
+    /// layer -> its intervention run, pending or already computed.
+    variants: std::collections::BTreeMap<usize, SweepVariant>,
     /// Time the pass took, charged to the first point's baseline.
     pass_ms: f64,
+}
+
+/// One layer's intervention run in a sweep pass.
+enum SweepVariant {
+    /// Runs on request from the recorded prefix: (variant index in the
+    /// pass, spec text, spec, output dir).
+    Pending(
+        usize,
+        String,
+        Box<ember::v05::spec::ExperimentSpecV1>,
+        String,
+    ),
+    /// Decoded in the pass's batch; its bundle is written.
+    Finished(Box<RunOutcome>),
 }
 
 /// The baseline text a later restore run can be compared against. The
@@ -281,8 +297,10 @@ impl GuiSession {
 
     /// Run the capture-only baseline and the capture+intervention pair for
     /// one configuration. Both runs write and self-verify real v0.5 bundles
-    /// through `execute_prepared`; the baseline text is recorded for later
-    /// restore comparison.
+    /// through the shared pass (the intervention resumes from the
+    /// baseline's prefix, and on the Q8_0 fast path both decode in one
+    /// batch); the bundles equal `execute_prepared`'s. The baseline text is
+    /// recorded for later restore comparison.
     pub(crate) fn run_baseline_intervention(
         &mut self,
         cfg: &RunConfig,
@@ -300,61 +318,103 @@ impl GuiSession {
             .prepared
             .as_mut()
             .ok_or_else(|| "model session is not prepared".to_string())?;
-        // The baseline computes the prompt prefix once; the intervention
-        // run starts its prefill at the intervened block from that state
-        // (bit-identical to a full recompute; see `ember::v05::prefix`).
-        let BasePass {
-            base, mut prefix, ..
-        } = run_base_pass(
-            prepared,
-            RunTarget {
-                resolved: &baseline_spec,
-                spec_text: &baseline_text,
-                output_directory: Path::new(&baseline_dir),
-                retain_incomplete: false,
-            },
-            &[],
-            &[&intervention_spec],
-            cancel.as_ref(),
-        )
-        .map_err(|error| format!("baseline run failed: {error:#}"))?;
-        let (baseline, _baseline_report) = run_output(prepared, base)?;
-        let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
-        // A cancelled pair leaves nothing behind, like a cancelled CLI run:
-        // the finished baseline bundle is half an experiment, so it goes too.
-        let discard_baseline = || {
-            let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+        let baseline_target = RunTarget {
+            resolved: &baseline_spec,
+            spec_text: &baseline_text,
+            output_directory: Path::new(&baseline_dir),
+            retain_incomplete: false,
         };
-        if self.cancelled() {
-            discard_baseline();
-            return Err("cancelled".to_string());
-        }
-        let cancel = self.cancel.clone();
-        let prepared = self
-            .prepared
-            .as_mut()
-            .ok_or_else(|| "model session is not prepared".to_string())?;
-        let intervention = match run_variant(
-            prepared,
-            &mut prefix,
-            0,
-            RunTarget {
-                resolved: &intervention_spec,
-                spec_text: &intervention_text,
-                output_directory: Path::new(&intervention_dir),
-                retain_incomplete: false,
-            },
-            cancel.as_ref(),
-        ) {
-            Ok(outcome) => outcome,
-            Err(error) => {
+        let intervention_target = RunTarget {
+            resolved: &intervention_spec,
+            spec_text: &intervention_text,
+            output_directory: Path::new(&intervention_dir),
+            retain_incomplete: false,
+        };
+        let batch = batch_ineligibility(prepared, &baseline_target, &[], &[intervention_target])
+            .map_err(|error| format!("baseline run failed: {error:#}"))?;
+        let (baseline, intervention, elapsed_ms_baseline) = match batch {
+            // Both runs decode together: the intervention resumes from the
+            // baseline's prefix and each decode step is one batched forward.
+            // A cancelled pair writes neither bundle.
+            None => {
+                let (base, _, mut variants) = match run_batched_pass(
+                    prepared,
+                    baseline_target,
+                    &[],
+                    &[intervention_target],
+                    cancel.as_ref(),
+                ) {
+                    Ok(outcomes) => outcomes,
+                    Err(_)
+                        if cancel
+                            .as_ref()
+                            .is_some_and(ember::cancel::CancelToken::is_cancelled) =>
+                    {
+                        return Err("cancelled".to_string())
+                    }
+                    Err(error) => {
+                        return Err(format!("baseline/intervention run failed: {error:#}"))
+                    }
+                };
+                let (baseline, _baseline_report) = run_output(prepared, base)?;
+                let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
+                (baseline, variants.remove(0), elapsed_ms_baseline)
+            }
+            Some(reason) => {
+                // The baseline computes the prompt prefix once; the
+                // intervention run starts its prefill at the intervened
+                // block from that state (bit-identical to a full recompute;
+                // see `ember::v05::prefix`).
+                let BasePass {
+                    base, mut prefix, ..
+                } = run_base_pass(
+                    prepared,
+                    baseline_target,
+                    &[],
+                    &[&intervention_spec],
+                    DecodeRoute::Sequential { reason },
+                    cancel.as_ref(),
+                )
+                .map_err(|error| format!("baseline run failed: {error:#}"))?;
+                let (baseline, _baseline_report) = run_output(prepared, base)?;
+                let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
+                // A cancelled pair leaves nothing behind, like a cancelled CLI
+                // run: the finished baseline bundle is half an experiment, so
+                // it goes too.
+                let discard_baseline = || {
+                    let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+                };
                 if self.cancelled() {
                     discard_baseline();
                     return Err("cancelled".to_string());
                 }
-                return Err(format!("intervention run failed: {error:#}"));
+                let cancel = self.cancel.clone();
+                let prepared = self
+                    .prepared
+                    .as_mut()
+                    .ok_or_else(|| "model session is not prepared".to_string())?;
+                match run_variant(
+                    prepared,
+                    &mut prefix,
+                    0,
+                    intervention_target,
+                    cancel.as_ref(),
+                ) {
+                    Ok(outcome) => (baseline, outcome, elapsed_ms_baseline),
+                    Err(error) => {
+                        if self.cancelled() {
+                            discard_baseline();
+                            return Err("cancelled".to_string());
+                        }
+                        return Err(format!("intervention run failed: {error:#}"));
+                    }
+                }
             }
         };
+        let prepared = self
+            .prepared
+            .as_mut()
+            .ok_or_else(|| "model session is not prepared".to_string())?;
         let (intervention, intervention_report) = run_output(prepared, intervention)?;
         let raw_comparison = ember::v05::compare::compare_bundles(
             Path::new(&baseline.bundle_dir),
@@ -391,7 +451,9 @@ impl GuiSession {
     /// bundles), but the first point of a sweep runs one shared pass for
     /// every layer in `planned`: one generation writes every layer's
     /// baseline bundle and records the prompt prefix, and each point's
-    /// intervention run then resumes from it at its own layer.
+    /// intervention run then resumes from it at its own layer. On the Q8_0
+    /// fast path the pass also runs every intervention, all decoding in one
+    /// batch, and later points only read their finished bundles.
     pub(crate) fn run_sweep_point(
         &mut self,
         cfg: &RunConfig,
@@ -510,27 +572,65 @@ impl GuiSession {
             .map(|entry| target(&entry.4, &entry.5))
             .collect();
         let co: Vec<RunTarget<'_>> = baselines.iter().skip(1).map(run_target).collect();
-        let variant_specs: Vec<&ember::v05::spec::ExperimentSpecV1> =
-            interventions.iter().map(|(spec, _, _)| spec).collect();
-        let BasePass { base, co, prefix } = run_base_pass(
-            prepared,
-            run_target(&baselines[0]),
-            &co,
-            &variant_specs,
-            cancel.as_ref(),
-        )
-        .map_err(|error| format!("baseline run failed: {error:#}"))?;
+        let variant_targets: Vec<RunTarget<'_>> = interventions.iter().map(run_target).collect();
+        let batch =
+            batch_ineligibility(prepared, &run_target(&baselines[0]), &co, &variant_targets)
+                .map_err(|error| format!("baseline run failed: {error:#}"))?;
         let mut outputs = std::collections::BTreeMap::new();
-        for (entry, outcome) in built.iter().zip(std::iter::once(base).chain(co)) {
-            let (output, _) = run_output(prepared, outcome)?;
-            outputs.insert(entry.0, (output, entry.1.clone()));
-        }
-        let variants = built
-            .iter()
-            .zip(interventions)
-            .enumerate()
-            .map(|(index, (entry, (spec, text, dir)))| (entry.0, (index, text, spec, dir)))
-            .collect();
+        let (prefix, variants) = match batch {
+            // Every layer's baseline and intervention in one pass whose
+            // decode steps are batched; each point then only reads its
+            // finished bundles.
+            None => {
+                let (base, co, finished) = run_batched_pass(
+                    prepared,
+                    run_target(&baselines[0]),
+                    &co,
+                    &variant_targets,
+                    cancel.as_ref(),
+                )
+                .map_err(|error| format!("baseline run failed: {error:#}"))?;
+                for (entry, outcome) in built.iter().zip(std::iter::once(base).chain(co)) {
+                    let (output, _) = run_output(prepared, outcome)?;
+                    outputs.insert(entry.0, (output, entry.1.clone()));
+                }
+                let variants = built
+                    .iter()
+                    .zip(finished)
+                    .map(|(entry, outcome)| (entry.0, SweepVariant::Finished(Box::new(outcome))))
+                    .collect();
+                (None, variants)
+            }
+            Some(reason) => {
+                let variant_specs: Vec<&ember::v05::spec::ExperimentSpecV1> =
+                    interventions.iter().map(|(spec, _, _)| spec).collect();
+                let BasePass { base, co, prefix } = run_base_pass(
+                    prepared,
+                    run_target(&baselines[0]),
+                    &co,
+                    &variant_specs,
+                    DecodeRoute::Sequential { reason },
+                    cancel.as_ref(),
+                )
+                .map_err(|error| format!("baseline run failed: {error:#}"))?;
+                for (entry, outcome) in built.iter().zip(std::iter::once(base).chain(co)) {
+                    let (output, _) = run_output(prepared, outcome)?;
+                    outputs.insert(entry.0, (output, entry.1.clone()));
+                }
+                let variants = built
+                    .iter()
+                    .zip(interventions.iter().cloned())
+                    .enumerate()
+                    .map(|(index, (entry, (spec, text, dir)))| {
+                        (
+                            entry.0,
+                            SweepVariant::Pending(index, text, Box::new(spec), dir),
+                        )
+                    })
+                    .collect();
+                (Some(prefix), variants)
+            }
+        };
         Ok(SweepCache {
             key: cfg.sweep_key(),
             model_path: cfg.model_path.clone(),
@@ -555,7 +655,7 @@ impl GuiSession {
             .get(&layer)
             .cloned()
             .ok_or_else(|| format!("the sweep pass has no baseline for layer {layer}"))?;
-        let (index, text, spec, dir) = cache
+        let variant = cache
             .variants
             .remove(&layer)
             .ok_or_else(|| format!("layer {layer} has already run in this sweep"))?;
@@ -568,19 +668,25 @@ impl GuiSession {
             .prepared
             .as_mut()
             .ok_or_else(|| "model session is not prepared".to_string())?;
-        let outcome = run_variant(
-            prepared,
-            &mut cache.prefix,
-            index,
-            RunTarget {
-                resolved: &spec,
-                spec_text: &text,
-                output_directory: Path::new(&dir),
-                retain_incomplete: false,
-            },
-            cancel.as_ref(),
-        )
-        .map_err(|error| format!("intervention run failed: {error:#}"))?;
+        let outcome = match variant {
+            SweepVariant::Finished(outcome) => *outcome,
+            SweepVariant::Pending(index, text, spec, dir) => run_variant(
+                prepared,
+                cache
+                    .prefix
+                    .as_mut()
+                    .ok_or_else(|| "the sweep pass recorded no prefix".to_string())?,
+                index,
+                RunTarget {
+                    resolved: &spec,
+                    spec_text: &text,
+                    output_directory: Path::new(&dir),
+                    retain_incomplete: false,
+                },
+                cancel.as_ref(),
+            )
+            .map_err(|error| format!("intervention run failed: {error:#}"))?,
+        };
         let (intervention, intervention_report) = run_output(prepared, outcome)?;
         let raw_comparison = ember::v05::compare::compare_bundles(
             Path::new(&baseline.bundle_dir),
@@ -633,12 +739,16 @@ impl GuiSession {
     }
 }
 
-/// Remove the baseline bundles of sweep layers whose intervention never ran.
+/// Remove the bundles of sweep layers that were never shown: their
+/// baselines, and their intervention bundles when the pass computed them.
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 fn discard_unused_baselines(cache: &SweepCache) {
-    for layer in cache.variants.keys() {
+    for (layer, variant) in &cache.variants {
         if let Some((baseline, _)) = cache.baselines.get(layer) {
             let _ = std::fs::remove_dir_all(&baseline.bundle_dir);
+        }
+        if let SweepVariant::Finished(outcome) = variant {
+            let _ = std::fs::remove_dir_all(&outcome.path);
         }
     }
 }
@@ -1466,7 +1576,7 @@ pub(crate) fn run_gui_command(
     let strict_origin = gui.host == "127.0.0.1" || gui.host == "localhost" || gui.host == "::1";
     if !strict_origin {
         eprintln!(
-            "  WARNING: binding to {} exposes the console to the network; \n  cross-origin protections are disabled in this mode.",
+            "  WARNING: binding to {} exposes the console to the network: anyone who can\n  reach this address can load the page and use it. The API still requires the\n  console token and same-origin POSTs, but the loopback Host allowlist (the\n  DNS-rebinding defence) cannot apply in this mode.",
             gui.host
         );
     }
@@ -1533,6 +1643,71 @@ fn origin_is_loopback_or_absent(origin: Option<&str>) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
+/// Origin header names the same authority as the Host header (or is absent,
+/// for header-less clients). This is the network-bind counterpart of
+/// [`origin_is_loopback_or_absent`]: the served address is not known in
+/// advance there, so a cross-site POST is recognised by its Origin differing
+/// from the host it was sent to.
+fn origin_matches_host_or_absent(origin: Option<&str>, host: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    let Some(host) = host else {
+        return false;
+    };
+    let Some(authority) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        // `null` and non-HTTP origins never match a served host.
+        return false;
+    };
+    authority.eq_ignore_ascii_case(host.trim())
+}
+
+/// The headers the security gate reads, separated from `tiny_http` so the
+/// decision is a pure function.
+struct GateInput<'a> {
+    is_root: bool,
+    is_post: bool,
+    host: Option<&'a str>,
+    origin: Option<&'a str>,
+    token: Option<&'a str>,
+}
+
+/// Decide whether a request may proceed; `Err` carries the 403 body.
+///
+/// The bearer token guards the JSON API in every mode. A loopback bind also
+/// pins the Host header (anti-DNS-rebinding) and requires a loopback Origin on
+/// POSTs. A network bind cannot allowlist hosts, so it requires POSTs to be
+/// same-origin instead.
+fn security_gate(
+    strict_origin: bool,
+    expected_token: &str,
+    input: &GateInput<'_>,
+) -> Result<(), &'static str> {
+    if strict_origin && !input.host.is_some_and(host_is_loopback) {
+        return Err("forbidden: bad Host header");
+    }
+    if input.is_root {
+        return Ok(());
+    }
+    if input.token != Some(expected_token) {
+        return Err("forbidden: missing or invalid token");
+    }
+    if input.is_post {
+        let origin_ok = if strict_origin {
+            origin_is_loopback_or_absent(input.origin)
+        } else {
+            origin_matches_host_or_absent(input.origin, input.host)
+        };
+        if !origin_ok {
+            return Err("forbidden: cross-origin request");
+        }
+    }
+    Ok(())
+}
+
 fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
@@ -1555,36 +1730,28 @@ fn handle_request(
     let method = request.method().clone();
     let is_root = method == tiny_http::Method::Get && path == "/";
 
-    // Security gate: Host allowlist (anti-DNS-rebinding) applies to every
-    // request; the bearer token and Origin check apply to the JSON API.
-    if strict_origin {
-        let host_ok = request
+    // Security gate: see `security_gate` for what each bind mode enforces.
+    let header_value = |name: &'static str| {
+        request
             .headers()
             .iter()
-            .any(|h| h.field.equiv("Host") && host_is_loopback(h.value.as_str()));
-        if !host_ok {
-            let response = plain_response(403, "forbidden: bad Host header");
-            return Ok(request.respond(response)?);
-        }
-        if !is_root {
-            let token_ok = request
-                .headers()
-                .iter()
-                .any(|h| h.field.equiv("X-Ember-Token") && h.value.as_str() == token);
-            if !token_ok {
-                let response = plain_response(403, "forbidden: missing or invalid token");
-                return Ok(request.respond(response)?);
-            }
-            let origin = request
-                .headers()
-                .iter()
-                .find(|h| h.field.equiv("Origin"))
-                .map(|h| h.value.as_str());
-            if method == tiny_http::Method::Post && !origin_is_loopback_or_absent(origin) {
-                let response = plain_response(403, "forbidden: cross-origin request");
-                return Ok(request.respond(response)?);
-            }
-        }
+            .find(|h| h.field.equiv(name))
+            .map(|h| h.value.as_str())
+    };
+    let verdict = security_gate(
+        strict_origin,
+        token,
+        &GateInput {
+            is_root,
+            is_post: method == tiny_http::Method::Post,
+            host: header_value("Host"),
+            origin: header_value("Origin"),
+            token: header_value("X-Ember-Token"),
+        },
+    );
+    if let Err(message) = verdict {
+        let response = plain_response(403, message);
+        return Ok(request.respond(response)?);
     }
 
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1792,7 +1959,7 @@ fn state_payload(session: &Arc<Mutex<GuiSession>>) -> ApiEnvelope {
     let session = lock_session(session);
     ApiEnvelope::ok(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "commit": ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()),
+        "commit": ember::extraction::build_commit().unwrap_or("unknown"),
         "models": discover_models(),
         "hook_stages": hook_stages(),
         "session": session_info_payload(&session),
@@ -2067,6 +2234,132 @@ mod tests {
         }
     }
 
+    #[test]
+    fn network_origin_must_match_the_served_host() {
+        let host = Some("192.168.1.10:8337");
+        assert!(origin_matches_host_or_absent(None, host), "no Origin");
+        assert!(origin_matches_host_or_absent(
+            Some("http://192.168.1.10:8337"),
+            host
+        ));
+        assert!(origin_matches_host_or_absent(
+            Some("http://Lab-Box.local:8337"),
+            Some("lab-box.local:8337")
+        ));
+        for bad in [
+            "https://evil.example",
+            "http://192.168.1.10:9000",
+            "http://192.168.1.10:8337.evil.example",
+            "null",
+        ] {
+            assert!(
+                !origin_matches_host_or_absent(Some(bad), host),
+                "reject {bad:?}"
+            );
+        }
+        assert!(
+            !origin_matches_host_or_absent(Some("http://192.168.1.10:8337"), None),
+            "an Origin with no Host to compare against is refused"
+        );
+    }
+
+    fn gate<'a>(
+        is_root: bool,
+        is_post: bool,
+        host: &'a str,
+        origin: Option<&'a str>,
+        token: Option<&'a str>,
+    ) -> GateInput<'a> {
+        GateInput {
+            is_root,
+            is_post,
+            host: Some(host),
+            origin,
+            token,
+        }
+    }
+
+    #[test]
+    fn loopback_gate_pins_host_token_and_origin() {
+        let local = "127.0.0.1:8337";
+        assert_eq!(
+            security_gate(true, "tok", &gate(true, false, local, None, None)),
+            Ok(()),
+            "the page itself needs no token"
+        );
+        assert_eq!(
+            security_gate(true, "tok", &gate(true, false, "evil.example", None, None)),
+            Err("forbidden: bad Host header"),
+            "a rebound Host cannot even read the page"
+        );
+        assert_eq!(
+            security_gate(true, "tok", &gate(false, false, local, None, None)),
+            Err("forbidden: missing or invalid token")
+        );
+        assert_eq!(
+            security_gate(true, "tok", &gate(false, true, local, None, Some("tok"))),
+            Ok(())
+        );
+        assert_eq!(
+            security_gate(
+                true,
+                "tok",
+                &gate(
+                    false,
+                    true,
+                    local,
+                    Some("https://evil.example"),
+                    Some("tok")
+                )
+            ),
+            Err("forbidden: cross-origin request")
+        );
+    }
+
+    #[test]
+    fn network_gate_still_requires_the_token_and_same_origin_posts() {
+        let lan = "192.168.1.10:8337";
+        assert_eq!(
+            security_gate(false, "tok", &gate(true, false, lan, None, None)),
+            Ok(()),
+            "a network bind serves the page to non-loopback hosts"
+        );
+        for token in [None, Some("wrong")] {
+            assert_eq!(
+                security_gate(false, "tok", &gate(false, true, lan, None, token)),
+                Err("forbidden: missing or invalid token"),
+                "a network bind must not drop the token check ({token:?})"
+            );
+        }
+        assert_eq!(
+            security_gate(
+                false,
+                "tok",
+                &gate(
+                    false,
+                    true,
+                    lan,
+                    Some("http://192.168.1.10:8337"),
+                    Some("tok")
+                )
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            security_gate(
+                false,
+                "tok",
+                &gate(false, true, lan, Some("https://evil.example"), Some("tok"))
+            ),
+            Err("forbidden: cross-origin request")
+        );
+        assert_eq!(
+            security_gate(false, "tok", &gate(false, false, lan, None, Some("tok"))),
+            Ok(()),
+            "GETs carry no Origin requirement"
+        );
+    }
+
     fn base_request() -> RunRequest {
         RunRequest {
             model_path: "model.gguf".to_string(),
@@ -2140,6 +2433,26 @@ mod tests {
             );
             assert_eq!(point.comparison, pair.comparison, "layer {layer}");
             assert_eq!(point.baseline_key, pair.baseline_key);
+            // Both decode their runs in one batch; standalone runs decode
+            // alone and must compute exactly the same bundles.
+            let (baseline, _) = run_one(&mut session, &cfg, RunKind::Baseline).unwrap();
+            let (intervention, _) = run_one(&mut session, &cfg, RunKind::Intervention).unwrap();
+            assert_same_content(&point.baseline.bundle_dir, &baseline.bundle_dir);
+            assert_same_content(&point.intervention.bundle_dir, &intervention.bundle_dir);
+            for (batched, standalone) in [
+                (&point.baseline, &baseline),
+                (&point.intervention, &intervention),
+                (&pair.baseline, &baseline),
+                (&pair.intervention, &intervention),
+            ] {
+                assert_eq!(batched.generated_token_ids, standalone.generated_token_ids);
+                assert_eq!(batched.events, standalone.events);
+                let runtime: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(Path::new(&batched.bundle_dir).join("runtime.json")).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(runtime["decode_batch"]["path"], "batched", "layer {layer}");
+            }
             let runtime: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(Path::new(&point.intervention.bundle_dir).join("runtime.json"))
                     .unwrap(),

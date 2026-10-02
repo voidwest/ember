@@ -565,6 +565,12 @@ impl RawExperimentSpec {
                 "temperature must be finite",
             ));
         }
+        if temperature < 0.0 {
+            return Err(SpecError::at(
+                "generation.temperature",
+                "temperature must be zero (greedy) or positive",
+            ));
+        }
         if deterministic && temperature != 0.0 && seed == 0 {
             return Err(SpecError::at(
                 "execution.deterministic",
@@ -1297,6 +1303,18 @@ directory = "runs/minimal"
         let error = raw.resolve().unwrap_err();
         assert!(error.message.contains("unknown --execution"), "{}", error);
         assert_eq!(error.path, "execution.mode");
+    }
+
+    #[test]
+    fn negative_temperature_fails_validation() {
+        let text = VALID_SPEC.replace("temperature = 0.0", "temperature = -0.5");
+        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
+        let error = raw.resolve().unwrap_err();
+        assert_eq!(error.path, "generation.temperature");
+        assert!(
+            error.message.contains("zero (greedy) or positive"),
+            "{error}"
+        );
     }
 
     #[test]

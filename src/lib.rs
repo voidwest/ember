@@ -4,9 +4,13 @@
 #![warn(rustdoc::broken_intra_doc_links, rustdoc::private_intra_doc_links)]
 // Unsafe-hygiene contract: every unsafe operation inside an `unsafe fn`
 // must sit in its own explicit `unsafe { .. }` block (edition-2024 lint,
-// enforced early). The reference path is 100% safe Rust; all unsafe is
-// contained in the kernel modules (simd.rs, k_quant_matmul.rs) and the
-// counting allocator, each with `// SAFETY:` annotations.
+// enforced early), and every `unsafe` block or impl carries a `// SAFETY:`
+// comment (`clippy::undocumented_unsafe_blocks`, enabled in Cargo.toml and
+// enforced by CI's `-D warnings`). Unsafe code is confined to the SIMD
+// kernels (simd.rs, q8_gemm.rs, attention_kernels.rs, k_quant_matmul*),
+// file mappings and page eviction (loader.rs, quant.rs, model.rs,
+// packed_cache.rs), the decode arena's f32 views (plan.rs), the `sgemm`
+// call in tensor.rs and the counting allocator.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
@@ -51,6 +55,7 @@ pub mod embedding;
 pub mod experiments;
 pub mod extraction;
 pub mod gemma4;
+pub mod half_weight;
 pub mod inspect;
 #[doc(hidden)]
 pub mod k_matmul;

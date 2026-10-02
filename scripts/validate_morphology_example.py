@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 def main():
@@ -18,11 +19,11 @@ def main():
     work.mkdir(parents=True, exist_ok=False)
     binary = args.ember.resolve()
 
-    def command(label, *arguments):
+    def command(label, *arguments, cwd=repo):
         argv = [str(binary), "experiment", *map(str, arguments), "--json"]
-        (work / f"{label}.command.json").write_text(json.dumps({"cwd": str(repo), "argv": argv}, indent=2) + "\n")
+        (work / f"{label}.command.json").write_text(json.dumps({"cwd": str(cwd), "argv": argv}, indent=2) + "\n")
         with (work / f"{label}.json").open("w") as out, (work / f"{label}.stderr.log").open("w") as err:
-            subprocess.run(argv, cwd=repo, stdout=out, stderr=err, check=True)
+            subprocess.run(argv, cwd=cwd, stdout=out, stderr=err, check=True)
         return json.loads((work / f"{label}.json").read_text())
 
     with binary.open("rb") as handle:
@@ -45,7 +46,13 @@ def main():
     assert reproduced["verdict"] == "exact-semantic" and reproduced["captures_exact"] and reproduced["tokens_equal"], "baseline reproduction differs"
     verification = command("reproduced-verify", "verify", work / "reproduced")
     assert verification["ok"]
-    result = {"passed": True, "ember_sha256": binary_hash, "restored_capture_count": len(restored["captures"]), "reproduction_verdict": reproduced["verdict"]}
+    # The semantic hash must not depend on where Ember is started. Bundles
+    # once recorded `git rev-parse HEAD` of the working directory, so the
+    # same binary produced a different hash outside the checkout.
+    with tempfile.TemporaryDirectory(prefix="ember-elsewhere-") as elsewhere:
+        moved = command("reproduce-elsewhere", "reproduce", work / "baseline", "--model", repo / "Llama-3.2-1B-Instruct-Q8_0.gguf", "--tokenizer", repo / "tokenizer.json", "--output", work / "reproduced-elsewhere", cwd=elsewhere)
+    assert moved["verdict"] == "exact-semantic", "semantic hash depends on the working directory"
+    result = {"passed": True, "ember_sha256": binary_hash, "restored_capture_count": len(restored["captures"]), "reproduction_verdict": reproduced["verdict"], "reproduction_elsewhere_verdict": moved["verdict"]}
     (work / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
 

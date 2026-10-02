@@ -85,6 +85,14 @@ impl<'a> ModelLens<'a> {
                     *value = data[index * vocab + token];
                 }
             }
+            // Half weights keep GGUF rows: row `token` is the token's
+            // in_features values, the same values the F32 arm gathers.
+            WeightKindView::Half(weight) => {
+                if weight.out_features() != vocab || weight.in_features() != embed_dim {
+                    return Err("unexpected LM head shape".into());
+                }
+                weight.dequantize_row(token, &mut row)
+            }
             WeightKindView::Q8_0(weight) => weight.dequantize_row(token, &mut row),
             WeightKindView::KQuant(weight) => weight.dequantize_row(token, &mut row),
         }

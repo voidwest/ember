@@ -1622,13 +1622,44 @@ pub fn sha256_file(path: impl AsRef<Path>) -> Option<String> {
     sha256_file_result(path).ok()
 }
 
+/// Bytes read per call while hashing a file. The 8 KiB reads of
+/// `std::io::copy` added ~10% to hashing a 1.3 GB model (0.80 s -> 0.72 s on
+/// an M1 Pro); past 256 KiB larger reads gain nothing.
+const SHA256_FILE_CHUNK: usize = 256 * 1024;
+
 pub fn sha256_file_result(path: impl AsRef<Path>) -> Result<String> {
+    sha256_file_result_unless(path, &std::sync::atomic::AtomicBool::new(false))
+}
+
+/// As [`sha256_file_result`], but gives up between reads once `abandon` is
+/// set, returning an error. For a hash computed alongside other work that
+/// can fail first: the caller sets `abandon` and the result goes unused.
+pub fn sha256_file_result_unless(
+    path: impl AsRef<Path>,
+    abandon: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
+    use std::io::Read;
+
     let path = path.as_ref();
     let mut file = fs::File::open(path)
         .with_context(|| format!("failed to open file for SHA-256: {}", path.display()))?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)
-        .with_context(|| format!("failed to hash file: {}", path.display()))?;
+    let mut chunk = vec![0u8; SHA256_FILE_CHUNK];
+    loop {
+        if abandon.load(std::sync::atomic::Ordering::Relaxed) {
+            anyhow::bail!("abandoned hashing {}", path.display());
+        }
+        let read = match file.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to hash file: {}", path.display()));
+            }
+        };
+        hasher.update(&chunk[..read]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -1636,6 +1667,22 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// The commit this binary was built from, as captured by `build.rs`
+/// (`EMBER_GIT_COMMIT`), or `None` for a build outside a git checkout.
+///
+/// Use this for provenance that names what produced an artifact. Unlike
+/// [`git_commit`], it does not depend on the directory the binary runs in, so
+/// the same binary records the same commit wherever it is invoked.
+pub fn build_commit() -> Option<&'static str> {
+    option_env!("EMBER_GIT_COMMIT")
+}
+
+/// `git rev-parse HEAD` in the current working directory.
+///
+/// This describes the checkout the process runs in, not the binary: an
+/// installed `ember` invoked inside another repository reports that
+/// repository's HEAD. Only benchmark and support records, which deliberately
+/// capture the source tree next to the binary's own [`build_commit`], use it.
 pub fn git_commit() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -1873,6 +1920,41 @@ mod tests {
             ("a".to_string(), "fnv1a64:1111".to_string()),
         ]);
         assert_ne!(order_a, order_b);
+    }
+
+    #[test]
+    fn file_hash_spanning_several_chunks_matches_the_bytes_hash() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ember_sha256_chunks_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        // Not a multiple of the chunk size, so the last read is short.
+        let bytes: Vec<u8> = (0..2 * SHA256_FILE_CHUNK + 1234)
+            .map(|index| (index * 31 % 251) as u8)
+            .collect();
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(sha256_file_result(&path).unwrap(), sha256_bytes(&bytes));
+        fs::write(&path, b"").unwrap();
+        assert_eq!(sha256_file_result(&path).unwrap(), sha256_bytes(b""));
+        let abandoned = sha256_file_result_unless(&path, &std::sync::atomic::AtomicBool::new(true))
+            .unwrap_err();
+        assert!(
+            abandoned.to_string().starts_with("abandoned hashing "),
+            "{abandoned:#}"
+        );
+        fs::remove_file(&path).unwrap();
+        let missing = sha256_file_result(&path).unwrap_err();
+        assert!(
+            missing
+                .to_string()
+                .starts_with("failed to open file for SHA-256: "),
+            "{missing:#}"
+        );
     }
 
     #[test]

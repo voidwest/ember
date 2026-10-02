@@ -1575,6 +1575,9 @@ impl<B: Backend> Module<B> for LlamaBlock<B> {
 /// metadata keys.
 pub enum LlamaEmbedding<B: Backend> {
     F32(B::Tensor),
+    /// f16/bf16 table in its GGUF encoding (dims `[embed, vocab]`, one
+    /// contiguous row per token), widened per looked-up row.
+    Half(crate::half_weight::HalfWeight),
     Q8_0(crate::quant::QuantizedWeight),
     KQuant(crate::quant_k::KQuantWeight),
 }
@@ -2092,6 +2095,10 @@ impl Llama<CpuBackend> {
         let embedding_quantization = if profile_operators {
             match &self.embed_tokens {
                 LlamaEmbedding::F32(_) => "F32",
+                LlamaEmbedding::Half(weight) => match weight.dtype() {
+                    crate::half_weight::HalfDtype::F16 => "F16",
+                    crate::half_weight::HalfDtype::Bf16 => "BF16",
+                },
                 LlamaEmbedding::Q8_0(_) => "Q8_0",
                 LlamaEmbedding::KQuant(weight) => match weight.dtype() {
                     crate::quant_k::KQuantDtype::Q4K => "Q4_K",
@@ -2128,6 +2135,16 @@ impl Llama<CpuBackend> {
                                 "embedding token {} out of bounds for vocabulary {}",
                                 token_id,
                                 table.out_features()
+                            )));
+                        }
+                        table.dequantize_row(token_id as usize, x);
+                    }
+                    LlamaEmbedding::Half(table) => {
+                        if token_id as usize >= table.rows() {
+                            return Err(CpuError::ShapeMismatch(format!(
+                                "embedding token {} out of bounds for vocabulary {}",
+                                token_id,
+                                table.rows()
                             )));
                         }
                         table.dequantize_row(token_id as usize, x);
@@ -2624,6 +2641,7 @@ impl Llama<CpuBackend> {
             }
             match loader.tensors.get(name) {
                 Some(crate::loader::LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(crate::loader::LoadedTensor::Half(weight)) => Ok(weight.dims().to_vec()),
                 Some(crate::loader::LoadedTensor::Q8_0(weight)) => {
                     Ok(vec![weight.in_features(), weight.out_features()])
                 }
@@ -2726,6 +2744,10 @@ impl Llama<CpuBackend> {
                     anyhow::ensure!(shape.len() == 2, "token_embd.weight must be 2D");
                     let embedding_shape = [shape[1], shape[0]];
                     LlamaEmbedding::F32(tensor.into_reshape(&embedding_shape))
+                }
+                LoadedTensor::Half(weight) => {
+                    anyhow::ensure!(weight.dims().len() == 2, "token_embd.weight must be 2D");
+                    LlamaEmbedding::Half(weight)
                 }
                 LoadedTensor::Q8_0(weight) => LlamaEmbedding::Q8_0(weight),
                 LoadedTensor::KQuant(weight) => LlamaEmbedding::KQuant(weight),
@@ -2832,6 +2854,14 @@ impl Llama<CpuBackend> {
                 );
                 Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
             }
+            Some(LoadedTensor::Half(weight)) => {
+                anyhow::ensure!(
+                    weight.dims().len() == 2,
+                    "output.weight must be a 2D linear weight, got {:?}",
+                    weight.dims()
+                );
+                Linear::new_half(weight, None)
+            }
             Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight, None),
             Some(LoadedTensor::KQuant(weight)) => Linear::new_k(weight, None),
             None => match &embed_tokens {
@@ -2843,6 +2873,11 @@ impl Llama<CpuBackend> {
                     Linear::<CpuBackend>::new_q8_0(weight.clone(), None)
                 }
                 LlamaEmbedding::KQuant(weight) => Linear::<CpuBackend>::new_k(weight.clone(), None),
+                // The table's GGUF dims [embed, vocab] are exactly a linear
+                // weight's [in, out]: share the mapping, no transpose.
+                LlamaEmbedding::Half(weight) => {
+                    Linear::<CpuBackend>::new_half(weight.clone(), None)
+                }
                 LlamaEmbedding::F32(tensor) => {
                     // The embedding is already reinterpreted as [vocab, embed]
                     // row-major; the linear needs [embed, vocab], so a real
@@ -2911,6 +2946,10 @@ impl Llama<CpuBackend> {
             LlamaEmbedding::F32(tensor) => {
                 anyhow::ensure!(tensor.shape().len() == 2, "token embedding must be 2D");
                 (tensor.shape()[0], tensor.shape()[1])
+            }
+            LlamaEmbedding::Half(weight) => {
+                anyhow::ensure!(weight.dims().len() == 2, "token embedding must be 2D");
+                (weight.rows(), weight.row_len())
             }
             LlamaEmbedding::Q8_0(weight) => (weight.out_features(), weight.in_features()),
             LlamaEmbedding::KQuant(weight) => (weight.out_features(), weight.in_features()),
@@ -3147,6 +3186,14 @@ fn take_llama_linear(
             );
             Linear::new(crate::loader::gguf_to_row_major_f32(tensor), bias)
         }
+        LoadedTensor::Half(weight) => {
+            anyhow::ensure!(
+                weight.dims().len() == 2,
+                "{name} must be a 2D linear weight, got {:?}",
+                weight.dims()
+            );
+            Linear::new_half(weight, bias)
+        }
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, bias),
         LoadedTensor::KQuant(weight) => Linear::new_k(weight, bias),
     };
@@ -3179,6 +3226,7 @@ fn take_optional_llama_norm(
 ) -> Option<CpuTensor> {
     match loader.tensors.remove(name) {
         Some(crate::loader::LoadedTensor::F32(tensor)) => Some(tensor),
+        Some(crate::loader::LoadedTensor::Half(weight)) => Some(weight.to_f32_tensor()),
         _ => None,
     }
 }
@@ -3283,6 +3331,9 @@ pub(crate) fn llama_embed_tokens<B: Backend>(
         match table {
             LlamaEmbedding::F32(table) => {
                 backend.assign_row_from_table(&mut output, row, table, token as usize)?;
+            }
+            LlamaEmbedding::Half(table) => {
+                backend.assign_row_from_half(&mut output, row, table, token as usize)?;
             }
             LlamaEmbedding::Q8_0(table) => {
                 backend.assign_row_from_q8_0(&mut output, row, table, token as usize)?;

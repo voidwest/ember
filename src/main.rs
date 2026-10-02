@@ -760,9 +760,42 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Top-level options a subcommand reads. Every other top-level option
+/// configures the default generation command only.
+const SUBCOMMAND_GLOBAL_OPTIONS: [&str; 2] = ["k_strategy", "k_allow_fallback"];
+
+/// Top-level options given on the command line that `subcommand` would
+/// silently ignore.
+fn ignored_top_level_options(matches: &clap::ArgMatches) -> Vec<String> {
+    Args::command()
+        .get_arguments()
+        .map(|argument| argument.get_id().as_str())
+        .filter(|id| !SUBCOMMAND_GLOBAL_OPTIONS.contains(id))
+        .filter(|id| {
+            matches.try_contains_id(id).unwrap_or(false)
+                && matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine)
+        })
+        .map(|id| format!("--{}", id.replace('_', "-")))
+        .collect()
+}
+
 fn run() -> anyhow::Result<()> {
-    env_logger::init();
+    // Warnings (unsupported architecture, eager-f32 fallback, packed-cache
+    // rejects) are part of the support contract, so they print unless
+    // RUST_LOG says otherwise; env_logger's own default is errors only.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let matches = Args::command().get_matches();
+    if let Some(subcommand) = matches.subcommand_name()
+        && subcommand != "kv"
+    {
+        let ignored = ignored_top_level_options(&matches);
+        anyhow::ensure!(
+            ignored.is_empty(),
+            "top-level options {} configure plain generation and are not read by `ember {subcommand}`; \
+             give the subcommand its own options after its name (see `ember {subcommand} --help`)",
+            ignored.join(", ")
+        );
+    }
     if matches.subcommand_name() == Some("kv") {
         let misplaced = [
             "model",

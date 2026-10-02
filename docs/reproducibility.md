@@ -150,9 +150,14 @@ machine.
 
 ### Cross-machine differences: the host profile
 
-The same experiment on two machines has the same semantic identity, but
-its numbers can differ in the last bits: SIMD tiers accumulate dot
-products and norms in different orders. `runtime.json` therefore records a
+The semantic hash binds the execution plan, and the plan records the
+binary's build, the kernel each op dispatched to, the detected CPU features
+and the worker thread count. The same experiment therefore has the same
+semantic hash only on the same binary, CPU class and thread count. Elsewhere,
+`exact` and `output-equivalent` are the verdicts to expect: they compare the
+generated tokens and captures themselves. Numbers can also differ in the
+last bits across hosts, because SIMD tiers accumulate dot products and norms
+in different orders. `runtime.json` therefore records a
 `host_profile` (`ember.host-profile.v1`, never part of either hash) with
 everything that decides reduction order:
 

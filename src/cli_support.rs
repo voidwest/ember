@@ -3,11 +3,13 @@ use anyhow::Context;
 use ember::extraction::{git_commit, sha256_bytes, sha256_file_result, unix_timestamp};
 use ember::loader::{GgufLoader, GgufValue};
 use ember::tokenizer::EmberTokenizer;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Embedded Llama tokenizer, materialized only when the conventional external
 /// tokenizer file is absent.
@@ -39,6 +41,56 @@ impl ResolvedTokenizer {
             Self::File(path) => EmberTokenizer::from_file(path),
             Self::EmbeddedLlama => EmberTokenizer::from_bytes(EMBEDDED_LLAMA_TOKENIZER),
         }
+    }
+
+    /// Hash the tokenizer, check it against `pin` (an expected SHA-256; empty
+    /// means unpinned) and only then parse it, returning the hash and the
+    /// tokenizer.
+    ///
+    /// The file is read once: the bytes that were hashed and checked are the
+    /// bytes parsed, so a pinned tokenizer cannot be swapped between the
+    /// check and the parse. Errors match [`Self::sha256`], a pin check, then
+    /// [`Self::load`], in that order: when [`Self::load`]'s guarded read
+    /// refuses the file, it is hashed by path so a hash failure or a pin
+    /// mismatch still wins over the refusal. Nothing is parsed once
+    /// `abandon` is set (the caller has failed and drops the result).
+    pub(crate) fn load_pinned(
+        &self,
+        pin: &str,
+        abandon: &AtomicBool,
+    ) -> anyhow::Result<(String, EmberTokenizer)> {
+        let bytes = match self {
+            Self::File(path) => match EmberTokenizer::read_file(path) {
+                Ok(bytes) => Cow::Owned(bytes),
+                Err(refused) => {
+                    let sha = self.sha256()?;
+                    self.check_pin(pin, &sha)?;
+                    return Err(refused);
+                }
+            },
+            Self::EmbeddedLlama => Cow::Borrowed(EMBEDDED_LLAMA_TOKENIZER.as_bytes()),
+        };
+        let sha = sha256_bytes(&bytes);
+        self.check_pin(pin, &sha)?;
+        anyhow::ensure!(
+            !abandon.load(Ordering::Relaxed),
+            "abandoned loading tokenizer '{}'",
+            self.identity()
+        );
+        let tokenizer = EmberTokenizer::from_bytes(bytes)?;
+        Ok((sha, tokenizer))
+    }
+
+    fn check_pin(&self, pin: &str, sha: &str) -> anyhow::Result<()> {
+        if !pin.is_empty() && pin != sha {
+            anyhow::bail!(
+                "tokenizer SHA-256 mismatch: spec expects {} but '{}' hashes to {}",
+                pin,
+                self.identity(),
+                sha
+            );
+        }
+        Ok(())
     }
 }
 
@@ -800,6 +852,77 @@ mod tests {
         assert_eq!(resolved.identity(), "embedded:tokenizer.json");
         assert_eq!(resolved.sha256().unwrap().len(), 64);
         assert!(resolved.load().unwrap().vocab_size() > 0);
+    }
+
+    fn pinned_error(
+        tokenizer: &ResolvedTokenizer,
+        pin: &str,
+        abandon: &AtomicBool,
+    ) -> anyhow::Error {
+        match tokenizer.load_pinned(pin, abandon) {
+            Ok(_) => panic!("{} loaded against pin '{pin}'", tokenizer.identity()),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn pinned_tokenizer_is_parsed_only_after_its_hash_matches() {
+        let never = AtomicBool::new(false);
+        let embedded = ResolvedTokenizer::EmbeddedLlama;
+        let embedded_sha = embedded.sha256().unwrap();
+        let (sha, tokenizer) = embedded.load_pinned(&embedded_sha, &never).unwrap();
+        assert_eq!(sha, embedded_sha);
+        assert!(tokenizer.vocab_size() > 0);
+        let (sha, _) = embedded.load_pinned("", &never).unwrap();
+        assert_eq!(sha, embedded_sha);
+
+        let dir = std::env::temp_dir().join(format!(
+            "ember_pinned_tokenizer_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        // Not JSON: parsing it would fail, so a pin error proves it was
+        // checked before any parse.
+        let garbage = dir.join("garbage.json");
+        fs::write(&garbage, b"not a tokenizer").unwrap();
+        let garbage = ResolvedTokenizer::File(garbage.display().to_string());
+        let garbage_sha = sha256_bytes(b"not a tokenizer");
+        let mismatch = pinned_error(&garbage, &embedded_sha, &never).to_string();
+        assert!(
+            mismatch.starts_with("tokenizer SHA-256 mismatch: spec expects "),
+            "{mismatch}"
+        );
+        assert!(mismatch.ends_with(&garbage_sha), "{mismatch}");
+        let parse = format!("{:#}", pinned_error(&garbage, &garbage_sha, &never));
+        assert!(parse.contains("tokenizer JSON"), "{parse}");
+        assert_eq!(
+            pinned_error(&garbage, &garbage_sha, &AtomicBool::new(true)).to_string(),
+            format!("abandoned loading tokenizer '{}'", garbage.identity())
+        );
+
+        // The guarded read refuses symlinks, but a pin mismatch still wins
+        // over that refusal, as when the file was hashed before it was read.
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.json");
+            std::os::unix::fs::symlink(dir.join("garbage.json"), &link).unwrap();
+            let link = ResolvedTokenizer::File(link.display().to_string());
+            let mismatch = pinned_error(&link, &embedded_sha, &never).to_string();
+            assert!(
+                mismatch.starts_with("tokenizer SHA-256 mismatch"),
+                "{mismatch}"
+            );
+            let refused = pinned_error(&link, &garbage_sha, &never).to_string();
+            assert_eq!(refused, link.load().err().unwrap().to_string());
+        }
+        let missing = ResolvedTokenizer::File(dir.join("missing.json").display().to_string());
+        let error = pinned_error(&missing, "", &never).to_string();
+        assert_eq!(error, missing.sha256().unwrap_err().to_string());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
