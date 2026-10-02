@@ -68,9 +68,19 @@ pub(crate) fn quantize_q8_0_blocks(src: &[f32], dst: &mut [u8]) {
         .chunks_exact(Q8_0_BLOCK_SIZE)
         .zip(dst.chunks_exact_mut(Q8_0_TYPE_SIZE))
     {
-        let amax = values
-            .iter()
-            .fold(0.0f32, |acc, value| acc.max(value.abs()));
+        // `f32::max` drops NaN, which would encode a non-finite block as
+        // zeros and hide it from every non-finite guard downstream. Keep the
+        // NaN (and Inf) in the scale instead: the block's dot is then
+        // multiplied by a non-finite scale and the product is NaN. Finite
+        // blocks get exactly the same maximum as before.
+        let amax = values.iter().fold(0.0f32, |acc, value| {
+            let magnitude = value.abs();
+            if magnitude > acc || magnitude.is_nan() {
+                magnitude
+            } else {
+                acc
+            }
+        });
         let scale = amax / 127.0;
         let inv_scale = if scale != 0.0 { scale.recip() } else { 0.0 };
         block[..2].copy_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
@@ -764,6 +774,33 @@ mod tests {
         let mut encoded = Vec::new();
         quantize_q8_0_into(&[0.0; Q8_0_BLOCK_SIZE], &mut encoded);
         assert_eq!(encoded, vec![0; Q8_0_TYPE_SIZE]);
+    }
+
+    /// A non-finite activation must not be encoded as an innocent block of
+    /// zeros: the scale carries it, so any product with the block is NaN and
+    /// the non-finite guards downstream can see it.
+    #[test]
+    fn quantize_q8_0_keeps_non_finite_blocks_non_finite() {
+        for poison in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for position in [0, 13, Q8_0_BLOCK_SIZE - 1] {
+                let mut values = vec![0.25f32; 2 * Q8_0_BLOCK_SIZE];
+                values[position] = poison;
+                let mut encoded = Vec::new();
+                quantize_q8_0_into(&values, &mut encoded);
+                let scale = |block: usize| {
+                    let offset = block * Q8_0_TYPE_SIZE;
+                    f16::from_bits(u16::from_le_bytes([encoded[offset], encoded[offset + 1]]))
+                        .to_f32()
+                };
+                assert!(
+                    !scale(0).is_finite(),
+                    "{poison} at {position} left a finite scale {}",
+                    scale(0)
+                );
+                // The neighbouring block is untouched.
+                assert_eq!(scale(1), f16::from_f32(0.25 / 127.0).to_f32());
+            }
+        }
     }
 
     #[test]

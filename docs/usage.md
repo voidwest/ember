@@ -87,6 +87,15 @@ off-by-one continuation semantics, safety limits, and command examples are in
 
 ### flags
 
+Top-level options (those listed by `ember --help`) configure plain generation.
+A subcommand reads only `--k-strategy` and `--k-allow-fallback` from that
+level and rejects the rest with an error instead of ignoring them; give a
+subcommand its own options after its name.
+
+Warnings print by default (unsupported or experimental architecture, eager-f32
+fallback, packed-cache problems). `RUST_LOG=info` or `RUST_LOG=debug` adds
+detail and `RUST_LOG=error` silences warnings.
+
 | flag | default | description |
 |------|---------|-------------|
 | `-m`, `--model` | `gpt2.Q8_0.gguf` | path to gguf model file |
