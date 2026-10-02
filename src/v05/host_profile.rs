@@ -166,7 +166,15 @@ impl HostProfile {
     }
 }
 
+/// The CPU's model name. It cannot change while the process runs, so it is
+/// looked up once (on macOS that spawns `sysctl`) and reused by every
+/// bundle a sweep or GUI session writes.
 fn cpu_model() -> String {
+    static MODEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MODEL.get_or_init(detect_cpu_model).clone()
+}
+
+fn detect_cpu_model() -> String {
     #[cfg(target_os = "macos")]
     {
         if let Ok(output) = std::process::Command::new("sysctl")

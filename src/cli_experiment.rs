@@ -1126,7 +1126,7 @@ pub(crate) fn finish_bundle(
         spec_text: target.spec_text.to_string(),
         resolved: resolved_with_output,
         ember_version: env!("CARGO_PKG_VERSION").to_string(),
-        ember_commit: ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()),
+        ember_commit: ember_commit().to_string(),
         model_meta: ModelBundleMeta {
             sha256: prepared.model_sha.clone(),
             architecture: prepared.architecture.clone(),
@@ -1155,6 +1155,15 @@ pub(crate) fn finish_bundle(
         results,
         prefix,
     })
+}
+
+/// The commit recorded as `ember_commit` in every bundle this process
+/// writes. `git rev-parse HEAD` is asked once per process rather than once
+/// per bundle: a 17-point sweep otherwise spawns `git` 17 times (~10 ms
+/// each) for the same answer.
+fn ember_commit() -> &'static str {
+    static COMMIT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    COMMIT.get_or_init(|| ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()))
 }
 
 fn peak_rss_kb() -> Option<u64> {
