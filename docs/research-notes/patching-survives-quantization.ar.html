@@ -3,14 +3,14 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta name="description" content="activation patching على نسخ F16 وQ8_0 وQ6_K وQ4_K_M من موديلين صغار: الأماكن المهمة تتفق، وترتيب الباقي ما يتفق.">
-        <meta property="og:title" content="الـpatching على موديل مضغوط: الأماكن المهمة تصمد">
-        <meta property="og:description" content="72 تشغيلة، وكل candidate انعمل له patch حقيقي. القاعدة اللي سجّلتها من قبل طاحت في كل مستوى، وسبب طيحتها هو النتيجة المفيدة.">
+        <meta name="description" content="activation patching على نسخ F16 وQ8_0 وQ6_K وQ4_K_M من نموذجين صغار: الأماكن المهمة تتفق، وترتيب الباقي ما يتفق.">
+        <meta property="og:title" content="الـpatching على نموذج مضغوط: الأماكن المهمة تصمد">
+        <meta property="og:description" content="72 تشغيل، وكل candidate انعمل له patch حقيقي. القاعدة اللي سجلتها مسبقاً فشلت في كل مستوى، وسبب فشلها هو النتيجة المفيدة.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/research-notes/patching-survives-quantization.ar.html">
         <meta property="og:site_name" content="voidwest">
         <meta name="twitter:card" content="summary_large_image">
-        <title>الـpatching على موديل مضغوط: الأماكن المهمة تصمد</title>
+        <title>الـpatching على نموذج مضغوط: الأماكن المهمة تصمد</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
         <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
@@ -60,78 +60,80 @@
 <bdi>research notes</bdi>
 </a>
         </div>
-<h1>الـpatching على موديل مضغوط: الأماكن المهمة تصمد</h1>
-<div class="meta">2026-10-02 · 72 تشغيلة · Llama-3.2-1B وQwen2.5-1.5B، من F16 لين Q4_K_M</div>
-<p>أغلب الناس اللي يسوّوا activation patching على لابتوب، يشتغلوا على ملف GGUF مضغوط، عشان هو اللي يقدروا يشغّلوه. طيب السؤال: هل دي نفس التجربة لو سوّيناها على الموديل الأصلي اللي انضغط منه؟</p>
-<p>سوّيت patch لكل candidate على أربع نسخ من موديلين، وقارنت كل نسخة مضغوطة بأصلها الـF16. الأماكن اللي شايلة الجواب طلعت متفقة مرة في كل النسخ. بس ترتيب الأماكن اللي تأثيرها شبه صفر ما اتفق، وهادا الاختلاف هو اللي كسر القاعدة اللي كتبتها قبل ما أبدأ.</p>
-<div class="callout observation">
-<div class="label">حدود الكلام</div>
-<p>موديلين instruction صغار، قالب واحد لاسترجاع معلومة، وست أزواج prompts بس. يعني ما نقدر نقول منها شي عن موديلات أكبر، ولا circuits تانية، ولا quantizers غير حق llama.cpp. والـF16 هنا مرجع، مو الحقيقة المطلقة: هو نفسه تقريب لأوزان BF16 الأصلية.</p>
+<h1>الـ<bdi>patching</bdi> على نموذج مضغوط: الأماكن المهمة تصمد</h1>
+<div class="meta">
+<bdi>2026-10-02</bdi> · <bdi>72</bdi> تشغيل · <bdi>Llama-3.2-1B</bdi> و<bdi>Qwen2.5-1.5B</bdi>، من <bdi>F16</bdi> إلى <bdi>Q4_K_M</bdi>
 </div>
-<h2>إيش سوّيت</h2>
-<p>الـprompt هو <code>The capital of {country} is the city of</code>. الـprompt النضيف فيه دولة، والـcorrupted فيه دولة تانية، وعندنا ست أزواج زي فرنسا وإيطاليا. المقياس هو logit عاصمة النضيف ناقص logit عاصمة الـcorrupted عند آخر موقع.</p>
-<p>كل موديل له أربع مستويات: ملف F16 الأصلي، وبعدين Q8_0 وQ6_K وQ4_K_M، كلهم مطلوعين من نفس الملف بنفس نسخة llama.cpp المثبّتة. يعني الفرق الوحيد بين المستويات هو الضغط، ولا شي غيره.</p>
-<p>الـcandidate هو مكان واحد (الـresidual stream الداخل للـblock، أو مخرج الـattention، أو مخرج الـMLP) في layer واحدة وعند token واحد. المواقع تبدأ من token الدولة لين الآخر، لأن اللي قبلها نفسه بالضبط في الـpromptين. كدا يطلع عندنا 240 candidate لكل تشغيلة Llama و420 لكل تشغيلة Qwen.</p>
-<p>كل candidate انعمل له patch حقيقي: الـprompt الـcorrupted يشتغل وفيه الـactivation النضيفة مكتوبة في داك المكان بس. التأثير المقاس هو كم تغيّر المقياس، والـrecovered fraction هو التأثير مقسوم على الفجوة بين النضيف والـcorrupted. التقدير الأرخص حق Ember انحفظ، بس مو هو اللي نقارنه هنا.</p>
-<p>الـ72 تشغيلة كلها جاوبت صح: كل prompt نضيف يفضّل العاصمة الصح، وكل corrupted يفضّل التانية. وكل bundle عدّى الـverify، والـhashes حقته موجودة في ملف الـprovenance المنشور.</p>
-<h2>القاعدة اللي كتبتها أول، طاحت في كل مكان</h2>
-<p>قبل أي تشغيلة سجّلت قاعدة قرار: المستوى ينحسب إنه يعطي نفس استنتاجات F16 إذا في كل زوج كان Spearman للتأثيرات المقاسة على كل الـcandidates 0.9 أو أكتر، وأقوى مكان هو نفسه، والأماكن اللي ترجّع 20% أو أكتر من الفجوة تتداخل بـJaccard 0.8 أو أكتر.</p>
-<p>ولا مستوى في أي موديل نجح. Q8_0 حق Llama، وهو الأقرب للـF16، وصل median Spearman 0.90 وطابق أقوى مكان في زوج واحد بس من ستة. وQ4_K_M حق Qwen وصل median 0.62.</p>
-<p>الشرط التالت مشي تقريباً في كل مكان: الأماكن المهمة تداخلت بـJaccard 0.85 أو أكتر في كل مستوى. اللي طاحوا هم أول شرطين، فرحت أشوف إيش هم يقيسوا أصلاً.</p>
-<h2>ليش طاحت</h2>
-<p>أغلب الـcandidates تأثيرها شبه ولا شي. في F16، 75% من candidates حق Llama و87% من حق Qwen ترجّع أقل من 2% من الفجوة. ضوضاء الضغط تلخبط ترتيب التأثيرات الصغيرة دي على كيفها، والـrank correlation على كل الـcandidates يصير في الغالب يقيس اللخبطة دي بس.</p>
-<p>وفوق القائمة تقريباً تعادل. لو سوّيت patch للـresidual stream عند token الدولة في أي layer بدري، ترجع الفجوة كلها تقريباً، فأحسن مكانين في F16 الفرق بيناتهم 0.4 نقطة مئوية بالكتير. مين يجي الأول قريب من إنك ترمي عملة. وفي كل مستوى، أقوى مكان في النسخة المضغوطة يرجّع في حدود 1.5 نقطة من أحسن مكان في F16.</p>
-<p>يعني القاعدة كانت تختبر شيئين ما يفرقوا في التفسير: ترتيب الأماكن الهامشية، والترتيب جوّا التعادل.</p>
-<h2>طيب إيش اللي اتفق</h2>
-<p>لو حصرنا المقارنة في الأماكن اللي ترجّع 5% أو أكتر من الفجوة في F16، التأثيرات تطلع متفقة مرة. منحنى كل مستوى على الـlayers راكب فوق منحنى F16 تقريباً.</p>
+<p>أغلب اللي يسوون <bdi>activation patching</bdi> على لابتوب يشتغلون على ملف <bdi>GGUF</bdi> مضغوط، عشان هو اللي يقدرون يشغلونه. طيب السؤال: هل هذي نفس التجربة لو سويناها على النموذج الأصلي اللي انضغط منه؟</p>
+<p>سويت <bdi>patch</bdi> لكل <bdi>candidate</bdi> على أربع نسخ من نموذجين، وقارنت كل نسخة مضغوطة بأصلها الـ<bdi>F16.</bdi> الأماكن اللي تحمل الجواب طلعت متفقة مرة في كل النسخ. بس ترتيب الأماكن اللي تأثيرها شبه صفر ما اتفق، وهذا الاختلاف هو اللي كسر القاعدة اللي كتبتها قبل ما أبدأ.</p>
+<div class="callout observation">
+<div class="label">حدود النتيجة</div>
+<p>نموذجين <bdi>instruction</bdi> صغار، قالب واحد لاسترجاع معلومة، وست أزواج <bdi>prompts</bdi> بس. يعني ما نقدر نقول منها شيء عن نماذج أكبر، ولا <bdi>circuits</bdi> ثانية، ولا <bdi>quantizers</bdi> غير اللي في <bdi>llama.cpp.</bdi> والـ<bdi>F16</bdi> هنا مرجع، مو الحقيقة المطلقة: هو نفسه تقريب لأوزان <bdi>BF16</bdi> الأصلية.</p>
+</div>
+<h2>إيش سويت</h2>
+<p>الـ<bdi>prompt</bdi> هو <code>The capital of {country} is the city of</code>. الـ<bdi>prompt</bdi> النظيف فيه دولة، والـ<bdi>corrupted</bdi> فيه دولة ثانية، وعندنا ست أزواج مثل فرنسا وإيطاليا. المقياس هو <bdi>logit</bdi> عاصمة النظيف ناقص <bdi>logit</bdi> عاصمة الـ<bdi>corrupted</bdi> عند آخر موقع.</p>
+<p>لكل نموذج أربع مستويات: ملف <bdi>F16</bdi> الأصلي، وبعدها <bdi>Q8_0</bdi> و<bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi>، كلها مصنوعة من نفس الملف بنفس نسخة <bdi>llama.cpp</bdi> المثبتة. يعني الفرق الوحيد بين المستويات هو الضغط، ولا شيء غيره.</p>
+<p>الـ<bdi>candidate</bdi> هو مكان واحد (الـ<bdi>residual stream</bdi> الداخل للـ<bdi>block</bdi>، أو مخرج الـ<bdi>attention</bdi>، أو مخرج الـ<bdi>MLP</bdi>) في <bdi>layer</bdi> واحدة وعند <bdi>token</bdi> واحد. المواقع تبدأ من <bdi>token</bdi> الدولة إلى الآخر، لأن اللي قبلها نفسه بالضبط في الـ<bdi>prompt</bdi>ين. كذا يطلع عندنا <bdi>240 candidate</bdi> لكل تشغيل <bdi>Llama</bdi> و<bdi>420</bdi> لكل تشغيل <bdi>Qwen.</bdi></p>
+<p>كل <bdi>candidate</bdi> انعمل له <bdi>patch</bdi> حقيقي: الـ<bdi>prompt</bdi> الـ<bdi>corrupted</bdi> يشتغل وفيه الـ<bdi>activation</bdi> النظيفة مكتوبة في هذاك المكان بس. التأثير المقاس هو كم تغير المقياس، والـ<bdi>recovered fraction</bdi> هو التأثير مقسوم على الفجوة بين النظيف والـ<bdi>corrupted.</bdi> التقدير الأرخص في <bdi>Ember</bdi> انحفظ، بس مو هو اللي نقارنه هنا.</p>
+<p>الـ<bdi>72</bdi> تشغيل كلها جاوبت صح: كل <bdi>prompt</bdi> نظيف يفضل العاصمة الصحيحة، وكل <bdi>corrupted</bdi> يفضل الثانية. وكل <bdi>bundle</bdi> عدى الـ<bdi>verify</bdi>، والـ<bdi>hashes</bdi> حقته موجودة في ملف الـ<bdi>provenance</bdi> المنشور.</p>
+<h2>القاعدة اللي كتبتها أول فشلت في كل مكان</h2>
+<p>قبل أي تشغيل سجلت قاعدة قرار: المستوى ينحسب إنه يعطي نفس استنتاجات <bdi>F16</bdi> إذا في كل زوج كان <bdi>Spearman</bdi> للتأثيرات المقاسة على كل الـ<bdi>candidates 0.9</bdi> أو أكثر، وأقوى مكان هو نفسه، والأماكن اللي ترجع <bdi>20%</bdi> أو أكثر من الفجوة تتداخل بـ<bdi>Jaccard 0.8</bdi> أو أكثر.</p>
+<p>ولا مستوى في أي نموذج نجح. <bdi>Q8_0</bdi> في <bdi>Llama</bdi>، وهو الأقرب للـ<bdi>F16</bdi>، وصل <bdi>median Spearman 0.90</bdi> وطابق أقوى مكان في زوج واحد بس من ستة. و<bdi>Q4_K_M</bdi> في <bdi>Qwen</bdi> وصل <bdi>median 0.62.</bdi></p>
+<p>الشرط الثالث مشى تقريباً في كل مكان: الأماكن المهمة تداخلت بـ<bdi>Jaccard 0.85</bdi> أو أكثر في كل مستوى. اللي فشلوا هم أول شرطين، فرحت أشوف إيش يقيسون أصلاً.</p>
+<h2>ليش فشلت</h2>
+<p>أغلب الـ<bdi>candidates</bdi> تأثيرها شبه معدوم. في <bdi>F16</bdi>، <bdi>75%</bdi> من <bdi>candidates</bdi> في <bdi>Llama</bdi> و<bdi>87%</bdi> في <bdi>Qwen</bdi> ترجع أقل من <bdi>2%</bdi> من الفجوة. ضوضاء الضغط تخلط ترتيب هذي التأثيرات الصغيرة بحرية، والـ<bdi>rank correlation</bdi> على كل الـ<bdi>candidates</bdi> يصير في الغالب يقيس هذا الخلط بس.</p>
+<p>وأعلى القائمة شبه تعادل. لو سويت <bdi>patch</bdi> للـ<bdi>residual stream</bdi> عند <bdi>token</bdi> الدولة في أي <bdi>layer</bdi> بدري، ترجع الفجوة كلها تقريباً، فأحسن مكانين في <bdi>F16</bdi> الفرق بينهم <bdi>0.4</bdi> نقطة مئوية بالأكثر. مين يجي الأول قريب من رمي عملة. وفي كل مستوى، أقوى مكان في النسخة المضغوطة يرجع في حدود <bdi>1.5</bdi> نقطة من أحسن مكان في <bdi>F16.</bdi></p>
+<p>يعني القاعدة كانت تختبر شيئين ما يهمون في التفسير: ترتيب الأماكن الهامشية، والترتيب داخل التعادل.</p>
+<h2>طيب إيش اللي اتفق؟</h2>
+<p>لو حصرنا المقارنة في الأماكن اللي ترجع <bdi>5%</bdi> أو أكثر من الفجوة في <bdi>F16</bdi>، التأثيرات تطلع متفقة مرة. منحنى كل مستوى على الـ<bdi>layers</bdi> فوق منحنى <bdi>F16</bdi> تقريباً.</p>
 <figure>
-<img class="chart theme-chart-dark" src="figures/quant-patching-profile-dark.png" alt="الـrecovered fraction لكل layer عند آخر موقع، فرنسا قدام إيطاليا، لـF16 وQ8_0 وQ6_K وQ4_K_M. في الموديلين المنحنيات المضغوطة راكبة فوق منحنى F16 في كل مكان.">
-<img class="chart theme-chart-light" src="figures/quant-patching-profile-light.png" alt="الـrecovered fraction لكل layer عند آخر موقع، فرنسا قدام إيطاليا، لـF16 وQ8_0 وQ6_K وQ4_K_M. في الموديلين المنحنيات المضغوطة راكبة فوق منحنى F16 في كل مكان.">
-<figcaption>فرنسا قدام إيطاليا، آخر موقع. في باقي الأزواج المنحنيات دي تختلف عن F16 بـ8.5 نقطة بالكتير في أي مستوى. البيانات كاملة في comparison.csv جوّا مجلد الدراسة.</figcaption>
+<img class="chart theme-chart-dark" src="figures/quant-patching-profile-dark.png" alt="الـrecovered fraction لكل layer عند آخر موقع، فرنسا مقابل إيطاليا، لـF16 وQ8_0 وQ6_K وQ4_K_M. في النموذجين المنحنيات المضغوطة فوق منحنى F16 في كل مكان.">
+<img class="chart theme-chart-light" src="figures/quant-patching-profile-light.png" alt="الـrecovered fraction لكل layer عند آخر موقع، فرنسا مقابل إيطاليا، لـF16 وQ8_0 وQ6_K وQ4_K_M. في النموذجين المنحنيات المضغوطة فوق منحنى F16 في كل مكان.">
+<figcaption>فرنسا مقابل إيطاليا، آخر موقع. في باقي الأزواج هذي المنحنيات تختلف عن <bdi>F16</bdi> بـ<bdi>8.5</bdi> نقطة بالأكثر في أي مستوى. البيانات كاملة في <bdi>comparison.csv</bdi> داخل مجلد الدراسة.</figcaption>
 </figure>
 <div class="table-wrap">
 <table>
 <thead>
-<tr><th>الموديل</th><th>المستوى</th><th>Spearman، كل الـcandidates (median)</th><th>Spearman، الأماكن ≥5% (أسوأ زوج)</th><th>أكبر غلطة في الـrecovered fraction</th><th>layer التسليم نفس F16</th></tr>
+<tr><th>النموذج</th><th>المستوى</th><th><bdi>Spearman</bdi>، كل الـ<bdi>candidates</bdi> (<bdi>median</bdi>)</th><th><bdi>Spearman</bdi>، الأماكن <bdi>≥5%</bdi> (أسوأ زوج)</th><th>أكبر خطأ في الـ<bdi>recovered fraction</bdi></th><th><bdi>layer</bdi> التسليم نفس <bdi>F16</bdi></th></tr>
 </thead>
 <tbody>
-<tr><td>Llama-3.2-1B</td><td>Q8_0</td><td>0.90</td><td>0.997</td><td>1.6 نقطة</td><td>6 من 6</td></tr>
-<tr><td>Llama-3.2-1B</td><td>Q6_K</td><td>0.82</td><td>0.995</td><td>6.5 نقطة</td><td>5 من 6</td></tr>
-<tr><td>Llama-3.2-1B</td><td>Q4_K_M</td><td>0.80</td><td>0.972</td><td>8.5 نقطة</td><td>5 من 6</td></tr>
-<tr><td>Qwen2.5-1.5B</td><td>Q8_0</td><td>0.85</td><td>0.934</td><td>3.8 نقطة</td><td>6 من 6</td></tr>
-<tr><td>Qwen2.5-1.5B</td><td>Q6_K</td><td>0.68</td><td>0.883</td><td>4.6 نقطة</td><td>6 من 6</td></tr>
-<tr><td>Qwen2.5-1.5B</td><td>Q4_K_M</td><td>0.62</td><td>0.867</td><td>8.5 نقطة</td><td>6 من 6</td></tr>
+<tr><td><bdi>Llama-3.2-1B</bdi></td><td><bdi>Q8_0</bdi></td><td><bdi>0.90</bdi></td><td><bdi>0.997</bdi></td><td><bdi>1.6</bdi> نقطة</td><td><bdi>6</bdi> من <bdi>6</bdi></td></tr>
+<tr><td><bdi>Llama-3.2-1B</bdi></td><td><bdi>Q6_K</bdi></td><td><bdi>0.82</bdi></td><td><bdi>0.995</bdi></td><td><bdi>6.5</bdi> نقطة</td><td><bdi>5</bdi> من <bdi>6</bdi></td></tr>
+<tr><td><bdi>Llama-3.2-1B</bdi></td><td><bdi>Q4_K_M</bdi></td><td><bdi>0.80</bdi></td><td><bdi>0.972</bdi></td><td><bdi>8.5</bdi> نقطة</td><td><bdi>5</bdi> من <bdi>6</bdi></td></tr>
+<tr><td><bdi>Qwen2.5-1.5B</bdi></td><td><bdi>Q8_0</bdi></td><td><bdi>0.85</bdi></td><td><bdi>0.934</bdi></td><td><bdi>3.8</bdi> نقطة</td><td><bdi>6</bdi> من <bdi>6</bdi></td></tr>
+<tr><td><bdi>Qwen2.5-1.5B</bdi></td><td><bdi>Q6_K</bdi></td><td><bdi>0.68</bdi></td><td><bdi>0.883</bdi></td><td><bdi>4.6</bdi> نقطة</td><td><bdi>6</bdi> من <bdi>6</bdi></td></tr>
+<tr><td><bdi>Qwen2.5-1.5B</bdi></td><td><bdi>Q4_K_M</bdi></td><td><bdi>0.62</bdi></td><td><bdi>0.867</bdi></td><td><bdi>8.5</bdi> نقطة</td><td><bdi>6</bdi> من <bdi>6</bdi></td></tr>
 </tbody>
 </table>
 </div>
-<p>layer التسليم هي أول layer يرجّع فيها الـresidual stream عند آخر موقع نص الفجوة، يعني المكان اللي يوصل فيه الجواب لآخر token. طلعت نفس F16 في 34 من 36 مقارنة، والتنتين الباقيات جت قبلها بـlayer وحدة. وأقوى مخرج attention أو MLP طلع نفس F16 في الـ36 كلها.</p>
-<p>والفجوة نفسها تتحرك حوالي 5% بالكتير. الضغط ما غيّر إيش يعرفوا الموديلين عن العواصم، ولا فين ينقلوا المعلومة دي.</p>
+<p><bdi>layer</bdi> التسليم هي أول <bdi>layer</bdi> يرجع فيها الـ<bdi>residual stream</bdi> عند آخر موقع نص الفجوة، يعني المكان اللي يوصل فيه الجواب لآخر <bdi>token.</bdi> طلعت نفس <bdi>F16</bdi> في <bdi>34</bdi> من <bdi>36</bdi> مقارنة، والاثنين الباقية جت قبلها بـ<bdi>layer</bdi> واحدة. وأقوى مخرج <bdi>attention</bdi> أو <bdi>MLP</bdi> طلع نفس <bdi>F16</bdi> في الـ<bdi>36</bdi> كلها.</p>
+<p>والفجوة نفسها تتحرك حوالي <bdi>5%</bdi> بالأكثر. الضغط ما غير إيش يعرف النموذجين عن العواصم، ولا فين ينقلون هذي المعلومة.</p>
 <figure>
-<img class="chart theme-chart-dark" src="figures/quant-patching-agreement-dark.png" alt="Spearman للتأثيرات المقاسة قدام F16 لكل زوج. العلامات الفاضية على كل الـcandidates تنزل من حوالي 0.9 في Q8_0 لين حوالي 0.6 في Q4_K_M عند Qwen. العلامات المليانة على الأماكن اللي ترجّع 5% أو أكتر تقعد 0.97 أو فوق عند Llama و0.87 أو فوق عند Qwen.">
-<img class="chart theme-chart-light" src="figures/quant-patching-agreement-light.png" alt="Spearman للتأثيرات المقاسة قدام F16 لكل زوج. العلامات الفاضية على كل الـcandidates تنزل من حوالي 0.9 في Q8_0 لين حوالي 0.6 في Q4_K_M عند Qwen. العلامات المليانة على الأماكن اللي ترجّع 5% أو أكتر تقعد 0.97 أو فوق عند Llama و0.87 أو فوق عند Qwen.">
-<figcaption>الفاضية: المقياس المسجّل من قبل على كل الـcandidates. المليانة: نفس المقياس على الأماكن المهمة في F16. نقطة لكل زوج.</figcaption>
+<img class="chart theme-chart-dark" src="figures/quant-patching-agreement-dark.png" alt="Spearman للتأثيرات المقاسة مقابل F16 لكل زوج. العلامات الفاضية على كل الـcandidates تنزل من حوالي 0.9 في Q8_0 إلى حوالي 0.6 في Q4_K_M عند Qwen. العلامات المليانة على الأماكن اللي ترجع 5% أو أكثر تبقى 0.97 أو فوق عند Llama و0.87 أو فوق عند Qwen.">
+<img class="chart theme-chart-light" src="figures/quant-patching-agreement-light.png" alt="Spearman للتأثيرات المقاسة مقابل F16 لكل زوج. العلامات الفاضية على كل الـcandidates تنزل من حوالي 0.9 في Q8_0 إلى حوالي 0.6 في Q4_K_M عند Qwen. العلامات المليانة على الأماكن اللي ترجع 5% أو أكثر تبقى 0.97 أو فوق عند Llama و0.87 أو فوق عند Qwen.">
+<figcaption>الفاضية: المقياس المسجل مسبقاً على كل الـ<bdi>candidates.</bdi> المليانة: نفس المقياس على الأماكن المهمة في <bdi>F16.</bdi> نقطة لكل زوج.</figcaption>
 </figure>
-<p>Qwen يتأثر أكتر من Llama. في Q4_K_M أسوأ زوج عنده ينزل لـ0.87 على الأماكن المهمة، وLlama عند 0.97، والمنحنيات لسّا تنقرا بنفس الطريقة. وبست أزواج بس لكل موديل، ما أبغى أبني على الفرق دا أكتر من كدا.</p>
-<h2>إيش نطلع منها</h2>
-<p>في الموديلات دي والمهمة دي، نسخة Q4_K_M تلاقي نفس الأماكن، وأحجام تأثير في حدود نقاط قليلة، ونفس layer التسليم زي F16. يعني تحديد فين تنشال المعلومة يصمد قدام الضغط.</p>
-<p>بس فيه عادتين ما يصمدوا. إنك تقرا الترتيب بين التأثيرات الصغيرة، دا تقرا ضوضاء. والـrank correlation على كل الـcandidates تتحكم فيه التأثيرات الصغيرة دي، فيقلّل من الاتفاق على المهم، وما ينفع يكون الرقم الرئيسي في مقارنة patching. الأحسن تنشر أحجام التأثير فوق حد معلن.</p>
-<p>والقاعدة اللي كتبتها من قبل وقعت في الغلطة دي بالضبط. وهي لسّا في مجلد الدراسة زي ما كتبتها، وجنبها التشخيصات اللي انضافت بعد أول تشغيلة، ومكتوب عليها إنها استكشافية.</p>
+<p><bdi>Qwen</bdi> يتأثر أكثر من <bdi>Llama.</bdi> في <bdi>Q4_K_M</bdi> أسوأ زوج عنده ينزل إلى <bdi>0.87</bdi> على الأماكن المهمة، و<bdi>Llama</bdi> عند <bdi>0.97</bdi>، والمنحنيات لسه تنقرأ بنفس الطريقة. ومع ست أزواج بس لكل نموذج، ما أبغى أبني على هذا الفرق أكثر من كذا.</p>
+<h2>إيش نطلع منها؟</h2>
+<p>في هذي النماذج وهذي المهمة، نسخة <bdi>Q4_K_M</bdi> تلقى نفس الأماكن، وأحجام تأثير في حدود نقاط قليلة، ونفس <bdi>layer</bdi> التسليم مثل <bdi>F16.</bdi> يعني تحديد فين تنحمل المعلومة يصمد مع الضغط.</p>
+<p>بس فيه عادتين ما يصمدون. قراءة الترتيب بين التأثيرات الصغيرة هي قراءة ضوضاء. والـ<bdi>rank correlation</bdi> على كل الـ<bdi>candidates</bdi> تسيطر عليه هذي التأثيرات الصغيرة، فيقلل من الاتفاق على المهم، وما يصلح يكون الرقم الرئيسي في مقارنة <bdi>patching.</bdi> الأحسن تنشر أحجام التأثير فوق حد معلن.</p>
+<p>والقاعدة اللي كتبتها مسبقاً وقعت في هذي الغلطة بالضبط. وهي لسه في مجلد الدراسة زي ما كتبتها، وجنبها التشخيصات اللي انضافت بعد أول تشغيل، ومكتوب عليها إنها استكشافية.</p>
 <h2>الحدود</h2>
 <ul>
-<li>موديلين حجمهم من 1 لين 1.5 مليار parameter، قالب واحد، ست أزواج. استرجاع المعلومات إشارة قوية وتتكوّن بدري، والـcircuits الأضعف ممكن تكون أقرب لمستوى ضوضاء الضغط.</li>
-<li>حد الـ5% وتعريف layer التسليم اخترتهم بعد ما شفت أول نتيجة. والمقاييس المسجّلة من قبل منشورة كاملة جنبهم.</li>
-<li>تشغيلة deterministic وحدة لكل خانة. وضع reference في Ember يطلّع نفس البتات على نفس الـbinary ونفس الجهاز، فالتكرار ما يقيس ضوضاء. بس جهاز بـkernel tier مختلف ممكن يحرّك آخر البتات.</li>
+<li>نموذجين حجمهم من <bdi>1</bdi> إلى <bdi>1.5</bdi> مليار <bdi>parameter</bdi>، قالب واحد، ست أزواج. استرجاع المعلومات إشارة قوية وتتكون بدري، والـ<bdi>circuits</bdi> الأضعف ممكن تكون أقرب لمستوى ضوضاء الضغط.</li>
+<li>حد الـ<bdi>5%</bdi> وتعريف <bdi>layer</bdi> التسليم اخترتهم بعد ما شفت أول نتيجة. والمقاييس المسجلة مسبقاً منشورة كاملة جنبهم.</li>
+<li>تشغيل <bdi>deterministic</bdi> واحد لكل خانة. وضع <bdi>reference</bdi> في <bdi>Ember</bdi> يطلع نفس البتات على نفس الـ<bdi>binary</bdi> ونفس الجهاز، فالتكرار ما يقيس ضوضاء. بس جهاز بـ<bdi>kernel tier</bdi> مختلف ممكن يحرك آخر البتات.</li>
 </ul>
-<h2>عيد التجربة بنفسك</h2>
-<p>التصميم والسكربت والنتايج والرسومات والـhashes حق كل bundle موجودة في <a href="https://github.com/voidwest/ember/tree/main/research/quant-attribution">research/quant-attribution</a>. والتصميم انحفظ في git قبل أول تشغيلة.</p>
+<h2>أعد التجربة بنفسك</h2>
+<p>التصميم والسكربت والنتائج والرسوم والـ<bdi>hashes</bdi> لكل <bdi>bundle</bdi> موجودة في <a href="https://github.com/voidwest/ember/tree/main/research/quant-attribution"><bdi>research/quant-attribution</bdi></a>. والتصميم انحفظ في <bdi>git</bdi> قبل أول تشغيل.</p>
 <pre><code>python research/quant-attribution/run_study.py run --ember target/release/ember --out runs/quant-attribution
 python research/quant-attribution/run_study.py analyze --out runs/quant-attribution --results results --figures</code></pre>
 <h2>ملاحظات لها علاقة في الموقع</h2>
 <ul>
 <li>
-<a href="/research-notes/the-probe-can-read-it.ar.html">الـprobe يقدر يقرأها، بس النموذج يقدر يستخدمها؟</a>: ليش الاختبار الحقيقي إن الموديل يستخدم ميزة معينة هو التدخل السلوكي، مو الـprobe.</li>
+<a href="/research-notes/the-probe-can-read-it.ar.html">الـ<bdi>probe</bdi> يقدر يقرأها، بس النموذج يقدر يستخدمها؟</a>: ليش الاختبار الحقيقي لاستخدام النموذج لميزة معينة هو التدخل السلوكي، مو الـ<bdi>probe.</bdi></li>
 <li>
-<a href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">الملف قال Q4. والـruntime قال f32.</a>: ليش لازم نتأكد من الضغط اللي الـruntime ينفذه فعلاً، بدل ما نفترضه.</li>
+<a href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">الملف قال <bdi>Q4.</bdi> والـ<bdi>runtime</bdi> قال <bdi>f32.</bdi></a>: ليش لازم نتأكد من الضغط اللي ينفذه الـ<bdi>runtime</bdi> فعلاً، بدل ما نفترضه.</li>
 </ul>
         <!-- docs:footer start -->
         <footer class="site-footer">
