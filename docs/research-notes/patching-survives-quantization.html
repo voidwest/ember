@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="Activation patching on F16, Q8_0, Q6_K and Q4_K_M builds of two small models: the sites that matter agree, the ranking of the rest does not.">
+        <meta property="og:title" content="patching a quantized model: the sites that matter survive">
+        <meta property="og:description" content="72 runs, every candidate patched for real. A pre-registered rule failed on every rung, and the reason is the useful result.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/patching-survives-quantization.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary_large_image">
+        <title>patching a quantized model: the sites that matter survive</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+                <a href="/cv/">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/patching-survives-quantization.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+<h1>patching a quantized model: the sites that matter survive</h1>
+<div class="meta">2026-10-02 · 72 runs · Llama-3.2-1B and Qwen2.5-1.5B, F16 to Q4_K_M</div>
+<p>Most people who patch activations on a laptop patch the quantized GGUF they can run. The question is whether that is the same experiment as patching the model it was quantized from.</p>
+<p>I patched every candidate site on four builds of two models and compared each quantized build with its F16 source. The sites that carry the answer agree closely on every build. The ordering of the sites that barely matter does not, and that disagreement broke the rule I had written down in advance.</p>
+<div class="callout observation">
+<div class="label">claim boundary</div>
+<p>Two small instruction models, one fact-recall template, six prompt pairs. This says nothing about larger models, other circuits, or quantizers other than llama.cpp's. F16 is the reference here, not ground truth: it is itself a rounding of the BF16 training weights.</p>
+</div>
+<h2>the setup</h2>
+<p>The prompt is <code>The capital of {country} is the city of</code>. The clean prompt names one country and the corrupted prompt another, for six pairs such as France and Italy. The metric is the logit of the clean capital minus the logit of the corrupted one at the final position.</p>
+<p>Each model has four rungs: the F16 source file, then Q8_0, Q6_K and Q4_K_M made from that same file by the pinned llama.cpp quantizer. Quantization is the only difference between rungs.</p>
+<p>A candidate is one site (the residual stream entering a block, the attention output, or the MLP output) at one layer and one position. Positions run from the country token to the end; earlier positions are identical in both prompts. That is 240 candidates per Llama run and 420 per Qwen run.</p>
+<p>Every candidate was patched for real: the corrupted prompt runs with the clean activation written in at that one site. The measured effect is the change in the metric, and the recovered fraction divides it by the clean-corrupted gap. Ember's cheaper direct-path estimate was recorded but is not what is compared here.</p>
+<p>All 72 runs answer correctly: every clean prompt prefers the right capital and every corrupted prompt prefers the other one. Every bundle verifies, and its hashes are in the published provenance file.</p>
+<h2>the rule I wrote first failed everywhere</h2>
+<p>Before any run I committed a decision rule. A rung would count as giving the same conclusions as F16 if, on every pair, the measured effects correlated with Spearman of at least 0.9 over all candidates, the single most effective site matched, and the sites recovering at least 20% of the gap overlapped with Jaccard of at least 0.8.</p>
+<p>No rung of either model passed. Llama's Q8_0 build, the closest to F16, reached a median Spearman of 0.90 and matched the top site on one pair of six. Qwen's Q4_K_M build reached a median of 0.62.</p>
+<p>The third condition held almost everywhere: the material sites overlapped with Jaccard of at least 0.85 on every rung. The first two conditions were the ones that failed, so I looked at what they were measuring.</p>
+<h2>why it failed</h2>
+<p>Most candidates do almost nothing. In F16, 75% of Llama's candidates and 87% of Qwen's recover less than 2% of the gap. Quantization noise reshuffles the ranks of those near-zero effects freely, and a rank correlation over all candidates is mostly a measure of that shuffle.</p>
+<p>The top of the list is a near-tie. Patching the residual stream at the country token in any early layer restores almost the whole gap, so the best and second-best F16 sites differ by at most 0.4 percentage points. Which one comes first is close to a coin flip. On every rung, the quantized build's top site recovers within 1.5 points of F16's best.</p>
+<p>So the rule tested two things that do not matter for interpretation: the order of negligible sites and the order inside a tie.</p>
+<h2>what does agree</h2>
+<p>Restricted to the sites that recover at least 5% of the gap in F16, the effects agree closely. Each rung's profile across layers sits on top of F16's.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/quant-patching-profile-dark.png" alt="Recovered fraction by layer at the final position, France versus Italy, for F16, Q8_0, Q6_K and Q4_K_M. For both models the quantized curves lie on the F16 curve at every site.">
+<img class="chart theme-chart-light" src="figures/quant-patching-profile-light.png" alt="Recovered fraction by layer at the final position, France versus Italy, for F16, Q8_0, Q6_K and Q4_K_M. For both models the quantized curves lie on the F16 curve at every site.">
+<figcaption>France versus Italy, final position. On the other pairs these final-position curves differ from F16 by at most 8.5 points on any rung. Full data: comparison.csv in the study directory.</figcaption>
+</figure>
+<div class="table-wrap">
+<table>
+<thead>
+<tr><th>model</th><th>rung</th><th>Spearman, all candidates (median)</th><th>Spearman, sites ≥5% (worst pair)</th><th>largest recovered-fraction error</th><th>handoff layer matches F16</th></tr>
+</thead>
+<tbody>
+<tr><td>Llama-3.2-1B</td><td>Q8_0</td><td>0.90</td><td>0.997</td><td>1.6 pts</td><td>6 of 6</td></tr>
+<tr><td>Llama-3.2-1B</td><td>Q6_K</td><td>0.82</td><td>0.995</td><td>6.5 pts</td><td>5 of 6</td></tr>
+<tr><td>Llama-3.2-1B</td><td>Q4_K_M</td><td>0.80</td><td>0.972</td><td>8.5 pts</td><td>5 of 6</td></tr>
+<tr><td>Qwen2.5-1.5B</td><td>Q8_0</td><td>0.85</td><td>0.934</td><td>3.8 pts</td><td>6 of 6</td></tr>
+<tr><td>Qwen2.5-1.5B</td><td>Q6_K</td><td>0.68</td><td>0.883</td><td>4.6 pts</td><td>6 of 6</td></tr>
+<tr><td>Qwen2.5-1.5B</td><td>Q4_K_M</td><td>0.62</td><td>0.867</td><td>8.5 pts</td><td>6 of 6</td></tr>
+</tbody>
+</table>
+</div>
+<p>The handoff layer is the first layer where the final position's residual stream recovers half the gap: where the answer has arrived at the last token. It matches F16 in 34 of 36 comparisons, and the other two are one layer early. The most effective attention or MLP output matches F16 in all 36.</p>
+<p>The gap itself moves by about 5% at most. Quantization did not change what these models know about capitals, or where they move that knowledge.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/quant-patching-agreement-dark.png" alt="Spearman of measured patch effects against F16, per pair. Hollow markers over all candidates fall from about 0.9 at Q8_0 to about 0.6 at Q4_K_M for Qwen. Filled markers over sites recovering at least 5% stay at or above 0.97 for Llama and 0.87 for Qwen.">
+<img class="chart theme-chart-light" src="figures/quant-patching-agreement-light.png" alt="Spearman of measured patch effects against F16, per pair. Hollow markers over all candidates fall from about 0.9 at Q8_0 to about 0.6 at Q4_K_M for Qwen. Filled markers over sites recovering at least 5% stay at or above 0.97 for Llama and 0.87 for Qwen.">
+<figcaption>Hollow: the pre-registered metric over every candidate. Filled: the same metric over sites that matter in F16. One dot per prompt pair.</figcaption>
+</figure>
+<p>Qwen degrades more than Llama. At Q4_K_M its worst pair falls to 0.87 on the sites that matter, against Llama's 0.97, and the curves are still read the same way. With six pairs per model I would not read more into the difference than that.</p>
+<h2>what to take from it</h2>
+<p>On these models and this task, a Q4_K_M build finds the same sites, effect sizes within a few points, and the same handoff layer as F16. Locating where a fact is carried survives quantization.</p>
+<p>Two habits do not survive. Reading the rank order among small effects is reading noise. A rank correlation over every candidate is dominated by those small effects, so it understates agreement on what matters and is the wrong headline number for a patching comparison. Report effect sizes above a stated threshold instead.</p>
+<p>The rule I wrote in advance made exactly that mistake. It stays in the study directory as written, next to the diagnostics added after the first run, which are labelled as exploratory.</p>
+<h2>limits</h2>
+<ul>
+<li>Two models of 1 to 1.5 billion parameters, one template, six pairs. Fact recall is a strong, early-forming signal; weaker circuits may sit closer to the quantization noise floor.</li>
+<li>The 5% threshold and the handoff definition were chosen after seeing the first result. The pre-registered metrics are reported in full alongside them.</li>
+<li>One deterministic run per cell. Ember's reference mode is bit-reproducible on a given binary and host, so repeats would not measure noise; a different host's kernel tier could move the last bits.</li>
+</ul>
+<h2>reproduce it</h2>
+<p>The design, script, results, figures and per-bundle hashes are in <a href="https://github.com/voidwest/ember/tree/main/research/quant-attribution">research/quant-attribution</a>. The design was committed before the first run.</p>
+<pre><code>python research/quant-attribution/run_study.py run --ember target/release/ember --out runs/quant-attribution
+python research/quant-attribution/run_study.py analyze --out runs/quant-attribution --results results --figures</code></pre>
+<h2>related work on this site</h2>
+<ul>
+<li>
+<a href="/research-notes/the-probe-can-read-it.html">the probe can read it. can the model use it?</a>: why a behavioral intervention, not a probe, is the test of whether a model uses a feature.</li>
+<li>
+<a href="/research-notes/the-file-said-q4-runtime-said-f32.html">The File Said Q4. The Runtime Said f32.</a>: why the quantization a runtime actually executes has to be checked, not assumed.</li>
+</ul>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

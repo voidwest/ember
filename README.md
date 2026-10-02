@@ -62,6 +62,56 @@ reproduction. On the reference machine, restoration compares bit-exact and
 baseline reproduction reports `exact-semantic`. This is a workflow example,
 not a reproduction of a paper result or a promise of cross-machine bit identity.
 
+## what it has found
+
+Ember exists to answer questions about model internals with evidence someone
+else can replay. Results so far, each with its scripts and limits:
+
+- **[Patching a quantized model: the sites that matter survive](https://voidwest.dev/research-notes/patching-survives-quantization.html).**
+  Every candidate patched for real on F16, Q8_0, Q6_K and Q4_K_M builds of
+  Llama-3.2-1B and Qwen2.5-1.5B (72 runs). The sites that carry a fact agree
+  with F16 on every rung, within 8.5 points of recovered fraction. A
+  pre-registered rank rule failed everywhere, because rank order among
+  negligible effects is noise. Design, script and hashes:
+  [research/quant-attribution](research/quant-attribution/README.md).
+- **Quantization-boundary localization.** Across Qwen2.5-1.5B and
+  Llama-3.2-1B at Q8, Q6 and Q4, about 500 deterministic runs found no
+  Arabic-selective quantization degradation. Where a quantized model's output
+  did flip, a single-layer activation patch restored it, one layer before the
+  divergence ramp (Qwen2.5 L7 of 28, Llama L1 of 16): a near-threshold flip,
+  not representational collapse. The summary is in
+  [docs/validation.md](docs/validation.md); the full pilot record is not
+  published.
+- **[The probe can read it. Can the model use it?](https://voidwest.dev/research-notes/the-probe-can-read-it.html)**
+  A probe recovered 6 of 8 held-out IDs from compressed features; the frozen
+  receiver model could use only one of them, and more training erased that
+  one.
+- **[Finite is not intact](https://voidwest.dev/finite-is-not-intact.html).**
+  In seven real GGUF files, no single bit flip in a scale word could reach
+  Inf or NaN. Yet finite faults moved synthetic kernel outputs by thousands
+  of times while passing Ember's finiteness checks. Kernel fixtures only, not
+  an end-to-end accuracy result.
+
+All notes, in English and Arabic: [voidwest.dev/research-notes](https://voidwest.dev/research-notes/).
+
+## performance
+
+Ember is an instrument first; llama.cpp is the performance reference. Decode
+throughput for Llama-3.2-1B-Instruct on an Apple M1 Pro, 4 threads, CPU only,
+median of three interleaved runs of 128 tokens (2026-10-02, Ember `ed5c1bc`,
+llama.cpp `47c7869` with `-ngl 0`):
+
+| Model | Ember | llama.cpp |
+|---|---|---|
+| Q8_0 | 57.8 tok/s | 65.8 tok/s |
+| Q4_K_M | 67.5 tok/s | 88.6 tok/s |
+
+Planned decode, which the benchmark runs, produces the same tokens as the
+reference path that experiments use. At 8
+threads both runtimes lose speed and scatter on this laptop under ordinary
+desktop load, so those numbers are left out. Run `ember bench-decode` and
+`llama-bench -ngl 0` on your own machine before relying on a ratio.
+
 ## the experiment console
 
 Ember ships a native desktop console (`ember gui`) for running the same kind of
@@ -98,26 +148,6 @@ more fitting can even make transfer worse. That distinction motivates capture,
 controlled interventions, and replayable evidence. Read
 [the probe can read it. can the model use it?](https://voidwest.dev/research-notes/the-probe-can-read-it.html)
 for the completed eight-ID diagnostic and its limits.
-
-## research result: quantization-boundary localization
-
-A deterministic validation wave across Qwen2.5-1.5B and Llama-3.2-1B at Q8,
-Q6, and Q4 found no evidence of Arabic-selective quantization degradation
-in the tested matrix.
-
-The surviving result is methodological: Ember can localize rare
-quantization-boundary failures causally. In validated cases, a single-layer
-activation patch restored the quantized output, with the causal layer
-preceding the visible divergence ramp. The observed mechanism was a
-near-threshold decision flip rather than broad representational collapse.
-
-| Model        | Layers | Causal locus |
-|--------------|--------|--------------|
-| Qwen2.5-1.5B | 28     | L7           |
-| Llama-3.2-1B | 16     | L1           |
-
-Validated on the qwen3/llama rows with completed golden checks; see
-[docs/validation.md](docs/validation.md) for the full record.
 
 ## core documentation
 
