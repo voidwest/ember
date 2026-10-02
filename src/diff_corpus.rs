@@ -1220,6 +1220,7 @@ mod tests {
         }
         // Blobs streamed to disk one file per case.
         assert_eq!(std::fs::read_dir(out_dir.join("blobs")).unwrap().count(), 3);
+        // SAFETY: as for the `set_var` calls above.
         unsafe {
             std::env::remove_var(ExternalRuntime::LlamaCpp.env_override());
             std::env::remove_var(ExternalRuntime::Candle.env_override());

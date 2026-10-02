@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Run the lint-class CI gates before anything leaves the machine.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Skip for one push:      EMBER_SKIP_PREPUSH=1 git push   (or git push --no-verify)
+set -euo pipefail
+
+if [[ "${EMBER_SKIP_PREPUSH:-0}" == "1" ]]; then
+    exit 0
+fi
+
+# Only gate pushes that update a branch; deleting a ref or pushing tags for
+# an already-pushed commit has nothing new to check.
+needs_check=0
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+    if [[ "$local_sha" != "0000000000000000000000000000000000000000" && "$remote_ref" == refs/heads/* ]]; then
+        needs_check=1
+    fi
+done
+((needs_check)) || exit 0
+
+exec "$(git rev-parse --show-toplevel)/scripts/ci_local.sh" quick

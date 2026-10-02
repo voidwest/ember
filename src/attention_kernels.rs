@@ -78,6 +78,9 @@ mod neon {
     #[inline]
     #[target_feature(enable = "neon,fp16")]
     unsafe fn load_f16x4(ptr: *const f16) -> float32x4_t {
+        // SAFETY: the caller guarantees `ptr` is readable for four `f16`
+        // values and that fp16 is available; `fcvtl` only widens the loaded
+        // register and touches no memory.
         unsafe {
             let bits = vld1_u16(ptr.cast());
             let result: float32x4_t;
@@ -93,6 +96,8 @@ mod neon {
     #[inline]
     #[target_feature(enable = "neon,fp16")]
     unsafe fn transposed(k: *const f16, stride: usize, i: usize) -> [float32x4_t; 4] {
+        // SAFETY: the caller guarantees four key rows `stride` apart starting
+        // at `k`, each readable through element `i + 3`.
         unsafe {
             let r0 = load_f16x4(k.add(i));
             let r1 = load_f16x4(k.add(stride + i));
@@ -133,6 +138,9 @@ mod neon {
         scale: f32,
         dst: *mut f32,
     ) {
+        // SAFETY: the caller guarantees `4 * B` key rows of `q.len()` values
+        // (a multiple of four) starting at `k`, and `4 * B` writable scores at
+        // `dst`; `i` stays below `q.len()` so every `q` load is in bounds.
         unsafe {
             let mut sums = [vdupq_n_f32(-0.0); B];
             let mut i = 0;
@@ -165,6 +173,9 @@ mod neon {
         max_j: usize,
         scores: &mut [f32],
     ) {
+        // SAFETY: `cached_row_head` asserts `max_j < scores.len()` and that
+        // key row `max_j` ends inside `cached_k`; each block below reads keys
+        // `j..j + 4 * B` and writes the same score indices, all `<= max_j`.
         unsafe {
             let k = cached_k.as_ptr().add(kv_offset);
             let dst = scores.as_mut_ptr();
@@ -196,6 +207,9 @@ mod neon {
         weights: &[f32],
         out: *mut f32,
     ) {
+        // SAFETY: the caller guarantees `4 * N` readable and writable values
+        // at `out`, value rows `min_j..=max_j` each readable for `4 * N`
+        // values from `v`, and `max_j < weights.len()`.
         unsafe {
             let mut acc = [vdupq_n_f32(0.0); N];
             for (lane, value) in acc.iter_mut().enumerate() {
@@ -228,6 +242,10 @@ mod neon {
         weights: &[f32],
         out: &mut [f32],
     ) {
+        // SAFETY: `cached_row_head` checks that `out.len()` is a multiple of
+        // four equal to the head dimension, that value row `max_j` ends inside
+        // `cached_v`, and that `max_j < weights.len()`; `c` advances in whole
+        // chunks that stay within `out.len()`.
         unsafe {
             let v = cached_v.as_ptr().add(kv_offset);
             let dst = out.as_mut_ptr();

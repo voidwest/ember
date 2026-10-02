@@ -19,6 +19,18 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- Browser console: a non-loopback `--host` no longer disables the API
+  checks. The console token is required in every mode and POSTs must be
+  same-origin; only the loopback `Host` allowlist is limited to loopback
+  binds. See docs/v06-gui.md.
+- Unsafe hygiene: every `unsafe` block and impl now carries a `// SAFETY:`
+  comment, enforced by `clippy::undocumented_unsafe_blocks`. The Q8_0 decode
+  and batch dispatchers assert the input and weight lengths the x86 kernels
+  rely on.
+- Tooling: `scripts/ci_local.sh` mirrors the model-free CI gates, and
+  `.githooks/pre-push` runs its quick set (enable with
+  `git config core.hooksPath .githooks`). `fuzz/` is its own workspace root,
+  so it resolves from a nested worktree.
 - Experiments: shared-prefix reuse. `experiment run <baseline> --variant
   <spec>...` and the GUI's baseline/intervention pair compute the prompt
   prefill up to the first intervened block once; each variant resumes from

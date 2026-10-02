@@ -591,13 +591,12 @@ fn load_gguf_mapped<P: AsRef<Path>>(
     let map_len = usize::try_from(file_len).map_err(|error| {
         LoaderError::overflow(format!("GGUF file length exceeds address space: {error}"))
     })?;
-    // Safety: the read-only mapping remains alive through every QuantizedWeight
-    // that references it. As with all file mappings, callers must not truncate
-    // or concurrently mutate the GGUF while it is loaded.
-    //
     // Pass the checked length explicitly rather than letting memmap2 infer it;
     // this keeps the parser's byte slice boundary tied to the preflight check.
     let mmap_start = Instant::now();
+    // SAFETY: the read-only mapping remains alive through every QuantizedWeight
+    // that references it. As with all file mappings, callers must not truncate
+    // or concurrently mutate the GGUF while it is loaded.
     let mmap = Arc::new(unsafe { memmap2::MmapOptions::new().len(map_len).map(&f)? });
     let mmap_ns = ns_since(mmap_start);
     let mut cursor = std::io::Cursor::new(&mmap[..]);
