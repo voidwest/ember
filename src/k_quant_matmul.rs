@@ -1845,6 +1845,81 @@ mod tests {
         }
     }
 
+    /// The decode kernels (`arm::q4`/`arm::q6`, one and four activation
+    /// rows) reproduce the original NEON kernels bit for bit on random
+    /// weights (Q6_K scales include -128), random and extreme activations
+    /// (all-zero blocks, +-127 runs) and odd shapes.
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_decode_kernels_match_reference_kernels_bitwise() {
+        if !arm_k_supported() {
+            return;
+        }
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            for (outputs, blocks) in [(1usize, 1usize), (3, 2), (17, 3), (33, 8), (5, 32)] {
+                for seed in [1u64, 99, 4242] {
+                    let input = blocks * QK_K;
+                    let w = weight(dtype, outputs, input, seed);
+                    let mut src = seeded_activations(4 * input, seed + 3);
+                    src[..QK_K].fill(0.0);
+                    for (index, value) in src[input..input + QK_K].iter_mut().enumerate() {
+                        *value = if index % 3 == 0 { -1.0e6 } else { 1.0e6 };
+                    }
+                    for value in &mut src[2 * input + 7..2 * input + 40] {
+                        *value *= 1.0e-30;
+                    }
+                    let mut packed = Vec::new();
+                    quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
+                    let bits =
+                        |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+                    for column in 0..outputs {
+                        // SAFETY: the feature gate was checked above and
+                        // `column < outputs` of a validated weight.
+                        let (new4, old4) = unsafe {
+                            match dtype {
+                                KQuantDtype::Q4K => (
+                                    arm::q4::<4>(w.data(), blocks, column, &packed),
+                                    arm::q4_reference::<4>(w.data(), blocks, column, &packed),
+                                ),
+                                KQuantDtype::Q6K => (
+                                    arm::q6::<4>(w.data(), blocks, column, &packed),
+                                    arm::q6_reference::<4>(w.data(), blocks, column, &packed),
+                                ),
+                            }
+                        };
+                        assert_eq!(
+                            bits(&new4),
+                            bits(&old4),
+                            "{dtype:?} {outputs}x{blocks} seed={seed} column={column}"
+                        );
+                        for row in 0..4 {
+                            let one = &packed[row * blocks..(row + 1) * blocks];
+                            // SAFETY: as above.
+                            let (new1, old1) = unsafe {
+                                match dtype {
+                                    KQuantDtype::Q4K => (
+                                        arm::q4::<1>(w.data(), blocks, column, one),
+                                        arm::q4_reference::<1>(w.data(), blocks, column, one),
+                                    ),
+                                    KQuantDtype::Q6K => (
+                                        arm::q6::<1>(w.data(), blocks, column, one),
+                                        arm::q6_reference::<1>(w.data(), blocks, column, one),
+                                    ),
+                                }
+                            };
+                            assert_eq!(
+                                new1[0].to_bits(),
+                                old1[0].to_bits(),
+                                "{dtype:?} row={row} column={column}"
+                            );
+                            assert_eq!(new1[0].to_bits(), new4[row].to_bits());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The four-row interleaved prefill tiles reproduce the per-column ARM
     /// dots (and hence the scalar oracle) bit for bit: row counts off the
     /// four-row groups, columns off the tile width, zero/extreme activations
