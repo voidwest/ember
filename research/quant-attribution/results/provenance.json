@@ -1,0 +1,871 @@
+{
+  "ember": "/Users/west/Projects/ember/runs/repro-fixes-check/ember",
+  "ember_sha256": "eba3643e74c89a907ee30dcd2c548c1c39b842ed174f30e7f86778a48e8a6cad",
+  "threads": 4,
+  "runs": [
+    {
+      "family": "llama-3.2-1b",
+      "rung": "f16",
+      "pair": "france-italy",
+      "model_sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-f16-france-italy",
+      "semantic_hash": "0b1dfe479da64d02528c0e397e628cf46ab9e657a774e910593b780cfc456ae4",
+      "payload_hash": "de7786f56b7e2638f686b821b444f7a13f5b5562a0477c030e18fbf6c41d3d30"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q8_0",
+      "pair": "france-italy",
+      "model_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q8_0-france-italy",
+      "semantic_hash": "ab64010e04e46b758791cf39f7011865fd8a804cebcbb8b86bfa69f132762f03",
+      "payload_hash": "ddbbd0f1ba4db7e82f6bbf69df0063da15fcda542138ee5636483aefa40bc2d5"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q6_k",
+      "pair": "france-italy",
+      "model_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q6_k-france-italy",
+      "semantic_hash": "114e5c1e148d8bee5700ba44829d648e25e621c7a554bd59d38a33f8ead99017",
+      "payload_hash": "21193e59ad1846ce02140df92757e286856b281a4d104dc31f843a3654543c48"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q4_k_m",
+      "pair": "france-italy",
+      "model_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q4_k_m-france-italy",
+      "semantic_hash": "dd1923df6247e24d6e34799e1432547a9824e1111b31007f71010bcb3ba202f9",
+      "payload_hash": "acbd0063227f102fd4630ae8a1d19a79ed7725a3f76c52b8c8bdeb7e84ef6dc3"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "f16",
+      "pair": "germany-spain",
+      "model_sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-f16-germany-spain",
+      "semantic_hash": "83e12fd0206ade5dc2846cf4ead1a53dbc8066591758530adaa9cf460cd0f502",
+      "payload_hash": "be8c0d523290511889d0fcd68daba75fc2861bed71c6c925fa5db13744b3f4e8"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q8_0",
+      "pair": "germany-spain",
+      "model_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q8_0-germany-spain",
+      "semantic_hash": "283fc4a8b41b0f4509bcba123c9edb408d94a1e1f0e96f1c7f34164d62ba672d",
+      "payload_hash": "d16ba165cd987944336b0b88f6e74579e8a50aafd8e198ec6fe5c3c0275d21a3"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q6_k",
+      "pair": "germany-spain",
+      "model_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q6_k-germany-spain",
+      "semantic_hash": "983a0e62a7e96cb77312b444729f83b012e73d9a46612a9f37f1ed27dcdd3907",
+      "payload_hash": "a5b33be9762176f1dd1f2c1738119867646ba51ac2fa30621b19da38621c148b"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q4_k_m",
+      "pair": "germany-spain",
+      "model_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q4_k_m-germany-spain",
+      "semantic_hash": "62319be7537d09cd86e3fbda3e7d7816c4315c19cadfddcadf3186f3809faa07",
+      "payload_hash": "83400e7cfd4fc368011367d6b5f69c6fda2236ba3e5e9dd8fbd2990993670b00"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "f16",
+      "pair": "japan-russia",
+      "model_sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-f16-japan-russia",
+      "semantic_hash": "2efd770a134ffffe9369323d5b77ed918ffea8c271394b6f621f1ea1a1199059",
+      "payload_hash": "7e2746217407f6742af9b62b22535756bedc1792dbfa88bafcbf3ca239868c5b"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q8_0",
+      "pair": "japan-russia",
+      "model_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q8_0-japan-russia",
+      "semantic_hash": "85240ac8c16d0a85cb46d1da85714d7947d7c5f76a85e2cf1ee1e62cdbc94279",
+      "payload_hash": "39eeff0c3f7b537c51aa5d4849ffb68bfda152abc4888218fb320d2341ea39a8"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q6_k",
+      "pair": "japan-russia",
+      "model_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q6_k-japan-russia",
+      "semantic_hash": "b3f71f30f984540760fb6819acd7a5d7f8bf5da6acd17b42522ba99e1a3bcfff",
+      "payload_hash": "c940d293a29a47dae8a460fa42f926a472b1b4ae97fe48e685ba7ea307191ece"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q4_k_m",
+      "pair": "japan-russia",
+      "model_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q4_k_m-japan-russia",
+      "semantic_hash": "36975019e2efd65cb61bac15aa940bd8288f85998458ef605cc70a6e6a117240",
+      "payload_hash": "269c26e55a9d555d5ab921a31b970c245484c7b0a8a0e9a5278ef8df32c4d79c"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "f16",
+      "pair": "egypt-greece",
+      "model_sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-f16-egypt-greece",
+      "semantic_hash": "d7940a1fa26b664915182526c140a3520df1b4c7c104824f20a35a6a648a6444",
+      "payload_hash": "8a655accbb1d639a45b7345a4f204d9d11452acb6fd1b023ec12f1029a244147"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q8_0",
+      "pair": "egypt-greece",
+      "model_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q8_0-egypt-greece",
+      "semantic_hash": "69dc7dde436a4df79ba8e9d639b7c05dc9970c81d5a23d0ab34c00cf587980d3",
+      "payload_hash": "d11bc52119bf1572039a0ca506a7fdcf0b5cf5b65f451656e6e6e3128022cbe3"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q6_k",
+      "pair": "egypt-greece",
+      "model_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q6_k-egypt-greece",
+      "semantic_hash": "61b6eda47d26ed3a8f5c03360a62120958c5f68bb22f53d901752ccf820cc73d",
+      "payload_hash": "ff30ce59be3cd87ce270c2cf2c601cbfc455401eaa6ddabb70fa0044adb9294a"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q4_k_m",
+      "pair": "egypt-greece",
+      "model_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q4_k_m-egypt-greece",
+      "semantic_hash": "1e53fb43720f44096a8e07e0cb8eeffd9e1a0cff019bdb49550e4fc5017c09ee",
+      "payload_hash": "3cca119cdd11a6e3a976e8f9ee0153ee11a5d25d0830bd639a1487d855a186f2"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "f16",
+      "pair": "poland-austria",
+      "model_sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-f16-poland-austria",
+      "semantic_hash": "c56914d003af6c634bce49dc9cc6727309ed73eaf653c0ad8786cafd76361c28",
+      "payload_hash": "9637311860a10b6fcadfc53bbf913320811bca442277587fb6361214243a937a"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q8_0",
+      "pair": "poland-austria",
+      "model_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q8_0-poland-austria",
+      "semantic_hash": "7ba06acdf0ba5722df845512e8196f1284b834317b20aea5c339c25a9998ae1c",
+      "payload_hash": "c59866f34603a2112de3536ecb6877faed75aab2c560a307e152c06c9eee14d9"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q6_k",
+      "pair": "poland-austria",
+      "model_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q6_k-poland-austria",
+      "semantic_hash": "cd52d4aeb41bf55f5cebaaf9cbfcaf60f4bf21ad173add468df69fe38ec24da1",
+      "payload_hash": "f62159577c27a8266089a9b21e004813ad2762f886fe82b7875ff9ba63b06671"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q4_k_m",
+      "pair": "poland-austria",
+      "model_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q4_k_m-poland-austria",
+      "semantic_hash": "1f087b2a95d0e4b66870e009f48e651bb360368d6d9cf02194ddbf835c3155ea",
+      "payload_hash": "bc822a9c920eb6a36648c798de9b7385bdc6ae5a8d1324d70455997dd0e2e601"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "f16",
+      "pair": "portugal-sweden",
+      "model_sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-f16-portugal-sweden",
+      "semantic_hash": "73570cf10ce2c8e7ce2cf9ffa842dcd56b8ce2fd6de0b5837121d2c07c33bca2",
+      "payload_hash": "e4d9ce8dbbab37ce0d1fe855da33239d950eee7ac7e6e378943f20e750da888a"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q8_0",
+      "pair": "portugal-sweden",
+      "model_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q8_0-portugal-sweden",
+      "semantic_hash": "04f4973965d23fa8b1bb3c039c0792576e556eb5532d25c60f1a869bcba32c9d",
+      "payload_hash": "5d064798999fa280d3305137ca0c967fbed3421b878ef4746abd4f6df4d7e076"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q6_k",
+      "pair": "portugal-sweden",
+      "model_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q6_k-portugal-sweden",
+      "semantic_hash": "4f857c3f0d7bc542399f878249bc9a2df4f0daeca89bf43bf74472179165f62c",
+      "payload_hash": "4273ba10937f7268b27516d267d386c468427982fe708f5a0c805754ead84d0c"
+    },
+    {
+      "family": "llama-3.2-1b",
+      "rung": "q4_k_m",
+      "pair": "portugal-sweden",
+      "model_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sequence_length": 9,
+      "positions": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "layers": 16,
+      "bundle": "llama-3.2-1b-q4_k_m-portugal-sweden",
+      "semantic_hash": "cdbc3a0253cdaf8245b1a0eb87e302afad49971a21b964a92891792641755c45",
+      "payload_hash": "57034c4ea3a21a1352195e05f0d22837bb5fb94915276d45ea8c0e1b7573f3e9"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "f16",
+      "pair": "france-italy",
+      "model_sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-f16-france-italy",
+      "semantic_hash": "7101ec362b1652d808c6220a1f9e765916ee943ea3e0a9e16bc984f39feb2f61",
+      "payload_hash": "de51a7501f21570209bcd704029d89d704821cec11281ef680b172960955efd9"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q8_0",
+      "pair": "france-italy",
+      "model_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q8_0-france-italy",
+      "semantic_hash": "d3372dce5c65a910615895e8a213154d5078509272cd317ebd0fe08204aabd5d",
+      "payload_hash": "4097a62f0fc42f26e7ca8db2c3a729a37b446ddaf362d3e0f27fa68df1d4e50c"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q6_k",
+      "pair": "france-italy",
+      "model_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q6_k-france-italy",
+      "semantic_hash": "262a25b7211eddc5398df3aefb83ca8fca3c08dd289d7ac31e79c7a21fbe0db1",
+      "payload_hash": "060227feddda702ec4cbad7c296b7f0817c7d5c9cc0e09bb2a70f322dac096e3"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q4_k_m",
+      "pair": "france-italy",
+      "model_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q4_k_m-france-italy",
+      "semantic_hash": "5d99f19a0afada1bb8dfbf67106105c58affd1b739de9dcd2987cd4e5fcef792",
+      "payload_hash": "5375c823eede9f222b6d59a5b6da51ae4e9c4e3ae3625e6a64a48a6ed68ac886"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "f16",
+      "pair": "germany-spain",
+      "model_sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-f16-germany-spain",
+      "semantic_hash": "3ce4def402ecf7af18c35130feb626718c640825fd054542ce80e699e47d471a",
+      "payload_hash": "5eb1bf63b44bf41f6cc700f60c098751086ff95054bc0eaa6831f60727fcc9c5"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q8_0",
+      "pair": "germany-spain",
+      "model_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q8_0-germany-spain",
+      "semantic_hash": "c38fa1da30364bd55711c6fe277de92ddb073b362dc24c3a86d538b9c2ccdcf6",
+      "payload_hash": "cd9972814c2b86c02cf90bff27a301fec30e35c1004a6dc4c545d40bd59c9261"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q6_k",
+      "pair": "germany-spain",
+      "model_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q6_k-germany-spain",
+      "semantic_hash": "a0e03658cec3517a130b6df4d5a1b062e29f916ce6efd7d40e689e5e80f51155",
+      "payload_hash": "b1c498dd4ef797879fd3e7e28d3eeb76f210f1bdd603eac6112cf2201397cb87"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q4_k_m",
+      "pair": "germany-spain",
+      "model_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q4_k_m-germany-spain",
+      "semantic_hash": "a2144922b63eb8bc6d88543cdc5c94e34f7734711a4dbc20dd74a71080f26d2a",
+      "payload_hash": "f6488d7510db9a837a76f3b84c70be146a880086e986ee067fdbb999493a5299"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "f16",
+      "pair": "japan-russia",
+      "model_sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-f16-japan-russia",
+      "semantic_hash": "b4d26e362076395101f19183d59f24bd852c78e659522fb44d73df9eec4b216e",
+      "payload_hash": "d1eb5bb0d7988c594f52bee64343d745e53c81a54f928273b60af52c90583a56"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q8_0",
+      "pair": "japan-russia",
+      "model_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q8_0-japan-russia",
+      "semantic_hash": "6f115868bc98b342702b2b48653af0ebc857a0cd7fc933c9a8c6025d60fce1c7",
+      "payload_hash": "2d2c9cc2df88a56622526fa16784df20f32eef0c8d82d81c304ada8c2e5201c1"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q6_k",
+      "pair": "japan-russia",
+      "model_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q6_k-japan-russia",
+      "semantic_hash": "8a4ebd200fa165cf842d759e142fb0ea786984313a041a7bd5de26e8da00204c",
+      "payload_hash": "f236ce8fd730444963d728df36a89f65ee6becd41c8524e2e1c29f31b46069d4"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q4_k_m",
+      "pair": "japan-russia",
+      "model_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q4_k_m-japan-russia",
+      "semantic_hash": "dba8b27b8de9c6a5d20229fc0578fced8d271cad5a6a87263de14e9f251002fa",
+      "payload_hash": "efee33c87ffdef2b7e664c148ce60e0cb6f6423a429266c0268e8e5f06633c31"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "f16",
+      "pair": "egypt-greece",
+      "model_sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-f16-egypt-greece",
+      "semantic_hash": "ccaaaf9a1ed16e735f793e5a98b9dd1d5659f2e0d8efd297ef82cfe51182b8fe",
+      "payload_hash": "5ddaa690d9f41c9bc33110442f26e44dc7051dd3d5fb66eb775962661438ad4a"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q8_0",
+      "pair": "egypt-greece",
+      "model_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q8_0-egypt-greece",
+      "semantic_hash": "b899ba13bd63706d4d19712d7ed2f6e2aa8dda6fe99dcf7a126e3c25d1b006c3",
+      "payload_hash": "7872ab40293e92649bdf6799d1af18a87fd5540f643b8c2e50314359b54f72c1"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q6_k",
+      "pair": "egypt-greece",
+      "model_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q6_k-egypt-greece",
+      "semantic_hash": "a55f95a96c965386f64b4e93706a446c7f58c197d06c5e73ca2d8e0cd1780d23",
+      "payload_hash": "9fc5d3550b353ff9b1d34d7afcdf2f63c448598a94e4e4b4a867efc3ccc0b92b"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q4_k_m",
+      "pair": "egypt-greece",
+      "model_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q4_k_m-egypt-greece",
+      "semantic_hash": "1890beda69c95b2e26d8eba45f87426895d1871ed7b62d4066f6e59e9e54ca1e",
+      "payload_hash": "b5639cc326d90db81f84e06417cbc17ca07b01b2a10664b45e481c0b213fcef4"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "f16",
+      "pair": "poland-austria",
+      "model_sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-f16-poland-austria",
+      "semantic_hash": "f85b7c1ba68fb3636de7bae0b502daeac8c97e84b21564460f2742ade20c345f",
+      "payload_hash": "bd73701bb084c068f96f4179314678a3811d8237abb0e179615a389f39b2f5a5"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q8_0",
+      "pair": "poland-austria",
+      "model_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q8_0-poland-austria",
+      "semantic_hash": "b6813ee23384e93e4cfa4fd2d71b8a30425eefcb256201e5ceee461aee8465c5",
+      "payload_hash": "a20ae11ee6b807165cfcd964c6e818ca2be378a9aaeab0dea0b83327be3bbc2b"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q6_k",
+      "pair": "poland-austria",
+      "model_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q6_k-poland-austria",
+      "semantic_hash": "4f2a8a5b71754172355c2c66a5c085c4199e47dd368984f2abe8361dc092db62",
+      "payload_hash": "1e80231b3794f571d51deacabd7ce6b92746ead9925009be92513087682f29a1"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q4_k_m",
+      "pair": "poland-austria",
+      "model_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q4_k_m-poland-austria",
+      "semantic_hash": "abe6452b9654d24b5c4ac45b00421b430c90a00c3a57f4e63645136420fbcc87",
+      "payload_hash": "cf9e5619ef57c2eeda8dd8e2bc9568a389548aef2a0588464ee7822895bc2b61"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "f16",
+      "pair": "portugal-sweden",
+      "model_sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-f16-portugal-sweden",
+      "semantic_hash": "7c0932b76b836c561b394bdd4af0a03d00afb3eb740738ebfde976543f1827ea",
+      "payload_hash": "a0cc360169ce360b10bc5c25e6c07bdda9eea1bb57afe78e8de26718660062c2"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q8_0",
+      "pair": "portugal-sweden",
+      "model_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q8_0-portugal-sweden",
+      "semantic_hash": "6a8c124ea04cbaaff1b9ee94278a70986ea94118ac21d73293564877ceb37681",
+      "payload_hash": "397b62bf32a46b30647eed6a4eff2c845bac0175ddf4ef899154d714a5403da9"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q6_k",
+      "pair": "portugal-sweden",
+      "model_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q6_k-portugal-sweden",
+      "semantic_hash": "94dd70a14594822a875c65a054aa0af7e4bdf587dc77404b4d95472cf207b290",
+      "payload_hash": "5b3a51898257d2b54a9552e0e232b3000da54e8510b2dcd3433157b3d5a3347b"
+    },
+    {
+      "family": "qwen2.5-1.5b",
+      "rung": "q4_k_m",
+      "pair": "portugal-sweden",
+      "model_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sequence_length": 8,
+      "positions": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "layers": 28,
+      "bundle": "qwen2.5-1.5b-q4_k_m-portugal-sweden",
+      "semantic_hash": "ac915fd9135632e84b9e8b2dfd9bac61ee29c0f1a4996b2cbe8c9155e7a00776",
+      "payload_hash": "794144923e84c71bf7559b8800d40ffe87a652883ee7aea97a65376cf5f59fa9"
+    }
+  ]
+}
