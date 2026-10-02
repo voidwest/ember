@@ -507,20 +507,30 @@ pub(crate) fn prepare_run(
     // the tokenizer is parsed only after its bytes match the spec's pin.
     let abandon = AtomicBool::new(false);
     std::thread::scope(|scope| {
+        // After an early error (or a panic) the helpers' results go unused;
+        // stop them instead of waiting out a whole-model hash when the scope
+        // joins. A drop guard covers the unwinding path too.
+        let _abandon_on_exit = AbandonOnDrop(&abandon);
         let model_hash = scope.spawn(|| sha256_file_result_unless(&resolved.model.path, &abandon));
-        let prepared = prepare_run_overlapped(
+        prepare_run_overlapped(
             resolved,
             k_strategy,
             k_allow_fallback,
             scope,
             model_hash,
             &abandon,
-        );
-        // After an early error the helpers' results go unused; stop them
-        // instead of waiting out a whole-model hash when the scope joins.
-        abandon.store(true, Ordering::Relaxed);
-        prepared
+        )
     })
+}
+
+/// Sets the flag when dropped: tells `prepare_run`'s helper threads that
+/// their results will not be used.
+struct AbandonOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for AbandonOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Join a helper thread, re-raising its panic as one would have been raised
