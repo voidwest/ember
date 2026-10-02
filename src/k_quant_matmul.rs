@@ -38,6 +38,10 @@ pub fn arm_k_supported() -> bool {
 }
 
 const PARALLEL_LEAF_OUTPUTS: usize = 256;
+/// Columns per decode-team chunk for single-token matvecs: small enough that
+/// a slow or late member holds back little work, large enough that claiming a
+/// chunk (one CAS) is noise next to the dots.
+const DECODE_TEAM_CHUNK_COLUMNS: usize = 64;
 const PARALLEL_MIN_MACS: usize = 512_000;
 
 #[cfg(test)]
@@ -1545,6 +1549,29 @@ fn parallel_body(
         return;
     }
     let _ = packed4;
+    // Single-token decode: hand fixed column chunks to the spin-waiting decode
+    // team (performance cores only, no fork/join per projection). Each column
+    // is computed by the same serial kernel, so the result is independent of
+    // which member claims it. Falls through to the Rayon tree when the team
+    // is unavailable (a nested call from a Rayon worker, or a busy team).
+    if rows == 1 {
+        let out_features = w.out_features();
+        let chunks = out_features.div_ceil(DECODE_TEAM_CHUNK_COLUMNS);
+        let out = crate::decode_pool::SharedMut::new(dst);
+        let ran = crate::decode_pool::run(chunks, &|chunk| {
+            let first = chunk * DECODE_TEAM_CHUNK_COLUMNS;
+            let count = DECODE_TEAM_CHUNK_COLUMNS.min(out_features - first);
+            // SAFETY: chunks cover disjoint column ranges of `dst`, which
+            // outlives the region.
+            let columns = unsafe { out.range(first, count) };
+            for (offset, value) in columns.iter_mut().enumerate() {
+                *value += dot_column(w, first + offset, input);
+            }
+        });
+        if ran {
+            return;
+        }
+    }
     // Split into ~two leaves per worker so work-stealing can smooth the tail
     // (low-column projections such as K/V otherwise leave most workers idle).
     // Floor at 128 columns per leaf: below that, per-leaf dispatch and
@@ -1747,6 +1774,31 @@ mod tests {
             KQuantDtype::Q6K => seeded_q6_blocks(blocks, seed),
         };
         KQuantWeight::try_new(bytes, [out, input], dtype).unwrap()
+    }
+
+    /// A single-token matvec issued outside a Rayon pool takes the decode
+    /// team; whichever member claims a column chunk, the result must equal
+    /// the serial product bit for bit, including the accumulate-into-`dst`
+    /// contract and a last chunk shorter than the chunk width.
+    #[test]
+    fn decode_team_matvec_is_bit_identical_to_serial() {
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            for outputs in [
+                PARALLEL_LEAF_OUTPUTS + 1,
+                4 * DECODE_TEAM_CHUNK_COLUMNS + 17,
+            ] {
+                let input_features = 8 * QK_K;
+                let weight = weight(dtype, outputs, input_features, 0x5eed + outputs as u64);
+                let src = seeded_activations(input_features, 0xfeed);
+                let initial: Vec<f32> = (0..outputs).map(|i| i as f32 * 0.125 - 3.0).collect();
+                let mut serial = initial.clone();
+                matmul_k_q8_into(&src, 1, &weight, &mut serial, false).unwrap();
+                let mut team = initial.clone();
+                matmul_k_q8_into(&src, 1, &weight, &mut team, true).unwrap();
+                let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&team), bits(&serial), "{dtype:?} outputs={outputs}");
+            }
+        }
     }
 
     #[cfg(target_arch = "aarch64")]
