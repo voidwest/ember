@@ -251,6 +251,29 @@ def top(effects, k):
     return ranked[:k]
 
 
+def final_position(keys):
+    return max(key[2] for key in keys)
+
+
+def handoff_layer(effects, final):
+    """First layer whose final-position residual recovers at least half the gap."""
+    layers = sorted({key[1] for key in effects if key[0] == "residual-pre-attention" and key[2] == final})
+    for layer in layers:
+        if effects[("residual-pre-attention", layer, final)]["recovered_fraction"] >= 0.5:
+            return layer
+    return None
+
+
+def ref_ranked_gap(effects):
+    fractions = sorted((value["recovered_fraction"] for value in effects.values()), reverse=True)
+    return fractions[0] - fractions[1]
+
+
+def components(effects):
+    """Attention and MLP outputs only: the sites that move information."""
+    return {key: value for key, value in effects.items() if key[0] != "residual-pre-attention"}
+
+
 def analyze(args):
     out = args.out.resolve()
     results = args.results.resolve()
@@ -296,6 +319,27 @@ def analyze(args):
                     "material_sites_f16": len(material),
                     "material_sites": len(rung_material),
                     "material_jaccard_with_f16": len(material & rung_material) / len(union) if union else 1.0,
+                    # Exploratory, added after the first run and not part of
+                    # the pre-registered rule: patching the residual stream at
+                    # the corrupted country token recovers ~100% at every early
+                    # layer by construction, which inflates the top-k
+                    # comparisons. These fields look past that carrier.
+                    "x_handoff_layer_f16": handoff_layer(ref, final_position(keys)),
+                    "x_handoff_layer": handoff_layer(effects, final_position(keys)),
+                    "x_component_spearman_vs_f16": spearman(
+                        [effects[key]["actual"] for key in keys if key[0] != "residual-pre-attention"],
+                        [ref[key]["actual"] for key in keys if key[0] != "residual-pre-attention"]),
+                    "x_component_top5_overlap_with_f16": len(
+                        set(top(components(effects), 5)) & set(top(components(ref), 5))) / 5,
+                    "x_component_top1_matches_f16": top(components(effects), 1) == top(components(ref), 1),
+                    "x_component_top1": "/".join(map(str, top(components(effects), 1)[0])),
+                    # Exploratory diagnostics for the pre-registered failures.
+                    "x_negligible_share_f16": sum(abs(ref[key]["recovered_fraction"]) < 0.02 for key in keys) / len(keys),
+                    "x_spearman_sites_ge_5pct": spearman(
+                        [effects[key]["actual"] for key in keys if abs(ref[key]["recovered_fraction"]) >= 0.05],
+                        [ref[key]["actual"] for key in keys if abs(ref[key]["recovered_fraction"]) >= 0.05]),
+                    "x_f16_top1_top2_gap": ref_ranked_gap(ref),
+                    "x_top1_shortfall_in_f16": ref[ref_top1]["recovered_fraction"] - ref[top(effects, 1)[0]]["recovered_fraction"],
                     "estimate_spearman_vs_actual": spearman(
                         [effects[key]["estimate"] for key in keys if effects[key]["direct_path"]],
                         [effects[key]["actual"] for key in keys if effects[key]["direct_path"]]),
@@ -317,7 +361,18 @@ def summarize(rows):
         summary[family] = {}
         for rung in RUNGS[1:]:
             subset = [row for row in rows if row["family"] == family and row["rung"] == rung]
+            failures = [
+                {"pair": row["pair"],
+                 "spearman": row["spearman_actual_vs_f16"],
+                 "top1_matches": row["top1_matches_f16"],
+                 "material_jaccard": row["material_jaccard_with_f16"]}
+                for row in subset
+                if not (row["spearman_actual_vs_f16"] >= 0.9 and row["top1_matches_f16"]
+                        and row["material_jaccard_with_f16"] >= 0.8)
+            ]
             summary[family][rung] = {
+                "preregistered_rule_holds": not failures,
+                "preregistered_failures": failures,
                 "pairs": len(subset),
                 "min_spearman_actual_vs_f16": min(row["spearman_actual_vs_f16"] for row in subset),
                 "median_spearman_actual_vs_f16": sorted(row["spearman_actual_vs_f16"] for row in subset)[len(subset) // 2],
@@ -325,6 +380,16 @@ def summarize(rows):
                 "top1_matches_f16": sum(row["top1_matches_f16"] for row in subset),
                 "mean_top5_overlap": sum(row["top5_overlap_with_f16"] for row in subset) / len(subset),
                 "min_material_jaccard": min(row["material_jaccard_with_f16"] for row in subset),
+                "x_handoff_layer_matches_f16": sum(row["x_handoff_layer"] == row["x_handoff_layer_f16"] for row in subset),
+                "x_handoff_layer_shift": sorted({(row["x_handoff_layer"] or -1) - (row["x_handoff_layer_f16"] or -1) for row in subset}),
+                "x_min_component_spearman": min(row["x_component_spearman_vs_f16"] for row in subset),
+                "x_component_top1_matches_f16": sum(row["x_component_top1_matches_f16"] for row in subset),
+                "x_mean_component_top5_overlap": sum(row["x_component_top5_overlap_with_f16"] for row in subset) / len(subset),
+                "x_negligible_share_f16": sum(row["x_negligible_share_f16"] for row in subset) / len(subset),
+                "x_min_spearman_sites_ge_5pct": min(row["x_spearman_sites_ge_5pct"] for row in subset),
+                "x_max_f16_top1_top2_gap": max(row["x_f16_top1_top2_gap"] for row in subset),
+                "x_max_top1_shortfall_in_f16": max(row["x_top1_shortfall_in_f16"] for row in subset),
+                "x_all_pairs_answer_correctly": all(row["clean_metric"] > 0 > row["corrupted_metric"] for row in subset),
                 "gap_ratio_range": [min(row["gap_ratio_to_f16"] for row in subset),
                                     max(row["gap_ratio_to_f16"] for row in subset)],
             }
@@ -335,6 +400,7 @@ def figures(out, rows, results):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
 
     themes = {
         "light": {"bg": "#f3f0e9", "fg": "#242424", "muted": "#85847e", "grid": "#d8d4ca",
@@ -362,6 +428,7 @@ def figures(out, rows, results):
                     ax.plot(layers, values, color=theme["rungs"][rung], linewidth=1.2, linestyle="--",
                             label=rung.upper().replace("_K_M", "_K_M"))
                 ax.grid(color=theme["grid"], linewidth=0.6)
+                ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
                 ax.tick_params(colors=theme["muted"], labelsize=8)
                 for spine in ax.spines.values():
                     spine.set_color(theme["grid"])
@@ -384,9 +451,15 @@ def figures(out, rows, results):
             ax = axes[index]
             ax.set_facecolor(theme["bg"])
             for offset, rung in enumerate(RUNGS[1:]):
-                values = [row["spearman_actual_vs_f16"] for row in rows if row["family"] == family and row["rung"] == rung]
-                xs = [offset + 0.08 * (i - (len(values) - 1) / 2) for i in range(len(values))]
-                ax.scatter(xs, values, color=theme["rungs"][rung], s=22)
+                subset = [row for row in rows if row["family"] == family and row["rung"] == rung]
+                every = [row["spearman_actual_vs_f16"] for row in subset]
+                material = [row["x_spearman_sites_ge_5pct"] for row in subset]
+                xs = [offset - 0.16 + 0.05 * (i - (len(every) - 1) / 2) for i in range(len(every))]
+                ax.scatter(xs, every, facecolors="none", edgecolors=theme["rungs"][rung], s=22,
+                           label="all candidates" if offset == 0 else None)
+                xs = [offset + 0.16 + 0.05 * (i - (len(material) - 1) / 2) for i in range(len(material))]
+                ax.scatter(xs, material, color=theme["rungs"][rung], s=22,
+                           label="sites recovering ≥5% in F16" if offset == 0 else None)
             ax.set_xticks(range(len(RUNGS) - 1), [rung.upper() for rung in RUNGS[1:]])
             ax.set_title(FAMILIES[family]["label"], color=theme["fg"], fontsize=9)
             ax.grid(color=theme["grid"], linewidth=0.6, axis="y")
@@ -394,6 +467,10 @@ def figures(out, rows, results):
             for spine in ax.spines.values():
                 spine.set_color(theme["grid"])
         axes[0].set_ylabel("Spearman of patch effects vs F16", color=theme["fg"], fontsize=8)
+        legend = axes[0].legend(loc="lower left", frameon=False, fontsize=7, labelcolor=theme["fg"])
+        for handle in legend.legend_handles:
+            handle.set_edgecolor(theme["muted"])
+            handle.set_facecolor(theme["muted"] if handle.get_label().startswith("sites") else "none")
         fig.tight_layout()
         fig.savefig(results / f"agreement-{theme_name}.png", dpi=160, facecolor=theme["bg"])
         plt.close(fig)
