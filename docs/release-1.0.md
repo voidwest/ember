@@ -1,36 +1,31 @@
 # Cutting Ember 1.0.0
 
-Status: **staged, not released.** The local release gates pass on candidate
-`099270c44ccb02dde40a3797595bb180633ff286621894c4d861306c6d67db00`; the tree now
-reports `version = "1.0.0"` (rebuilt binary
-`f443082e83ddeb20916598b512dee0604c81c5f340ec87852bf51a478dd18ed8`, a
-version-string-only delta). The `v1.0.0` tag is deliberately held until the
-external gates below close, per [the roadmap](road-to-1.0.md) gate 7.
+Status: **staged, not released.** The current candidate is
+[`v1.0.0-rc.2`](https://github.com/voidwest/ember/releases/tag/v1.0.0-rc.2) on
+`d41a618` (`main` after the provenance fix in #9), frozen release binary
+`b2f15f2e715c7d45213bebddf2a44c9b8ac1dfa8b3acd942eeb7c1f30fda3d89`
+(`cargo build --locked --release`, Rust 1.98.1, Apple M1 Pro). The full
+candidate battery passed on it on 2026-10-02; see the
+[record](audits/1.0-current-validation.md). The `v1.0.0` tag is deliberately
+held until the external gates below close, per [the roadmap](road-to-1.0.md)
+gate 7.
 
-## Drift since the candidate (recorded 2026-09-30)
+## Candidates
 
-The evidence in this document is for the candidate above, not for `main`.
+- `v1.0.0-rc.1` points at `0ea407d`, which is not an ancestor of `main`
+  (history was rewritten after the tag was pushed; `665d60c` on `main` has
+  the identical tree). Its evidence (binary `099270c4…`, 2026-09-28) is kept
+  below for history.
+- `v1.0.0-rc.2` is on `main` at `d41a618`. It carries the work after rc.1:
+  the ARM prefill and decode kernels, batched decode, f16/bf16 resident
+  weights, bundle I/O changes, steering/attribution/probe/lens features, and
+  build-time commits in bundle provenance. Outputs stayed bit-identical where
+  the contract requires it: the golden-ladder metrics equal rc.1's to every
+  printed digit.
 
-- The `v1.0.0-rc.1` tag points at `0ea407d`, which is not an ancestor of
-  `main`: history was rewritten after the tag was pushed. `665d60c` on `main`
-  has the identical tree.
-- As of `a5971db`, 93 commits follow `665d60c` on `main` (34 `feat`, 22 `fix`,
-  9 `perf`): 187 files, +35,049 / -4,504 lines.
-- They change the numerical path, not only the consoles: new ARM prefill
-  kernels (`src/q8_gemm.rs`, `src/attention_kernels.rs`,
-  `src/k_quant_matmul/arm_tiles.rs`) and edits to `src/simd.rs`,
-  `src/backend.rs`, `src/llama.rs`, `src/tensor.rs`, `src/kv_cache.rs`,
-  `src/quant.rs` and `src/loader.rs`.
-
-So cut step 2 below is a full rerun on a new candidate, not a formality, and
-every further feature or kernel commit enlarges it. The next candidate should
-get a new tag (`v1.0.0-rc.2`) on `main`; moving `rc.1` would rewrite a
-published tag.
-
-A development-tree rerun on 2026-09-30 (K-parity, the golden ladder and the
-golden path on the ARM host) found the ladder numbers unchanged; see the
-[record](audits/1.0-current-validation.md). It does not replace the candidate
-rerun.
+Commits after `d41a618` must be covered by a new candidate before `v1.0.0` is
+tagged on them; the cut can also tag `v1.0.0` on `d41a618` itself if nothing
+release-relevant lands in between.
 
 ## Gate status
 
@@ -44,11 +39,13 @@ rerun.
 | 6. External validation | **Open** | [external acceptance checklist](1.0-external-acceptance.md); needs a real second person |
 | 7. Cut the release | **Blocked** | this document |
 
-Candidate validation (see [1.0 current validation](audits/1.0-current-validation.md)):
-k_parity Q4 7/7 + Q6 7/7; golden ladder 6/6; six-site captures 36/36,
-interventions 72/72, scale 72/72; source-shapes 6/6; Python 20/20; tooling 25/25;
-default 1.98.1 and headless 1.92 all-targets green; Gate H matrix 24/24 within
-limits.
+Candidate validation for `v1.0.0-rc.2` (see
+[1.0 current validation](audits/1.0-current-validation.md)): local CI mirror
+(`scripts/ci_local.sh full`) and Rust 1.92 headless all-target tests green;
+k_parity Q4 7/7 + Q6 7/7; golden ladder 6/6 with metrics unchanged from rc.1;
+golden path exact-semantic, also when reproduced from another directory;
+six-site captures, interventions, scale and observer passed; Python binding
+rebuilt, 133 tests passed; Gate H matrix 24/24 within limits.
 
 ## External blockers (need the project owner)
 
