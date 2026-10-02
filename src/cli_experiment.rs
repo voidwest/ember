@@ -438,6 +438,9 @@ pub(crate) struct PreparedRun {
     pub embed_dim: usize,
     pub model_sha: String,
     pub tokenizer_sha: String,
+    /// `tokenizer.vocab_size()`, counted once: the tokenizers crate builds
+    /// the whole vocabulary map to answer it, and every bundle records it.
+    pub tokenizer_vocab_size: usize,
     pub gguf_metadata: serde_json::Value,
     pub model_path: PathBuf,
     /// The model section the session was prepared from; shared execution
@@ -587,6 +590,7 @@ fn prepare_run_overlapped<'scope, 'env>(
     // -- tokenizer --
     let (tokenizer_sha, tokenizer) = join_helper(tokenizer_job)?;
     tokenizer.validate_model_vocab(model.config.vocab_size)?;
+    let tokenizer_vocab_size = tokenizer.vocab_size();
 
     Ok(PreparedRun {
         model,
@@ -596,6 +600,7 @@ fn prepare_run_overlapped<'scope, 'env>(
         embed_dim,
         model_sha,
         tokenizer_sha,
+        tokenizer_vocab_size,
         gguf_metadata,
         model_path: resolved.model.path.clone(),
         model_spec: resolved.model.clone(),
@@ -1137,7 +1142,7 @@ pub(crate) fn finish_bundle(
         },
         tokenizer_meta: TokenizerBundleMeta {
             sha256: prepared.tokenizer_sha.clone(),
-            vocab_size: prepared.tokenizer.vocab_size(),
+            vocab_size: prepared.tokenizer_vocab_size,
         },
         plan: (*active.plan).clone(),
         results: results.clone(),
