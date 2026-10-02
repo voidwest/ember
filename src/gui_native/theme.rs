@@ -204,8 +204,6 @@ pub(super) fn dark() -> Colors {
 pub(super) struct Type;
 
 impl Type {
-    /// Page title. Large enough to anchor a screen, not a hero.
-    pub(super) const TITLE: f32 = 30.0;
     /// Section title within a page.
     pub(super) const SECTION: f32 = 19.0;
     /// A result value read from across a room: landmark values, verdicts.

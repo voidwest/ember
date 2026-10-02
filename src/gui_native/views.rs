@@ -2,6 +2,7 @@
 //! panels, each an `impl Console` block of its own.
 
 use super::*;
+use gpui_kit::component::TitleBar;
 
 // -- shell: top bar, navigation, palette, inspector, status bar -----------
 impl Console {
@@ -126,7 +127,7 @@ impl Console {
     /// All typography, no icons. The wordmark carries the app identity, the
     /// middle is a breadcrumb that is only as specific as the view makes it,
     /// and the right side is the model's live state plus the two view toggles.
-    fn topbar(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+    fn topbar(&self, colors: &Colors, cx: &mut Context<Self>) -> AnyElement {
         let toggle = cx.listener(|console, _: &ClickEvent, _w, cx| {
             console.cycle_appearance(cx);
         });
@@ -146,28 +147,18 @@ impl Console {
                 model_state
             )
         };
-        div()
+        // The window's only top strip. It is the kit's TitleBar, so it moves the
+        // window and zooms on a double click, and on macOS it leaves room for
+        // the traffic lights. No wordmark here: the sidebar header carries it.
+        let bar = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(Space::MD))
-            .px_4()
-            .h(px(theme::scaled(46.0)))
+            .pl(px(Space::MD))
+            .pr(px(Space::LG))
             .w_full()
-            .bg(colors.canvas)
-            .border_b_1()
-            .border_color(colors.border)
-            .child(
-                Button::new("topbar-home")
-                    .ghost()
-                    .small()
-                    .label("ember")
-                    .tooltip("Home")
-                    .accessibility_label("Ember, go to Home")
-                    .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
-                        console.goto(View::Home, cx);
-                    })),
-            )
+            .h_full()
             // A flex_1 row will happily paint text over its siblings when the
             // content cannot shrink, so this one truncates rather than trusting
             // min_w(0) alone. The step is the context that is true on every
@@ -207,14 +198,18 @@ impl Console {
                             .child(label(state, Type::LABEL, colors.text_muted))
                     }),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .max_w(px(theme::scaled(320.0)))
-                    .overflow_hidden()
-                    .child(mono(model_summary, Type::META, colors.text_faint))
-                    .whitespace_nowrap(),
-            )
+            // The workspace's setup pane already shows the model; elsewhere it
+            // is useful context, so it stays on every other page.
+            .when(self.view != View::Experiment, |bar| {
+                bar.child(
+                    div()
+                        .flex_none()
+                        .max_w(px(theme::scaled(320.0)))
+                        .overflow_hidden()
+                        .child(mono(model_summary, Type::META, colors.text_faint))
+                        .whitespace_nowrap(),
+                )
+            })
             .child(
                 Button::new("theme-toggle")
                     .ghost()
@@ -226,7 +221,13 @@ impl Console {
                         self.appearance.label()
                     ))
                     .on_click(toggle),
-            )
+            );
+        TitleBar::new()
+            .h(px(theme::scaled(44.0)))
+            .bg(colors.canvas)
+            .border_color(colors.border)
+            .child(bar)
+            .into_any_element()
     }
 
     /// Left navigation rail: quiet text rows, no icons.
@@ -386,6 +387,23 @@ impl Console {
         } else {
             self.results_empty(colors, cx).into_any_element()
         };
+        // A new result eases in rather than snapping: a short fade, keyed to
+        // the result so it plays once per result and not on every repaint.
+        // Off in the render harness, which photographs single frames.
+        let results = if cfg!(feature = "gui-tests") {
+            results
+        } else {
+            div()
+                .w_full()
+                .child(results)
+                .with_animation(
+                    SharedString::from(format!("results-in-{}", self.result_epoch)),
+                    Animation::new(std::time::Duration::from_millis(180))
+                        .with_easing(ease_out_quint()),
+                    |element, delta| element.opacity(delta),
+                )
+                .into_any_element()
+        };
 
         div()
             .id("workspace")
@@ -421,6 +439,10 @@ impl Console {
                             .child(results),
                     ),
             )
+    }
+
+    fn statusbar_needed(&self) -> bool {
+        self.store_error.is_some() || (self.view == View::Experiment && self.busy())
     }
 
     fn statusbar(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
@@ -1560,7 +1582,6 @@ impl Console {
                         None,
                         cx,
                     )))
-                    .child(label(limit, Type::LABEL, colors.text_muted))
                     .child(
                         Button::new("layer-plus")
                             .label("+")
@@ -1568,9 +1589,14 @@ impl Console {
                             .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
                                 console.adjust_layer(1, cx);
                             })),
-                    ),
+                    )
+                    .child(label(limit, Type::LABEL, colors.text_muted)),
             )
-            .child(label(position, Type::LABEL, colors.text_faint))
+            // Before a model is loaded there is no range to show; once it is,
+            // the track below says where the layer sits and this line goes.
+            .when(n_layers.is_none(), |stepper| {
+                stepper.child(label(position, Type::META, colors.text_faint))
+            })
     }
 
     /// What a run is doing right now, as steps. A first run loads the model
@@ -2257,26 +2283,18 @@ impl Console {
             .flex_col()
             .gap(px(Space::LG))
             .child(
+                // One row: the result tabs on the left, the actions on the
+                // right. A page title above them ("Results") said nothing the
+                // tabs do not; the row wraps the actions below when narrow.
                 div()
                     .flex()
                     .flex_wrap()
-                    .items_end()
+                    .items_center()
                     .child(
                         div()
                             .flex_1()
-                            // The title never wraps: it keeps its natural
-                            // width and the action buttons drop below it
-                            // when the row is too narrow for both.
                             .min_w(px(340.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(Space::XS))
-                            .child(label("Results", Type::TITLE, colors.text).whitespace_nowrap())
-                            .child(label(
-                                "The baseline and your change run on the same prompt with deterministic settings.",
-                                Type::BODY,
-                                colors.text_muted,
-                            )),
+                            .when(has_results, |row| row.child(self.result_tabs(colors, cx))),
                     )
                     .gap(px(Space::MD))
                     // The branch loop, one click after a run: replay the
@@ -2403,7 +2421,6 @@ impl Console {
                         )),
                 )
             })
-            .when(has_results, |page| page.child(div().pt(px(Space::SM)).child(self.result_tabs(colors, cx))))
             .child(result_body)
             .when(
                 has_results
@@ -2753,9 +2770,14 @@ impl Render for Console {
             .on_key_down(cx.listener(|console, event: &KeyDownEvent, window, cx| {
                 console.picker_key(event, window, cx);
             }))
-            .child(topbar.flex_none())
+            .child(topbar)
             .child(body)
-            .child(statusbar.flex_none())
+            // The status line appears only when it has something to say: a
+            // run in flight, or history that could not be saved. A permanent
+            // 'Ready' strip is chrome, not information.
+            .when(self.statusbar_needed(), |shell| {
+                shell.child(statusbar.flex_none())
+            })
             .when(self.palette_open, |shell| {
                 shell.child(self.palette_overlay(&colors, cx))
             })

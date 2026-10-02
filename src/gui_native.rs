@@ -96,6 +96,13 @@ use workspace::Reference;
 const FONT_SANS: &[u8] = include_bytes!("gui_fonts/NotoSans-Regular.ttf");
 const FONT_MONO: &[u8] = include_bytes!("gui_fonts/NotoSansMono-Regular.ttf");
 const FONT_ARABIC: &[u8] = include_bytes!("gui_fonts/NotoNaskhArabic-Regular.ttf");
+/// The interface face. On macOS this is the system font (SF Pro): it ships in
+/// every weight, so headings can carry emphasis by weight instead of by size
+/// alone, and it is what a native Mac app reads in. Elsewhere the bundled
+/// Noto Sans, which is Regular only.
+#[cfg(target_os = "macos")]
+const FONT_SANS_NAME: &str = ".SystemUIFont";
+#[cfg(not(target_os = "macos"))]
 const FONT_SANS_NAME: &str = "Noto Sans";
 const FONT_MONO_NAME: &str = "Noto Sans Mono";
 /// The bundled Noto Naskh renders with its dots (nuqta) detached, floating a
@@ -500,6 +507,8 @@ struct Console {
     pending_sweep: bool,
     /// Title and text for a result opened from somewhere other than a run.
     opened_note: Option<(String, String)>,
+    /// Bumped whenever a new result lands, to replay the results fade-in.
+    result_epoch: u64,
     /// The compact examples list in the setup pane.
     examples_open: bool,
     /// The Model section of the setup pane, expanded while a model is loaded.
@@ -776,6 +785,7 @@ impl Console {
             pending_sweep: false,
             opened_note: None,
             examples_open: false,
+            result_epoch: 0,
             model_open: false,
             saved_run: None,
             sidebar_open: if cfg!(feature = "gui-tests") {
@@ -1141,6 +1151,9 @@ impl Console {
                         self.saved_run = None;
                         self.opened_note = None;
                         self.copied = false;
+                        if !self.sweep_running() {
+                            self.result_epoch += 1;
+                        }
                         self.result_context = self.pending_context.take();
                         self.baseline = Some(bundle.baseline.clone());
                         self.intervention = Some(bundle.intervention.clone());
@@ -1332,6 +1345,10 @@ impl Console {
         let colors = self.colors();
         let theme = Theme::global_mut(cx);
         theme.font_family = FONT_SANS_NAME.into();
+        // The top bar is drawn with the kit's TitleBar; flatten its default
+        // gradient to the canvas so it reads as part of the window.
+        theme.title_bar = colors.canvas.into();
+        theme.title_bar_border = colors.border.into();
         theme.font_size = px(theme::scaled(14.0));
         theme.mono_font_family = FONT_MONO_NAME.into();
         theme.mono_font_size = px(theme::scaled(13.0));
@@ -1441,6 +1458,7 @@ impl Console {
         saved_run: Option<u64>,
         cx: &mut Context<Self>,
     ) {
+        self.result_epoch += 1;
         self.apply_form_values(values.clone(), cx);
         self.layer_series = Arc::from(comparison.layers.clone());
         let selected = comparison
@@ -2017,10 +2035,15 @@ pub(crate) fn run_gui_command(
             let bounds = Bounds::centered(None, size(px(1180.0), px(720.0)), cx);
             cx.open_window(
                 WindowOptions {
+                    // A transparent title bar: the traffic lights sit in Ember's
+                    // own top bar instead of a separate system strip above it,
+                    // and the bar moves the window itself (see `topbar`).
                     titlebar: Some(TitlebarOptions {
-                        title: Some("EMBER \u{2014} experiment console".into()),
-                        ..Default::default()
+                        title: Some("Ember".into()),
+                        appears_transparent: true,
+                        traffic_light_position: Some(point(px(14.0), px(14.0))),
                     }),
+                    app_owns_titlebar_drag: true,
                     window_bounds: Some(WindowBounds::Maximized(bounds)),
                     window_min_size: Some(size(px(980.0), px(620.0))),
                     ..Default::default()
