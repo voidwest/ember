@@ -14,7 +14,21 @@ pub(super) fn label(content: impl Into<SharedString>, size: f32, color: Rgba) ->
     div()
         .child(content.into())
         .text_size(px(scaled(size)))
+        .font_weight(weight_for(size))
         .text_color(color)
+}
+
+/// Weight follows the type scale: headings and headline values are
+/// semibold, sub-headings medium, everything else regular. One rule, so a
+/// size cannot be paired with the wrong weight at a call site.
+fn weight_for(size: f32) -> FontWeight {
+    if size >= Type::VALUE {
+        FontWeight::SEMIBOLD
+    } else if size >= Type::SUBSECTION {
+        FontWeight::MEDIUM
+    } else {
+        FontWeight::NORMAL
+    }
 }
 
 pub(super) fn mono(content: impl Into<SharedString>, size: f32, color: Rgba) -> Div {

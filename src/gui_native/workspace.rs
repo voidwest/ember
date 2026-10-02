@@ -470,19 +470,50 @@ impl Console {
                 self.validation_error()
                     .map(|error| label(error, Type::META, colors.warn)),
             )
+            // Run is the primary action and takes the row; Sweep is the
+            // secondary one beside it, not a second full-width button.
             .child(
-                Button::new("setup-run")
-                    .primary()
-                    .w_full()
-                    .label(run_label)
-                    .disabled(!can_run)
-                    .accessibility_label(run_label)
-                    .on_click(cx.listener(|console, _: &ClickEvent, window, cx| {
-                        console.claim_keyboard(window, cx);
-                        console.run_now();
-                        cx.notify();
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(Space::SM))
+                    .child(div().flex_1().min_w(px(0.0)).child(
+                        Button::new("setup-run")
+                            .primary()
+                            .w_full()
+                            .label(run_label)
+                            .disabled(!can_run)
+                            .accessibility_label(run_label)
+                            .on_click(cx.listener(|console, _: &ClickEvent, window, cx| {
+                                console.claim_keyboard(window, cx);
+                                console.run_now();
+                                cx.notify();
+                            })),
+                    ))
+                    .children((self.can_sweep() && !self.sweep_running()).then(|| {
+                        let layers = self.session.as_ref().map(|session| session.n_layers);
+                        Button::new("setup-sweep")
+                            .label("Sweep")
+                            .tooltip(match layers {
+                                Some(count) => format!("Run this experiment at all {count} layers and plot the effect of each"),
+                                None => "Run this experiment at every layer and plot the effect of each".to_string(),
+                            })
+                            .accessibility_label("Sweep the change across every layer")
+                            .disabled(!can_run)
+                            .on_click(cx.listener(|console, _: &ClickEvent, window, cx| {
+                                console.claim_keyboard(window, cx);
+                                console.start_sweep(cx);
+                                cx.notify();
+                            }))
                     })),
             )
+            .when(!self.busy(), |footer| {
+                footer.child(label(
+                    if cfg!(target_os = "macos") { "\u{2318}\u{21b5} runs \u{00b7} Esc cancels" } else { "Ctrl+Enter runs \u{00b7} Esc cancels" },
+                    Type::MICRO,
+                    colors.text_faint,
+                ))
+            })
             // Stopping a run sits under the button that started it, for as
             // long as there is something to stop.
             .when(
@@ -505,33 +536,17 @@ impl Console {
                     )
                 },
             )
-            .children(self.can_sweep().then(|| {
-                if self.sweep_running() {
+            .when(self.sweep_running(), |footer| {
+                footer.child(
                     Button::new("setup-sweep-stop")
                         .w_full()
                         .label("Stop sweep")
                         .accessibility_label("Stop the sweep after the run in flight")
                         .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
                             console.stop_sweep(cx);
-                        }))
-                } else {
-                    let layers = self.session.as_ref().map(|session| session.n_layers);
-                    Button::new("setup-sweep")
-                        .w_full()
-                        .label(match layers {
-                            Some(count) => format!("Sweep all {count} layers"),
-                            None => "Sweep all layers".to_string(),
-                        })
-                        .tooltip("Run this experiment at every layer and plot the effect of each")
-                        .accessibility_label("Sweep the change across every layer")
-                        .disabled(!can_run)
-                        .on_click(cx.listener(|console, _: &ClickEvent, window, cx| {
-                            console.claim_keyboard(window, cx);
-                            console.start_sweep(cx);
-                            cx.notify();
-                        }))
-                }
-            }));
+                        })),
+                )
+            });
 
         let rule = || rule_h(colors);
         div()
