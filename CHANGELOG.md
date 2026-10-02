@@ -19,6 +19,18 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- Provenance: bundles, probe and handoff artifacts, backend metadata and the
+  console now record the commit the binary was built from. They used to ask
+  `git` in the working directory, so the same binary recorded a different
+  `ember_commit`, and a different semantic hash, depending on where it ran.
+  Benchmark and support records keep the working-tree commit next to the
+  build commit on purpose.
+- Docs: the semantic hash binds the execution plan, which records the kernel
+  tier, CPU features, thread count and compiler. The bundle and
+  reproducibility docs no longer claim it is host-independent; across hosts,
+  `exact`/`output-equivalent` verdicts are the comparison to use.
+- CI: the golden-path model gate also runs on arm64 Linux and arm64 macOS,
+  so the NEON kernels are exercised on a real model, not only in unit tests.
 - F16/BF16 models: weights stay in the GGUF mapping and are widened inside
   the matmul instead of being converted (and transposed) to f32 at load.
   Logits are bit-identical in reference and planned modes; on Llama-3.2-1B

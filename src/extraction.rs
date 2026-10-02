@@ -1667,6 +1667,22 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// The commit this binary was built from, as captured by `build.rs`
+/// (`EMBER_GIT_COMMIT`), or `None` for a build outside a git checkout.
+///
+/// Use this for provenance that names what produced an artifact. Unlike
+/// [`git_commit`], it does not depend on the directory the binary runs in, so
+/// the same binary records the same commit wherever it is invoked.
+pub fn build_commit() -> Option<&'static str> {
+    option_env!("EMBER_GIT_COMMIT")
+}
+
+/// `git rev-parse HEAD` in the current working directory.
+///
+/// This describes the checkout the process runs in, not the binary: an
+/// installed `ember` invoked inside another repository reports that
+/// repository's HEAD. Only benchmark and support records, which deliberately
+/// capture the source tree next to the binary's own [`build_commit`], use it.
 pub fn git_commit() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
