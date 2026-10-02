@@ -54,7 +54,7 @@ HEAD_CLOSE_RE = re.compile(r"\n\s*</head>")
 STYLESHEET_RE = re.compile(
     r'(\n[ \t]*<link rel="stylesheet" href="/style\.css(?:\?v=[A-Za-z0-9._-]+)?"[ \t]*/?>)'
 )
-BODY_OPEN_RE = re.compile(r"(\n[ \t]*<body>)\s*\n")
+BODY_OPEN_RE = re.compile(r"(\n[ \t]*<body\b[^>]*>)\s*\n")
 BODY_CLOSE_RE = re.compile(r"\n\s*</body>")
 
 
@@ -285,8 +285,12 @@ def render_file(path: Path) -> tuple[str, str]:
     return old, new
 
 
-def is_managed_page(path: Path) -> bool:
-    """Return whether a page opts into the shared generated chrome contract."""
+def managed_mode(path: Path) -> str | None:
+    """Return which generated chrome a page opts into.
+
+    "full" pages share every generated block. "nav" pages keep custom chrome
+    (such as the homepage) but share the primary navigation.
+    """
     text = path.read_text(encoding="utf-8")
     markers = (
         "docs:theme-script start",
@@ -295,10 +299,26 @@ def is_managed_page(path: Path) -> bool:
         "docs:footer start",
     )
     present = [marker in text for marker in markers]
-    if any(present) and not all(present):
+    if all(present):
+        return "full"
+    if present == [False, False, True, False]:
+        return "nav"
+    if any(present):
         missing = [marker for marker, found in zip(markers, present, strict=True) if not found]
         raise ValueError(f"{path}: partially managed page is missing markers: {missing}")
-    return all(present)
+    return None
+
+
+def render_nav_file(path: Path) -> tuple[str, str]:
+    """Refresh the shared navigation and stylesheet key on a custom-chrome page."""
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"docs source must be a regular non-symlink file: {path}")
+    old = path.read_text(encoding="utf-8")
+    new = update_stylesheet(old)
+    new = update_nav(path, new)
+    if new.count("docs:nav start") != 1:
+        raise ValueError(f"{path}: expected exactly one 'docs:nav start' marker")
+    return old, new
 
 
 def render_unmanaged_file(path: Path) -> tuple[str, str]:
@@ -343,13 +363,11 @@ def main(argv: list[str] | None = None) -> int:
             "docs HTML inputs must be regular non-symlink files: "
             + ", ".join(str(path.relative_to(ROOT)) for path in invalid_paths)
         )
-    managed_paths = {path for path in all_paths if is_managed_page(path)}
-    if not managed_paths:
+    modes = {path: managed_mode(path) for path in all_paths}
+    if "full" not in modes.values():
         parser.error(f"no managed HTML files found under {DOCS}")
-    rendered = [
-        (path, *(render_file(path) if path in managed_paths else render_unmanaged_file(path)))
-        for path in all_paths
-    ]
+    renderers = {"full": render_file, "nav": render_nav_file, None: render_unmanaged_file}
+    rendered = [(path, *renderers[modes[path]](path)) for path in all_paths]
     updates = [(path, new) for path, old, new in rendered if old != new]
     if not args.check:
         for path, new in updates:
