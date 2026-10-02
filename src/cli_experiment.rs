@@ -13,7 +13,7 @@ use ember::experiments::{
     ExecutionContext, ExecutionPhase, Experiment, ExperimentError, ExperimentRunner,
     GenerationContext, LayerContext, ModelContext, ModelFamily, TensorAccess,
 };
-use ember::extraction::sha256_file_result;
+use ember::extraction::{sha256_file_result, sha256_file_result_unless};
 use ember::llama::Llama;
 use ember::loader::load_gguf_with_k_strategy;
 use ember::model::ForwardModel;
@@ -32,6 +32,7 @@ use ember::v05::spec::{RawExperimentSpec, EXPERIMENT_SCHEMA_V1};
 use ember::v05::token_select::{tokenize_for_selection, TextNormalization};
 use ember::v05::verify::{load_verified_bundle, verify_bundle, LoadedBundle, VerifyOptions};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// `ember experiment ...` subcommands.
@@ -499,6 +500,45 @@ pub(crate) fn prepare_run(
     k_strategy: KStrategy,
     k_allow_fallback: bool,
 ) -> anyhow::Result<PreparedRun> {
+    // Hashing the whole GGUF (~0.7 s for 1.3 GB) and reading, hashing and
+    // parsing the tokenizer do not depend on building the model, so they run
+    // on helper threads while it loads. Results are checked in the order
+    // they were when everything ran in sequence, with the same errors, and
+    // the tokenizer is parsed only after its bytes match the spec's pin.
+    let abandon = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let model_hash = scope.spawn(|| sha256_file_result_unless(&resolved.model.path, &abandon));
+        let prepared = prepare_run_overlapped(
+            resolved,
+            k_strategy,
+            k_allow_fallback,
+            scope,
+            model_hash,
+            &abandon,
+        );
+        // After an early error the helpers' results go unused; stop them
+        // instead of waiting out a whole-model hash when the scope joins.
+        abandon.store(true, Ordering::Relaxed);
+        prepared
+    })
+}
+
+/// Join a helper thread, re-raising its panic as one would have been raised
+/// had its work run on the calling thread.
+fn join_helper<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
+fn prepare_run_overlapped<'scope, 'env>(
+    resolved: &'env ember::v05::spec::ExperimentSpecV1,
+    k_strategy: KStrategy,
+    k_allow_fallback: bool,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    model_hash: std::thread::ScopedJoinHandle<'scope, anyhow::Result<String>>,
+    abandon: &'env AtomicBool,
+) -> anyhow::Result<PreparedRun> {
     // -- model --
     let loader = load_gguf_with_k_strategy(&resolved.model.path, k_strategy, k_allow_fallback)?;
     let architecture =
@@ -509,12 +549,21 @@ pub(crate) fn prepare_run(
              '{architecture}'"
         );
     }
+    let tokenizer_path = resolved
+        .model
+        .tokenizer
+        .clone()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| default_tokenizer_for_arch(&architecture).to_string());
+    let resolved_tokenizer = resolve_tokenizer(&tokenizer_path);
+    let tokenizer_pin = resolved.model.tokenizer_expected_sha256.as_str();
+    let tokenizer_job = scope.spawn(move || resolved_tokenizer.load_pinned(tokenizer_pin, abandon));
     let gguf_metadata = gguf_metadata_json(&loader);
     let model = Llama::from_loader_with_max_seq_len(loader, None)?;
     let n_layers = model.config.n_layers;
     let embed_dim = model.config.embed_dim;
 
-    let model_sha = sha256_file_result(&resolved.model.path)
+    let model_sha = join_helper(model_hash)
         .with_context(|| format!("failed to hash model '{}'", resolved.model.path.display()))?;
     if !resolved.model.expected_sha256.is_empty() && resolved.model.expected_sha256 != model_sha {
         anyhow::bail!(
@@ -526,25 +575,7 @@ pub(crate) fn prepare_run(
     }
 
     // -- tokenizer --
-    let tokenizer_path = resolved
-        .model
-        .tokenizer
-        .clone()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| default_tokenizer_for_arch(&architecture).to_string());
-    let resolved_tokenizer = resolve_tokenizer(&tokenizer_path);
-    let tokenizer_sha = resolved_tokenizer.sha256()?;
-    if !resolved.model.tokenizer_expected_sha256.is_empty()
-        && resolved.model.tokenizer_expected_sha256 != tokenizer_sha
-    {
-        anyhow::bail!(
-            "tokenizer SHA-256 mismatch: spec expects {} but '{}' hashes to {}",
-            resolved.model.tokenizer_expected_sha256,
-            resolved_tokenizer.identity(),
-            tokenizer_sha
-        );
-    }
-    let tokenizer = resolved_tokenizer.load()?;
+    let (tokenizer_sha, tokenizer) = join_helper(tokenizer_job)?;
     tokenizer.validate_model_vocab(model.config.vocab_size)?;
 
     Ok(PreparedRun {

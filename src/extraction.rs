@@ -1628,6 +1628,16 @@ pub fn sha256_file(path: impl AsRef<Path>) -> Option<String> {
 const SHA256_FILE_CHUNK: usize = 256 * 1024;
 
 pub fn sha256_file_result(path: impl AsRef<Path>) -> Result<String> {
+    sha256_file_result_unless(path, &std::sync::atomic::AtomicBool::new(false))
+}
+
+/// As [`sha256_file_result`], but gives up between reads once `abandon` is
+/// set, returning an error. For a hash computed alongside other work that
+/// can fail first: the caller sets `abandon` and the result goes unused.
+pub fn sha256_file_result_unless(
+    path: impl AsRef<Path>,
+    abandon: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
     use std::io::Read;
 
     let path = path.as_ref();
@@ -1636,6 +1646,9 @@ pub fn sha256_file_result(path: impl AsRef<Path>) -> Result<String> {
     let mut hasher = Sha256::new();
     let mut chunk = vec![0u8; SHA256_FILE_CHUNK];
     loop {
+        if abandon.load(std::sync::atomic::Ordering::Relaxed) {
+            anyhow::bail!("abandoned hashing {}", path.display());
+        }
         let read = match file.read(&mut chunk) {
             Ok(0) => break,
             Ok(read) => read,
@@ -1912,6 +1925,12 @@ mod tests {
         assert_eq!(sha256_file_result(&path).unwrap(), sha256_bytes(&bytes));
         fs::write(&path, b"").unwrap();
         assert_eq!(sha256_file_result(&path).unwrap(), sha256_bytes(b""));
+        let abandoned = sha256_file_result_unless(&path, &std::sync::atomic::AtomicBool::new(true))
+            .unwrap_err();
+        assert!(
+            abandoned.to_string().starts_with("abandoned hashing "),
+            "{abandoned:#}"
+        );
         fs::remove_file(&path).unwrap();
         let missing = sha256_file_result(&path).unwrap_err();
         assert!(
