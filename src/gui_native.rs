@@ -507,6 +507,8 @@ struct Console {
     pending_sweep: bool,
     /// Title and text for a result opened from somewhere other than a run.
     opened_note: Option<(String, String)>,
+    /// Bumped whenever a new result lands, to replay the results fade-in.
+    result_epoch: u64,
     /// The compact examples list in the setup pane.
     examples_open: bool,
     /// The Model section of the setup pane, expanded while a model is loaded.
@@ -783,6 +785,7 @@ impl Console {
             pending_sweep: false,
             opened_note: None,
             examples_open: false,
+            result_epoch: 0,
             model_open: false,
             saved_run: None,
             sidebar_open: if cfg!(feature = "gui-tests") {
@@ -1148,6 +1151,9 @@ impl Console {
                         self.saved_run = None;
                         self.opened_note = None;
                         self.copied = false;
+                        if !self.sweep_running() {
+                            self.result_epoch += 1;
+                        }
                         self.result_context = self.pending_context.take();
                         self.baseline = Some(bundle.baseline.clone());
                         self.intervention = Some(bundle.intervention.clone());
@@ -1452,6 +1458,7 @@ impl Console {
         saved_run: Option<u64>,
         cx: &mut Context<Self>,
     ) {
+        self.result_epoch += 1;
         self.apply_form_values(values.clone(), cx);
         self.layer_series = Arc::from(comparison.layers.clone());
         let selected = comparison

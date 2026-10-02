@@ -198,14 +198,18 @@ impl Console {
                             .child(label(state, Type::LABEL, colors.text_muted))
                     }),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .max_w(px(theme::scaled(320.0)))
-                    .overflow_hidden()
-                    .child(mono(model_summary, Type::META, colors.text_faint))
-                    .whitespace_nowrap(),
-            )
+            // The workspace's setup pane already shows the model; elsewhere it
+            // is useful context, so it stays on every other page.
+            .when(self.view != View::Experiment, |bar| {
+                bar.child(
+                    div()
+                        .flex_none()
+                        .max_w(px(theme::scaled(320.0)))
+                        .overflow_hidden()
+                        .child(mono(model_summary, Type::META, colors.text_faint))
+                        .whitespace_nowrap(),
+                )
+            })
             .child(
                 Button::new("theme-toggle")
                     .ghost()
@@ -382,6 +386,23 @@ impl Console {
             self.review_step(colors, cx).into_any_element()
         } else {
             self.results_empty(colors, cx).into_any_element()
+        };
+        // A new result eases in rather than snapping: a short fade, keyed to
+        // the result so it plays once per result and not on every repaint.
+        // Off in the render harness, which photographs single frames.
+        let results = if cfg!(feature = "gui-tests") {
+            results
+        } else {
+            div()
+                .w_full()
+                .child(results)
+                .with_animation(
+                    SharedString::from(format!("results-in-{}", self.result_epoch)),
+                    Animation::new(std::time::Duration::from_millis(180))
+                        .with_easing(ease_out_quint()),
+                    |element, delta| element.opacity(delta),
+                )
+                .into_any_element()
         };
 
         div()
@@ -1561,7 +1582,6 @@ impl Console {
                         None,
                         cx,
                     )))
-                    .child(label(limit, Type::LABEL, colors.text_muted))
                     .child(
                         Button::new("layer-plus")
                             .label("+")
@@ -1569,9 +1589,14 @@ impl Console {
                             .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
                                 console.adjust_layer(1, cx);
                             })),
-                    ),
+                    )
+                    .child(label(limit, Type::LABEL, colors.text_muted)),
             )
-            .child(label(position, Type::LABEL, colors.text_faint))
+            // Before a model is loaded there is no range to show; once it is,
+            // the track below says where the layer sits and this line goes.
+            .when(n_layers.is_none(), |stepper| {
+                stepper.child(label(position, Type::META, colors.text_faint))
+            })
     }
 
     /// What a run is doing right now, as steps. A first run loads the model

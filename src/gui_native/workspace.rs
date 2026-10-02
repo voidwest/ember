@@ -327,6 +327,7 @@ impl Console {
                         )))
                     }),
             )
+            .children(per_layer(&self.site).then(|| self.layer_track(colors, cx)).flatten())
             .when(needs_source, |section| {
                 section
                     .child(field(
@@ -602,6 +603,102 @@ impl Console {
                     .child(advanced),
             )
             .child(footer)
+    }
+
+    /// One cell per layer: where the chosen layer sits in the model, and a
+    /// click target for every layer. After a sweep the cells are tinted by how
+    /// far changing that layer moved the model, so the track doubles as the
+    /// sweep's heatmap. Needs a loaded model; before that there is no range.
+    fn layer_track(&self, colors: &Colors, cx: &mut Context<Self>) -> Option<Div> {
+        let count = self.session.as_ref()?.n_layers;
+        let current = self.layer.parse::<usize>().ok();
+        // Peak divergence per swept layer, normalised to the sweep's maximum.
+        let heat: Vec<f32> = match self.sweep.as_ref().filter(|sweep| sweep.finished) {
+            Some(sweep) => {
+                // Stretched from the sweep's smallest effect to its largest, so
+                // the differences that matter are visible even when every
+                // layer moved the model a fair amount.
+                let peaks = sweep
+                    .points
+                    .iter()
+                    .filter_map(|point| point.comparison.landmarks.peak_relative_l2);
+                let max = peaks.clone().fold(0.0f64, f64::max);
+                let min = peaks.fold(f64::INFINITY, f64::min).min(max);
+                (0..count)
+                    .map(|layer| {
+                        sweep
+                            .points
+                            .iter()
+                            .find(|point| point.layer == layer)
+                            .and_then(|point| point.comparison.landmarks.peak_relative_l2)
+                            .map_or(0.0, |value| {
+                                if max > min {
+                                    (0.08 + 0.92 * (value - min) / (max - min)) as f32
+                                } else if max > 0.0 {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
+                            })
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        let mut track = div().flex().flex_row().gap(px(2.0)).w_full();
+        for layer in 0..count {
+            let selected = current == Some(layer);
+            let tint = heat.get(layer).copied().unwrap_or(0.0);
+            let fill: Hsla = if selected {
+                colors.accent.into()
+            } else if tint > 0.0 {
+                Hsla::from(colors.accent).opacity(0.10 + 0.70 * tint)
+            } else {
+                colors.selection.into()
+            };
+            track = track.child(
+                div()
+                    .id(SharedString::from(format!("layer-cell:{layer}")))
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .h(px(18.0))
+                    .rounded(px(3.0))
+                    .bg(fill)
+                    // The chosen layer is outlined as well as filled, so it
+                    // stays distinct from a strongly tinted sweep cell.
+                    .when(selected, |cell| cell.border_1().border_color(colors.text))
+                    .cursor_pointer()
+                    .hover(|style| style.border_1().border_color(colors.border_strong))
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(format!("Layer {layer}"))
+                            .build(window, cx)
+                    })
+                    .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
+                        console.layer = layer.to_string();
+                        let input = console.inputs.layer.clone();
+                        console.set_input_value(input, layer.to_string(), cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        let ends = div()
+            .flex()
+            .flex_row()
+            .child(mono("L0", Type::MICRO, colors.text_faint))
+            .child(div().flex_1())
+            .when(!heat.is_empty(), |row| {
+                row.child(label("tint: effect in the last sweep", Type::MICRO, colors.text_faint))
+                    .child(div().flex_1())
+            })
+            .child(mono(format!("L{}", count.saturating_sub(1)), Type::MICRO, colors.text_faint));
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(Space::XS))
+                .child(track)
+                .child(ends),
+        )
     }
 
     /// Examples as a single compact column, for the setup pane.
