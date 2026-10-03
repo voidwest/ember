@@ -65,6 +65,8 @@ mod menu;
 mod palette;
 mod picker;
 mod runs_table;
+mod skeleton;
+mod spark;
 mod store_writer;
 mod sweep;
 mod theme;
@@ -509,6 +511,9 @@ struct Console {
     opened_note: Option<(String, String)>,
     /// Bumped whenever a new result lands, to replay the results fade-in.
     result_epoch: u64,
+    /// A short confirmation shown bottom-right ("Copied", "Saved"), and the
+    /// id that lets a later one replace it without the earlier timer clearing it.
+    toast: Option<(String, u64)>,
     /// The compact examples list in the setup pane.
     examples_open: bool,
     /// The Model section of the setup pane, expanded while a model is loaded.
@@ -786,6 +791,7 @@ impl Console {
             opened_note: None,
             examples_open: false,
             result_epoch: 0,
+            toast: None,
             model_open: false,
             saved_run: None,
             sidebar_open: if cfg!(feature = "gui-tests") {
