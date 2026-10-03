@@ -107,7 +107,9 @@ fn unknown_fields_are_ignored_for_compatibility() {
     assert!(doc.decode.is_none());
 }
 
-/// Malformed bytes are a clean error, never a panic.
+/// Malformed bytes are a clean error, never a panic. `null` and `[]` are
+/// valid JSON but not documents: they must fail the schema check rather
+/// than deserialize into an empty struct.
 #[test]
 fn malformed_json_is_a_clean_error() {
     for bad in ["", "not json", "{", "[]", "null"] {
@@ -116,14 +118,6 @@ fn malformed_json_is_a_clean_error() {
             "{bad:?} must be an error"
         );
     }
-}
-
-/// `null` and `[]` are valid JSON but not documents: they must fail the
-/// schema check rather than deserialize into an empty struct.
-#[test]
-fn json_that_is_not_an_object_is_rejected() {
-    assert!(parse_infertrace_document("[]").is_err());
-    assert!(parse_infertrace_document("null").is_err());
 }
 
 /// The schema id follows the same dotted convention as the frozen

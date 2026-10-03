@@ -442,7 +442,7 @@ pub(crate) fn print_bundle_reports(bundle: &std::path::Path) -> anyhow::Result<(
 mod tests {
     use super::*;
     use crate::cli_experiment::{execute_prepared, prepare_run};
-    use crate::experiment_testutil::{resolve, spec_text, tiny_model};
+    use crate::experiment_testutil::{copy_dir, resolve, resolve_err, spec_text, tiny_model};
     use ember::quant_k::KStrategy;
     use ember::v05::verify::{load_bundle_for_source, verify_bundle, VerifyOptions};
 
@@ -539,8 +539,7 @@ verify_top_k = 60
 
         // Tampered artifacts fail verification.
         let tampered = model.dir.join("tampered");
-        std::fs::create_dir_all(&tampered).unwrap();
-        copy_tree(&path, &tampered);
+        copy_dir(&path, &tampered);
         let json = tampered.join(ATTRIBUTION_JSON);
         let mut forged = attribution.clone();
         forged.spearman = Some(0.999);
@@ -565,19 +564,6 @@ verify_top_k = 60
         );
     }
 
-    fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
-        for entry in std::fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            let target = to.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                std::fs::create_dir_all(&target).unwrap();
-                copy_tree(&entry.path(), &target);
-            } else {
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
-
     #[test]
     fn attribution_fails_closed() {
         let model = tiny_model("attribution-invalid", 2, 64, false);
@@ -595,18 +581,7 @@ verify_top_k = 60
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("same length"), "{error:#}");
-        let parse = |body: String| {
-            ember::v05::spec::RawExperimentSpec::from_toml_str(&spec_text(
-                &model,
-                "reference",
-                0,
-                &body,
-            ))
-            .unwrap()
-            .resolve()
-            .unwrap_err()
-            .to_string()
-        };
+        let parse = |body: String| resolve_err(&model, &body);
         let error = parse(body("w1", "sites = [\"logits\"]"));
         assert!(error.contains("attribution.sites[0]"), "{error}");
         let error =

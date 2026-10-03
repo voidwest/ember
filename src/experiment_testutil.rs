@@ -311,3 +311,41 @@ pub(crate) fn resolve(text: &str) -> ember::v05::spec::ExperimentSpecV1 {
 pub(crate) fn out_dir(dir: &Path, name: &str) -> PathBuf {
     dir.join(name)
 }
+
+/// The resolve error of a spec that must not resolve.
+pub(crate) fn resolve_err(model: &TinyModel, body: &str) -> String {
+    ember::v05::spec::RawExperimentSpec::from_toml_str(&spec_text(model, "reference", 0, body))
+        .unwrap()
+        .resolve()
+        .unwrap_err()
+        .to_string()
+}
+
+/// `experiment run` arguments for `spec`, unsigned.
+pub(crate) fn run_args(spec: &Path, output: Option<PathBuf>) -> crate::cli_experiment::RunArgs {
+    crate::cli_experiment::RunArgs {
+        spec: spec.to_path_buf(),
+        execution: None,
+        threads: None,
+        output,
+        retain_incomplete: false,
+        variants: Vec::new(),
+        sign_key: None,
+        no_sign: true,
+        json: false,
+    }
+}
+
+/// Recursively copy `from` into `to`, creating `to`.
+pub(crate) fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}

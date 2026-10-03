@@ -235,7 +235,9 @@ pub(crate) fn check_direction_files(resolved: &ExperimentSpecV1) -> anyhow::Resu
 mod tests {
     use super::*;
     use crate::cli_experiment::{execute_prepared, prepare_run};
-    use crate::experiment_testutil::{resolve, spec_text, tiny_model, TinyModel};
+    use crate::experiment_testutil::{
+        copy_dir, resolve, run_args, spec_text, tiny_model, TinyModel,
+    };
     use ember::quant_k::KStrategy;
     use ember::v05::hook::SemanticHookSite;
     use ember::v05::intervention::SteerNormalization;
@@ -329,6 +331,17 @@ kind = "prompt-final"
 
     fn bits(values: &[f32]) -> Vec<u32> {
         values.iter().map(|value| value.to_bits()).collect()
+    }
+
+    fn direction_tensors(
+        bundle: &ember::v05::verify::LoadedBundle,
+    ) -> std::collections::BTreeMap<usize, Vec<f32>> {
+        ember::v05::steering::read_direction_tensors(
+            bundle
+                .file("artifacts/directions/steer.safetensors")
+                .unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -469,12 +482,7 @@ kind = "prompt-final"
         }
         // The bundle carries the direction and verifies it.
         let bundle = load_bundle_for_source(&path).unwrap();
-        let tensors = ember::v05::steering::read_direction_tensors(
-            bundle
-                .file("artifacts/directions/steer.safetensors")
-                .unwrap(),
-        )
-        .unwrap();
+        let tensors = direction_tensors(&bundle);
         assert_eq!(tensors[&1], direction());
         let report = verify_bundle(&path, &VerifyOptions::default()).unwrap();
         assert!(report
@@ -524,12 +532,7 @@ kind = "prompt-final"
         );
         let (path, _) = run(&mut prepared, &model, &st_text, "safetensors").unwrap();
         let bundle = load_bundle_for_source(&path).unwrap();
-        let tensors = ember::v05::steering::read_direction_tensors(
-            bundle
-                .file("artifacts/directions/steer.safetensors")
-                .unwrap(),
-        )
-        .unwrap();
+        let tensors = direction_tensors(&bundle);
         assert_eq!(tensors[&2], per_layer[128..192].to_vec());
 
         // Fail closed: a wrong pin, a wrong width, a non-direction op.
@@ -590,19 +593,6 @@ kind = "prompt-final"
         assert!(error.message.contains("direction operation"), "{error}");
     }
 
-    fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
-        std::fs::create_dir_all(to).unwrap();
-        for entry in std::fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            let target = to.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                copy_dir(&entry.path(), &target);
-            } else {
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
-
     #[test]
     fn contrastive_direction_is_the_difference_of_prompt_means() {
         let model = tiny_model("steer-contrast", 4, 64, false);
@@ -651,12 +641,7 @@ text = "w9 w8 w7"
             .map(|i| ((row(0)[i] + row(1)[i]) / 2.0 - row(2)[i]) as f32)
             .collect();
         let bundle = load_bundle_for_source(&path).unwrap();
-        let tensors = ember::v05::steering::read_direction_tensors(
-            bundle
-                .file("artifacts/directions/steer.safetensors")
-                .unwrap(),
-        )
-        .unwrap();
+        let tensors = direction_tensors(&bundle);
         assert_eq!(bits(&tensors[&1]), bits(&expected));
         // The record names the prompts by hash.
         let record: ember::v05::steering::DirectionRecord =
@@ -699,17 +684,7 @@ text = "w9 w8 w7"
         let spec = model.dir.join("sweep.toml");
         std::fs::write(&spec, &text).unwrap();
         let out = model.dir.join("sweep-out");
-        let args = crate::cli_experiment::RunArgs {
-            spec: spec.clone(),
-            execution: None,
-            threads: None,
-            output: Some(out.clone()),
-            retain_incomplete: false,
-            variants: Vec::new(),
-            sign_key: None,
-            no_sign: true,
-            json: false,
-        };
+        let args = run_args(&spec, Some(out.clone()));
         crate::cli_experiment_sweep::run_sweep(&args, &text, KStrategy::Auto, false).unwrap();
         let report = ember::v05::sweep::verify_sweep(&out, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);

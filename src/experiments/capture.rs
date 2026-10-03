@@ -571,14 +571,7 @@ mod tests {
         phase: CapturePhase,
     ) -> CaptureSelection {
         CaptureSelection {
-            output_dir: std::env::temp_dir().join(format!(
-                "ember_capture_test_{}_{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            )),
+            output_dir: crate::v05::testutil::temp_root("capture-test"),
             layers,
             stages: stages
                 .iter()
@@ -806,16 +799,9 @@ max_records = 8
         std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn finalize_without_inventory_keeps_v03_fields_null() {
-        // the additive v0.3 fields serialize as null when no inventory is
-        // attached, and a manifest without them still parses (backward
-        // compatibility in both directions)
-        let mut sink = make_sink(make_selection(
-            vec![0],
-            vec!["after-mlp"],
-            CapturePhase::Prefill,
-        ));
+    /// Load, record one 3x8 prefill after-mlp block, finalize, and read the
+    /// manifest back.
+    fn finalize_one_prefill(mut sink: CaptureSink) -> (ActivationManifest, std::path::PathBuf) {
         sink.on_model_loaded(&model_context(4, 8)).unwrap();
         let prefill = execution(ExecutionPhase::Prefill, 0, 3);
         let mut prefill_values: Vec<f32> = (1..=24).map(|value| value as f32).collect();
@@ -843,6 +829,19 @@ max_records = 8
             .unwrap();
         let manifest: ActivationManifest =
             serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        (manifest, manifest_path)
+    }
+
+    #[test]
+    fn finalize_without_inventory_keeps_v03_fields_null() {
+        // the additive v0.3 fields serialize as null when no inventory is
+        // attached, and a manifest without them still parses (backward
+        // compatibility in both directions)
+        let (manifest, manifest_path) = finalize_one_prefill(make_sink(make_selection(
+            vec![0],
+            vec!["after-mlp"],
+            CapturePhase::Prefill,
+        )));
         assert!(manifest.execution.is_none());
         assert!(manifest.run.k_strategy.is_none());
 
@@ -871,39 +870,13 @@ max_records = 8
                 per_dtype: vec![],
             },
         };
-        let mut sink = make_sink(make_selection(
+        let sink = make_sink(make_selection(
             vec![0],
             vec!["after-mlp"],
             CapturePhase::Prefill,
         ))
         .with_execution(inventory);
-        sink.on_model_loaded(&model_context(4, 8)).unwrap();
-        let prefill = execution(ExecutionPhase::Prefill, 0, 3);
-        let mut prefill_values: Vec<f32> = (1..=24).map(|value| value as f32).collect();
-        let prefill_tensor = TensorAccess::new(3, 8, &mut prefill_values);
-        sink.after_mlp(&prefill, 0, &prefill_tensor, DispatchPath::Generic)
-            .unwrap();
-        let generation = GenerationContext::new(
-            model_context(4, 8),
-            3,
-            1,
-            1,
-            TracingState::Disabled,
-            &[1, 2, 3],
-            &[9],
-        );
-        let manifest_path = sink
-            .finalize(
-                &generation,
-                ManifestExperiment {
-                    name: "test".to_string(),
-                    arguments: serde_json::json!({}),
-                },
-                Vec::new(),
-            )
-            .unwrap();
-        let manifest: ActivationManifest =
-            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        let (manifest, _) = finalize_one_prefill(sink);
         let attached = manifest.execution.as_ref().expect("inventory attached");
         assert_eq!(attached.requested_strategy, "auto");
         assert_eq!(manifest.run.k_strategy.as_deref(), Some("auto"));

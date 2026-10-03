@@ -527,69 +527,85 @@ mod tests {
     }
 
     #[test]
-    fn exit_zero_is_accept() {
-        let result = supervised(Termination::Success, "");
-        assert_eq!(classify_supervised(&result), DiffOutcome::Accept);
+    fn supervised_results_classify_by_termination() {
+        for (case, termination, stderr, killed_by_harness, expected) in [
+            (
+                "exit zero",
+                Termination::Success,
+                "",
+                false,
+                DiffOutcome::Accept,
+            ),
+            (
+                "exit one",
+                Termination::ExitCode(1),
+                "bad header",
+                false,
+                DiffOutcome::StructuredReject,
+            ),
+            // The old GGML_ASSERT stderr sniff is gone: it fired zero times
+            // across all three frozen result sets (the only two real
+            // llama.cpp assertion failures manifested as signals). Exit 1 +
+            // assert text is a structured reject until adapter validation
+            // proves otherwise.
+            (
+                "exit one with assert text",
+                Termination::ExitCode(1),
+                "GGML_ASSERT(fail) boom",
+                false,
+                DiffOutcome::StructuredReject,
+            ),
+            (
+                "exit 101",
+                Termination::ExitCode(101),
+                "panicked",
+                false,
+                DiffOutcome::Panic,
+            ),
+            (
+                "signal",
+                Termination::Signal(11),
+                "",
+                false,
+                DiffOutcome::ProcessCrash,
+            ),
+            // A bare SIGKILL the harness did not send is indistinguishable
+            // from OOM action at this layer: external kill, not timeout.
+            (
+                "sigkill without harness kill",
+                Termination::Signal(9),
+                "oom",
+                false,
+                DiffOutcome::ResourceLimitOrExternalKill,
+            ),
+            (
+                "harness kill",
+                Termination::Timeout,
+                "",
+                true,
+                DiffOutcome::Timeout,
+            ),
+            // Exit 42 means neither accept/reject/panic protocol: the
+            // harness cannot interpret it, so it must not be laundered into
+            // a crash.
+            (
+                "unknown exit",
+                Termination::ExitCode(42),
+                "",
+                false,
+                DiffOutcome::HarnessError,
+            ),
+        ] {
+            let mut result = supervised(termination, stderr);
+            result.killed_by_harness = killed_by_harness;
+            assert_eq!(classify_supervised(&result), expected, "{case}");
+        }
         assert_eq!(DiffOutcome::Accept.token(), "ACCEPT");
-    }
-
-    #[test]
-    fn exit_one_is_structured_reject() {
-        let result = supervised(Termination::ExitCode(1), "bad header");
-        assert_eq!(classify_supervised(&result), DiffOutcome::StructuredReject);
-    }
-
-    #[test]
-    fn exit_one_with_assert_text_stays_structured_reject() {
-        // The old GGML_ASSERT stderr sniff is gone: it fired zero times
-        // across all three frozen result sets (the only two real llama.cpp
-        // assertion failures manifested as signals). Exit 1 + assert text
-        // is a structured reject until adapter validation proves otherwise.
-        let result = supervised(Termination::ExitCode(1), "GGML_ASSERT(fail) boom");
-        assert_eq!(classify_supervised(&result), DiffOutcome::StructuredReject);
-    }
-
-    #[test]
-    fn exit_101_is_panic() {
-        let result = supervised(Termination::ExitCode(101), "panicked");
-        assert_eq!(classify_supervised(&result), DiffOutcome::Panic);
-    }
-
-    #[test]
-    fn signal_is_process_crash() {
-        let result = supervised(Termination::Signal(11), "");
-        assert_eq!(classify_supervised(&result), DiffOutcome::ProcessCrash);
-    }
-
-    #[test]
-    fn sigkill_without_harness_kill_is_external_not_timeout() {
-        // The token deliberately does NOT say RESOURCE_LIMIT: a bare
-        // SIGKILL the harness did not send is indistinguishable from OOM
-        // action at this layer.
-        let result = supervised(Termination::Signal(9), "oom");
-        assert_eq!(
-            classify_supervised(&result),
-            DiffOutcome::ResourceLimitOrExternalKill
-        );
+        // The token deliberately does NOT say RESOURCE_LIMIT alone.
         assert_eq!(
             DiffOutcome::ResourceLimitOrExternalKill.token(),
             "RESOURCE_LIMIT_OR_EXTERNAL_KILL"
         );
-    }
-
-    #[test]
-    fn harness_kill_is_timeout_not_external_kill() {
-        let mut result = supervised(Termination::Timeout, "");
-        result.killed_by_harness = true;
-        assert_eq!(classify_supervised(&result), DiffOutcome::Timeout);
-    }
-
-    #[test]
-    fn unknown_exit_is_harness_error_not_crash() {
-        // Exit 42 means neither accept/reject/panic protocol: the harness
-        // cannot interpret it, so it must not be laundered into a crash.
-        let result = supervised(Termination::ExitCode(42), "");
-        assert_eq!(classify_supervised(&result), DiffOutcome::HarnessError);
     }
 
     #[test]
@@ -633,63 +649,41 @@ mod tests {
             Duration::from_secs(5),
         );
         assert_eq!(report.runtime, "candle");
-        assert!(matches!(
-            report.outcome,
-            DiffOutcome::HarnessError
-                | DiffOutcome::StructuredReject
-                | DiffOutcome::Accept
-                | DiffOutcome::ProcessCrash
-                | DiffOutcome::Timeout
-                | DiffOutcome::Panic
-                | DiffOutcome::ResourceLimitOrExternalKill
-                | DiffOutcome::NotComparable
-        ));
         if report.outcome == DiffOutcome::HarnessError {
             let detail = report.harness_detail.unwrap();
             assert!(detail.contains("candle runtime not found"));
         }
     }
 
-    #[test]
-    fn agreement_all_same_is_trivially_true() {
-        let ember = SideReport {
-            runtime: "ember".to_string(),
-            outcome: DiffOutcome::StructuredReject,
+    fn side(runtime: &str, outcome: DiffOutcome) -> SideReport {
+        SideReport {
+            runtime: runtime.to_string(),
+            outcome,
             termination: Some("in-process".to_string()),
             wall_ms: Some(1.0),
             stderr_tail: String::new(),
             stdout_truncated: false,
             stderr_truncated: false,
             harness_detail: None,
-        };
-        let other = SideReport {
-            runtime: "llama.cpp".to_string(),
-            outcome: DiffOutcome::StructuredReject,
-            ..ember.clone()
-        };
-        let agreement = agreement(&ember, &[other]);
+        }
+    }
+
+    #[test]
+    fn agreement_all_same_is_trivially_true() {
+        let agreement = agreement(
+            &side("ember", DiffOutcome::StructuredReject),
+            &[side("llama.cpp", DiffOutcome::StructuredReject)],
+        );
         assert!(agreement.all_agree);
         assert_eq!(agreement.distinct_outcomes, vec!["STRUCTURED_REJECT"]);
     }
 
     #[test]
     fn agreement_detects_divergence() {
-        let ember = SideReport {
-            runtime: "ember".to_string(),
-            outcome: DiffOutcome::Accept,
-            termination: Some("in-process".to_string()),
-            wall_ms: Some(1.0),
-            stderr_tail: String::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
-            harness_detail: None,
-        };
-        let other = SideReport {
-            runtime: "candle".to_string(),
-            outcome: DiffOutcome::ProcessCrash,
-            ..ember.clone()
-        };
-        let agreement = agreement(&ember, &[other]);
+        let agreement = agreement(
+            &side("ember", DiffOutcome::Accept),
+            &[side("candle", DiffOutcome::ProcessCrash)],
+        );
         assert!(!agreement.all_agree);
         assert!(agreement.summary.contains("DISAGREE"));
         assert!(agreement.summary.contains("ember=ACCEPT"));

@@ -23,8 +23,8 @@
 mod common;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+
+use ember::multimodal::{GenerationControl, VoiceSession};
 
 struct VoiceFixture {
     text_gguf: PathBuf,
@@ -65,7 +65,10 @@ fn model_and_tokenizer() -> Option<
     std::sync::MutexGuard<'static, (ember::ultravox::Ultravox, ember::tokenizer::EmberTokenizer)>,
 > {
     use std::sync::Mutex;
-    let fx = fixture()?;
+    let Some(fx) = fixture() else {
+        eprintln!("skipping: set EMBER_VOICE_E2E=1 (+ paths)");
+        return None;
+    };
     Some(
         MODEL
             .get_or_init(|| {
@@ -78,6 +81,29 @@ fn model_and_tokenizer() -> Option<
             .lock()
             .unwrap_or_else(|e| e.into_inner()),
     )
+}
+
+/// A fresh session over the shared model with a 64 MiB audio cache.
+fn new_session<'m>(
+    model: &'m ember::ultravox::Ultravox,
+    tokenizer: &'m ember::tokenizer::EmberTokenizer,
+    ctx: usize,
+) -> VoiceSession<'m> {
+    VoiceSession::new(
+        model,
+        &ember::backend::CpuBackend,
+        tokenizer,
+        ctx,
+        64 * 1024 * 1024,
+    )
+    .expect("session")
+}
+
+/// Text-only user turn (begin, prompt, commit); returns the turn span.
+fn text_turn(session: &mut VoiceSession, prompt: &str) -> (usize, usize) {
+    session.begin_user_turn();
+    session.set_turn_prompt(prompt.to_string()).unwrap();
+    session.commit_user_turn().unwrap().0
 }
 
 fn signal_1s() -> Vec<f32> {
@@ -94,26 +120,17 @@ fn signal_1s() -> Vec<f32> {
 #[test]
 fn multiturn_session_reuses_kv_without_rebuild() {
     let Some(guard) = model_and_tokenizer() else {
-        eprintln!("skipping: set EMBER_VOICE_E2E=1 (+ paths)");
         return;
     };
-    let (model, tokenizer) = (&guard.0, &guard.1);
-    let backend = ember::backend::CpuBackend;
-    let mut session =
-        ember::multimodal::VoiceSession::new(model, &backend, tokenizer, 1024, 64 * 1024 * 1024)
-            .expect("session");
+    let mut session = new_session(&guard.0, &guard.1, 1024);
     let sys_len = session.committed_len();
     assert!(sys_len > 0, "system prefix must be committed at creation");
 
     // turn 1: text-only user turn + reply
-    session.begin_user_turn();
-    session
-        .set_turn_prompt("Say hello in one short word.".to_string())
-        .unwrap();
-    let (span1, _) = session.commit_user_turn().unwrap();
+    let span1 = text_turn(&mut session, "Say hello in one short word.");
     assert_eq!(span1.0, sys_len);
 
-    let control = ember::multimodal::GenerationControl::new();
+    let control = GenerationControl::new();
     let (text1, cancelled) = session
         .generate_reply(&control, 24, |_| {}, || false)
         .unwrap();
@@ -125,11 +142,7 @@ fn multiturn_session_reuses_kv_without_rebuild() {
 
     // turn 2: KV must grow incrementally — no re-prefill of turn 1
     let after_turn1 = session.committed_len();
-    session.begin_user_turn();
-    session
-        .set_turn_prompt("Now say goodbye briefly.".to_string())
-        .unwrap();
-    let (span2, _) = session.commit_user_turn().unwrap();
+    let span2 = text_turn(&mut session, "Now say goodbye briefly.");
     assert_eq!(
         span2.0, after_turn1,
         "turn 2 prefill starts exactly at the boundary"
@@ -143,23 +156,14 @@ fn multiturn_session_reuses_kv_without_rebuild() {
 #[test]
 fn cancellation_rolls_back_kv_and_keeps_history_metadata() {
     let Some(guard) = model_and_tokenizer() else {
-        eprintln!("skipping: set EMBER_VOICE_E2E=1 (+ paths)");
         return;
     };
-    let (model, tokenizer) = (&guard.0, &guard.1);
-    let backend = ember::backend::CpuBackend;
-    let mut session =
-        ember::multimodal::VoiceSession::new(model, &backend, tokenizer, 1024, 64 * 1024 * 1024)
-            .expect("session");
-    session.begin_user_turn();
-    session
-        .set_turn_prompt("Count from one to ten slowly.".to_string())
-        .unwrap();
-    session.commit_user_turn().unwrap();
+    let mut session = new_session(&guard.0, &guard.1, 1024);
+    text_turn(&mut session, "Count from one to ten slowly.");
     let boundary = session.committed_len();
 
     // cancel before the first checkpoint: nothing may be generated/committed
-    let control = ember::multimodal::GenerationControl::new();
+    let control = GenerationControl::new();
     control.cancel();
     let (text, cancelled) = session
         .generate_reply(&control, 32, |_| {}, || false)
@@ -179,14 +183,10 @@ fn cancellation_rolls_back_kv_and_keeps_history_metadata() {
     assert_eq!(turns.last().unwrap().live_tokens(), 0);
 
     // the session remains valid: a follow-up turn works and appends cleanly
-    session.begin_user_turn();
-    session
-        .set_turn_prompt("Say one word.".to_string())
-        .unwrap();
-    let (span, _) = session.commit_user_turn().unwrap();
+    let span = text_turn(&mut session, "Say one word.");
     assert_eq!(span.0, boundary, "new turn fills the rolled-back region");
 
-    let control = ember::multimodal::GenerationControl::new();
+    let control = GenerationControl::new();
     let (_, cancelled2) = session
         .generate_reply(&control, 16, |_| {}, || false)
         .unwrap();
@@ -196,23 +196,14 @@ fn cancellation_rolls_back_kv_and_keeps_history_metadata() {
 #[test]
 fn barge_in_during_generation_cancels_reply() {
     let Some(guard) = model_and_tokenizer() else {
-        eprintln!("skipping: set EMBER_VOICE_E2E=1 (+ paths)");
         return;
     };
-    let (model, tokenizer) = (&guard.0, &guard.1);
-    let backend = ember::backend::CpuBackend;
-    let mut session =
-        ember::multimodal::VoiceSession::new(model, &backend, tokenizer, 1024, 64 * 1024 * 1024)
-            .expect("session");
-    session.begin_user_turn();
-    session
-        .set_turn_prompt("Tell me a very long story.".to_string())
-        .unwrap();
-    session.commit_user_turn().unwrap();
+    let mut session = new_session(&guard.0, &guard.1, 1024);
+    text_turn(&mut session, "Tell me a very long story.");
     let boundary = session.committed_len();
 
     // barge-in fires immediately: reply must cancel, nothing committed
-    let control = ember::multimodal::GenerationControl::new();
+    let control = GenerationControl::new();
     let (_, cancelled) = session
         .generate_reply(&control, 48, |_| {}, || true)
         .unwrap();
@@ -223,17 +214,12 @@ fn barge_in_during_generation_cancels_reply() {
 #[test]
 fn streaming_audio_through_session_matches_static_commit() {
     let Some(guard) = model_and_tokenizer() else {
-        eprintln!("skipping: set EMBER_VOICE_E2E=1 (+ paths)");
         return;
     };
-    let (model, tokenizer) = (&guard.0, &guard.1);
-    let backend = ember::backend::CpuBackend;
     let sig = signal_1s();
 
     // streamed path
-    let mut session =
-        ember::multimodal::VoiceSession::new(model, &backend, tokenizer, 1024, 64 * 1024 * 1024)
-            .expect("session");
+    let mut session = new_session(&guard.0, &guard.1, 1024);
     session.begin_user_turn();
     session
         .open_streaming_audio(ember::multimodal::stream::AudioStreamConfig::default())
@@ -248,7 +234,7 @@ fn streaming_audio_through_session_matches_static_commit() {
         .set_turn_prompt("<|audio|>What did you hear?".to_string())
         .unwrap();
     session.commit_user_turn().unwrap();
-    let control = ember::multimodal::GenerationControl::new();
+    let control = GenerationControl::new();
     let (reply_streamed, cancelled) = session
         .generate_reply(&control, 24, |_| {}, || false)
         .unwrap();
@@ -256,9 +242,7 @@ fn streaming_audio_through_session_matches_static_commit() {
     assert!(!reply_streamed.is_empty());
 
     // static path with identical PCM must produce the same reply
-    let mut session2 =
-        ember::multimodal::VoiceSession::new(model, &backend, tokenizer, 1024, 64 * 1024 * 1024)
-            .expect("session 2");
+    let mut session2 = new_session(&guard.0, &guard.1, 1024);
     session2.begin_user_turn();
     session2
         .attach_static_audio(&ember::multimodal::audio::AudioInput::Samples {
@@ -270,7 +254,7 @@ fn streaming_audio_through_session_matches_static_commit() {
         .set_turn_prompt("<|audio|>What did you hear?".to_string())
         .unwrap();
     session2.commit_user_turn().unwrap();
-    let control2 = ember::multimodal::GenerationControl::new();
+    let control2 = GenerationControl::new();
     let (reply_static, _) = session2
         .generate_reply(&control2, 24, |_| {}, || false)
         .unwrap();
@@ -283,31 +267,22 @@ fn streaming_audio_through_session_matches_static_commit() {
 #[test]
 fn provisional_transcript_never_touches_committed_state() {
     let Some(guard) = model_and_tokenizer() else {
-        eprintln!("skipping: set EMBER_VOICE_E2E=1 (+ paths)");
         return;
     };
-    let (model, tokenizer) = (&guard.0, &guard.1);
-    let backend = ember::backend::CpuBackend;
-    let mut session =
-        ember::multimodal::VoiceSession::new(model, &backend, tokenizer, 2048, 64 * 1024 * 1024)
-            .expect("session");
+    let mut session = new_session(&guard.0, &guard.1, 2048);
     session.begin_user_turn();
     session.open_streaming_audio(Default::default()).unwrap();
 
-    let counter = Arc::new(AtomicUsize::new(0));
-    let c2 = counter.clone();
     let sig = signal_1s();
     for chunk in sig.chunks(3200) {
         session.push_streaming_audio(chunk).unwrap();
         session.update_stream_encoder(true).unwrap();
-        c2.fetch_add(1, Ordering::Relaxed);
         let before = session.committed_len();
         let t_before = session.stats().provisional_transcripts;
         let _ = session.provisional_transcript(8).unwrap();
         assert_eq!(session.committed_len(), before, "committed boundary frozen");
         assert_eq!(session.stats().provisional_transcripts, t_before + 1);
     }
-    assert!(counter.load(Ordering::Relaxed) > 0);
     assert!(session.stats().provisional_ms >= 0.0);
 }
 
@@ -359,7 +334,7 @@ fn streaming_synthesis_ttfa_and_chunk_deviation() {
     // collect the streamed concatenation AND the final single-pass decode
     use std::cell::RefCell;
     let streamed = RefCell::new(Vec::<f32>::new());
-    let (final_pcm, ids, timings) = {
+    let (final_pcm, _ids, timings) = {
         let s = &streamed;
         tts.synthesize_streaming(
             &backend,
@@ -401,5 +376,4 @@ fn streaming_synthesis_ttfa_and_chunk_deviation() {
     println!("TTFA {ttfa_ms:.0} ms, chunks {n_chunks}, streamed {streamed_len} samples");
     println!("codes {}", timings.n_codes);
     println!("streamed-vs-final decode deviation: max_abs {max_abs:.5} over {n} samples");
-    let _ = ids;
 }

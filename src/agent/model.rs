@@ -576,14 +576,7 @@ pub(crate) mod tests {
             "output.weight".into(),
             LoadedTensor::F32(CpuTensor::from_data(vec![8, 8], head)),
         );
-        let model = Llama::from_loader(GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        })
-        .unwrap();
+        let model = Llama::from_loader(GgufLoader::for_test(metadata, tensors)).unwrap();
         let tokenizer = EmberTokenizer::from_bytes(r#"{
             "version":"1.0", "truncation":null, "padding":null,
             "added_tokens":[], "normalizer":null, "pre_tokenizer":null,

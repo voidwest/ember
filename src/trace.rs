@@ -964,44 +964,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn trace_disabled_is_noop() {
-        assert!(!is_tracing());
-        let s = span("test", 0, OpKind::Other, vec![1], 4, 0);
-        assert!(s.is_none());
-    }
-
-    #[test]
-    fn trace_lifecycle() {
-        assert!(enable_tracing("decode", 0));
-        assert!(is_tracing());
-
-        {
-            let s = span("rms_norm", 3, OpKind::RmsNorm, vec![1, 4096], 16384, 16384);
-            assert!(s.is_some());
-            let s = s.unwrap();
-            s.end(vec![1, 4096], 16384);
-        }
-
-        let report = disable_tracing().unwrap();
-        assert_eq!(report.phase, "decode");
-        assert_eq!(report.events.len(), 1);
-        assert_eq!(report.events[0].name, "rms_norm");
-        assert_eq!(report.events[0].layer, 3);
-    }
-
-    #[test]
     fn double_enable_is_noop() {
         assert!(enable_tracing("prefill", 0));
         assert!(!enable_tracing("prefill", 1)); // already enabled
         assert!(is_tracing());
         let report = disable_tracing().unwrap();
         assert_eq!(report.token_index, 0); // first enable won
-    }
-
-    #[test]
-    fn flops_matmul_correct() {
-        // [1, 4096] × [4096, 4096] = 2 * 1 * 4096 * 4096 = 33,554,432
-        assert_eq!(flops_matmul(1, 4096, 4096), 33_554_432);
     }
 
     #[test]

@@ -12,17 +12,16 @@ use crate::v05::bundle::BundleWriter;
 use crate::v05::capture::{CaptureSpec, CaptureStorage, InputSelector, LayerSelector};
 use crate::v05::hook::SemanticHookSite;
 use crate::v05::manifest::{
-    sha256_hex, BundleIdentity, ManifestExecutionMeta, ManifestExperimentMeta, ManifestGenerated,
+    sha256_hex, ManifestExecutionMeta, ManifestExperimentMeta, ManifestGenerated,
     ManifestInputMeta, ManifestModelMeta, ManifestTokenizerMeta, SemanticManifest,
     BUNDLE_SCHEMA_V1,
 };
 use crate::v05::safetensors::{TensorDType, TensorData};
 use crate::v05::spec::EXPERIMENT_SCHEMA_V1;
 use crate::v05::token_select::{
-    CoverageKind, RoundTripStatus, SubtokenSelection, TextNormalization, TokenSelectionRecord,
-    TokenSelector,
+    CoverageKind, RoundTripStatus, TokenSelectionRecord, TokenSelector,
 };
-use crate::v05::verify::{CaptureIndexEntry, SummaryEntry};
+use crate::v05::verify::CaptureIndexEntry;
 use std::path::PathBuf;
 
 /// Unique per-test temp dir, including when parallel tests observe the same
@@ -276,16 +275,11 @@ pub fn write_test_bundle(root: &Path, rows: &[f32], positions: &[usize]) -> Path
     root.to_path_buf()
 }
 
-/// Summary entry used by summary-only index tests.
-pub fn sample_summary_entry() -> Option<SummaryEntry> {
-    Some(SummaryEntry {
-        shape: vec![1, COLUMNS],
-        finite_count: COLUMNS,
-        minimum: 0.0,
-        maximum: 1.0,
-        mean: 0.5,
-        l2_norm: 1.0,
-    })
+/// A fresh temp root holding the standard fixture bundle
+/// (`sample_rows` at `sample_positions`).
+pub(crate) fn sample_bundle(tag: &str) -> PathBuf {
+    let root = temp_root(tag);
+    write_test_bundle(&root, &sample_rows(), &sample_positions())
 }
 
 /// The raw capture payload rows used across fixtures.
@@ -296,15 +290,6 @@ pub fn sample_rows() -> Vec<f32> {
 /// Position used in fixtures.
 pub fn sample_positions() -> Vec<usize> {
     vec![3]
-}
-
-/// Force `subtoken_selection`/`normalization` to be constructed (keeps
-/// the types referenced in test builds).
-pub fn _use_types() {
-    let _ = SubtokenSelection::First;
-    let _ = TextNormalization::Nfc;
-    let _: BundleIdentity;
-    let _ = SemanticHookSite::Logits;
 }
 
 /// Minimal GGUF v3 writer for a tiny deterministic Llama (f32 tensors):

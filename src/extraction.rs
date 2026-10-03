@@ -1795,7 +1795,6 @@ fn default_offset_unit() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_config() -> ExtractionConfig {
         ExtractionConfig {
@@ -1874,15 +1873,7 @@ mod tests {
 
     #[test]
     fn run_directory_transaction_publishes_only_on_commit() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let parent = std::env::temp_dir().join(format!(
-            "ember_run_transaction_{}_{}",
-            std::process::id(),
-            unique
-        ));
+        let parent = crate::v05::testutil::temp_root("run-transaction");
         fs::create_dir_all(&parent).unwrap();
 
         let abandoned = parent.join("abandoned");
@@ -1924,15 +1915,7 @@ mod tests {
 
     #[test]
     fn file_hash_spanning_several_chunks_matches_the_bytes_hash() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "ember_sha256_chunks_{}_{}",
-            std::process::id(),
-            unique
-        ));
+        let path = crate::v05::testutil::temp_root("sha256-chunks");
         // Not a multiple of the chunk size, so the last read is short.
         let bytes: Vec<u8> = (0..2 * SHA256_FILE_CHUNK + 1234)
             .map(|index| (index * 31 % 251) as u8)

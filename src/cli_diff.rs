@@ -130,6 +130,8 @@ mod tests {
             "model.gguf",
             "--against",
             "llama.cpp,candle",
+            "--against",
+            "vllm",
             "--timeout-secs",
             "10",
             "--json",
@@ -138,22 +140,8 @@ mod tests {
         assert_eq!(parsed.diff.file, PathBuf::from("model.gguf"));
         assert_eq!(parsed.diff.timeout_secs, 10);
         assert!(parsed.diff.json);
-        // comma-separated single flag splits into two entries.
-        assert_eq!(parsed.diff.against, vec!["llama.cpp", "candle"]);
-    }
-
-    #[test]
-    fn diff_cli_accepts_repeatable_against() {
-        let parsed = TestDiffParser::try_parse_from([
-            "test",
-            "model.gguf",
-            "--against",
-            "llama.cpp",
-            "--against",
-            "candle",
-        ])
-        .unwrap();
-        assert_eq!(parsed.diff.against, vec!["llama.cpp", "candle"]);
+        // A comma-separated flag splits, and the flag repeats.
+        assert_eq!(parsed.diff.against, vec!["llama.cpp", "candle", "vllm"]);
     }
 
     #[test]

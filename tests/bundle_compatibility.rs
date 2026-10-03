@@ -1,6 +1,6 @@
 //! Frozen bytes from the v0.5 writer, rather than a current-writer round trip.
 use ember::v05::verify::{verify_bundle, VerifyOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn copy_tree(source: &Path, destination: &Path) {
     std::fs::create_dir_all(destination).unwrap();
@@ -23,22 +23,28 @@ fn copy_tree(source: &Path, destination: &Path) {
     }
 }
 
-#[test]
-fn v050_bundle_keeps_its_original_identity_and_verifies_offline() {
+/// A fresh scratch root with the frozen v0.5 fixture bundle copied to
+/// `<root>/bundle`; returns `(root, bundle)`.
+fn fixture_copy(tag: &str) -> (PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!(
-        "ember-v050-compat-{}-{}",
+        "ember-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos(),
     ));
+    let bundle = root.join("bundle");
     copy_tree(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/bundle-v050")
-            .as_path(),
-        &root,
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bundle-v050"),
+        &bundle,
     );
+    (root, bundle)
+}
+
+#[test]
+fn v050_bundle_keeps_its_original_identity_and_verifies_offline() {
+    let (scratch, root) = fixture_copy("v050-compat");
     let plan: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("execution-plan.json")).unwrap()).unwrap();
     assert!(
@@ -105,26 +111,14 @@ fn v050_bundle_keeps_its_original_identity_and_verifies_offline() {
         .map(|check| check.name.as_str())
         .collect();
     assert_eq!(failures, ["semantic hash"]);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(scratch).unwrap();
 }
 
 #[test]
 fn experiment_verify_cli_distinguishes_failed_verdict_from_usage_error() {
     use std::io::Write;
     use std::process::Command;
-    let root = std::env::temp_dir().join(format!(
-        "ember-verdict-cli-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let bundle = root.join("bundle");
-    copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bundle-v050"),
-        &bundle,
-    );
+    let (root, bundle) = fixture_copy("verdict-cli");
     let verify = || {
         Command::new(env!("CARGO_BIN_EXE_ember"))
             .args(["experiment", "verify"])
@@ -172,19 +166,7 @@ fn experiment_verify_cli_distinguishes_failed_verdict_from_usage_error() {
 fn experiment_verify_anchors_identity_externally_and_never_writes_into_the_bundle() {
     use std::process::Command;
     const SEMANTIC: &str = "f21442ebae87865c059722cc06a2feb00c22ebb2e99cb6accc84f78d13bd7325";
-    let root = std::env::temp_dir().join(format!(
-        "ember-anchor-cli-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let bundle = root.join("bundle");
-    copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bundle-v050"),
-        &bundle,
-    );
+    let (root, bundle) = fixture_copy("anchor-cli");
     let ember = |args: &[&std::ffi::OsStr]| {
         Command::new(env!("CARGO_BIN_EXE_ember"))
             .args(args)

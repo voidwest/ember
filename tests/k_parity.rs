@@ -57,12 +57,12 @@ fn parity_env() -> Option<(String, String, String, usize)> {
     let model = match std::env::var("EMBER_PARITY_MODEL") {
         Ok(value) => value,
         Err(error) if required => panic!("EMBER_PARITY_MODEL is required: {error}"),
-        Err(_) => return None,
+        Err(_) => return skip_without_parity_env(),
     };
     let tokenizer = match std::env::var("EMBER_PARITY_TOKENIZER") {
         Ok(value) => value,
         Err(error) if required => panic!("EMBER_PARITY_TOKENIZER is required: {error}"),
-        Err(_) => return None,
+        Err(_) => return skip_without_parity_env(),
     };
     let arch = std::env::var("EMBER_PARITY_ARCH").unwrap_or_else(|_| "auto".to_string());
     let tokens = std::env::var("EMBER_PARITY_TOKENS")
@@ -71,6 +71,11 @@ fn parity_env() -> Option<(String, String, String, usize)> {
         .unwrap_or(12);
     validate_model_file_contract(&model);
     Some((model, tokenizer, arch, tokens))
+}
+
+fn skip_without_parity_env() -> Option<(String, String, String, usize)> {
+    eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+    None
 }
 
 static MODEL_SHA256: OnceLock<String> = OnceLock::new();
@@ -451,7 +456,6 @@ fn max_abs_finite(expected: &[f32], actual: &[f32], label: &str) -> f32 {
 #[test]
 fn arm_q8_k_is_bit_exact_with_scalar_on_frozen_prompts() {
     let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
     if !ember::k_quant_matmul::arm_k_supported() {
@@ -486,7 +490,6 @@ fn arm_q8_k_is_bit_exact_with_scalar_on_frozen_prompts() {
 #[test]
 fn production_q8_k_keeps_oracle_behavior_across_frozen_prompts() {
     let Some((model_path, tokenizer_path, arch, decode_tokens)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
     let _ = arch; // arch is inferred from the GGUF metadata by the loader
@@ -997,28 +1000,33 @@ impl ember::experiments::Experiment for NoopExperiment {
     }
 }
 
-/// Inactive-hook equivalence on the compressed path (contract section 8):
-/// firing the full ActiveHooks machinery with a no-op experiment must not
-/// alter logits or tokens.
-#[test]
-fn inactive_hooks_do_not_alter_compressed_outputs() {
-    let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
-        return;
-    };
-    let (model, tokenizer, _) = load_llama(
-        &model_path,
-        &tokenizer_path,
-        configured_compressed_strategy(),
-    );
+/// Q8_0/F32 models keep the v0.3 native fast path (contract D1: Q8_0 is
+/// never rerouted through the plan), so a plain run uses the fast path while a
+/// hooked run uses the generic hooked path — different dispatch, legitimately
+/// different float accumulation (tokens still match). Bit-exact planned-path
+/// gates are only meaningful when both runs execute the *planned*
+/// interpreter, i.e. K-quant; returns true (after logging) when they must skip.
+fn skip_without_k_quant(has_k_quant: bool, model_path: &str) -> bool {
+    if !has_k_quant {
+        eprintln!(
+            "skipped: {model_path} has no K-quant tensors (planned path not exercised; \
+             Q8_0 keeps the v0.3 fast path per contract D1)"
+        );
+    }
+    !has_k_quant
+}
+
+/// Re-run `ids` greedily through the full ActiveHooks machinery with a no-op
+/// experiment and require tokens and every decode logit to be bit-identical
+/// to the plain run.
+fn assert_noop_hooks_match_plain(
+    model: &ember::llama::Llama<CpuBackend>,
+    ids: &[u32],
+    plain: &Run,
+    decode_tokens: usize,
+    label: &str,
+) {
     let backend = CpuBackend;
-    let prompt = FROZEN_PROMPTS[0];
-    let ids = tokenizer.encode(prompt).expect("encode");
-
-    // plain run (DisabledHooks)
-    let plain = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
-
-    // hooked run (ActiveHooks -> noop experiment)
     let model_context = ember::experiments::ModelContext::new(
         ember::experiments::ModelFamily::Llama,
         None,
@@ -1030,7 +1038,7 @@ fn inactive_hooks_do_not_alter_compressed_outputs() {
     let mut tokens = Vec::new();
     let mut hooked_logits = Vec::new();
     let mut position = 0usize;
-    let mut current = ids.clone();
+    let mut current = ids.to_vec();
     for _ in 0..decode_tokens {
         let token_count = current.len();
         let execution = ember::experiments::ExecutionContext::new(
@@ -1054,7 +1062,7 @@ fn inactive_hooks_do_not_alter_compressed_outputs() {
                 execution,
                 &mut runner,
             )
-            .expect("hooked forward");
+            .unwrap_or_else(|e| panic!("{label}: hooked forward: {e:?}"));
         let data = logits.data();
         hooked_logits.push(data.to_vec());
         tokens.push(ember::sampler::argmax_token(data) as u32);
@@ -1064,15 +1072,38 @@ fn inactive_hooks_do_not_alter_compressed_outputs() {
 
     assert_eq!(
         plain.tokens, tokens,
-        "hooked (noop) run diverged tokens from the plain run"
+        "{label}: hooked (noop) run diverged tokens from the plain run"
     );
     assert_eq!(plain.decode_logits.len(), hooked_logits.len());
     for (step, (expected, actual)) in plain.decode_logits.iter().zip(&hooked_logits).enumerate() {
         assert_eq!(
             expected, actual,
-            "hooked (noop) run diverged logits at decode step {step}"
+            "{label}: hooked (noop) run diverged logits at decode step {step}"
         );
     }
+}
+
+/// Inactive-hook equivalence on the compressed path (contract section 8):
+/// firing the full ActiveHooks machinery with a no-op experiment must not
+/// alter logits or tokens.
+#[test]
+fn inactive_hooks_do_not_alter_compressed_outputs() {
+    let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
+        return;
+    };
+    let (model, tokenizer, _) = load_llama(
+        &model_path,
+        &tokenizer_path,
+        configured_compressed_strategy(),
+    );
+    let prompt = FROZEN_PROMPTS[0];
+    let ids = tokenizer.encode(prompt).expect("encode");
+
+    // plain run (DisabledHooks)
+    let plain = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+
+    // hooked run (ActiveHooks -> noop experiment)
+    assert_noop_hooks_match_plain(&model, &ids, &plain, decode_tokens, "compressed");
 }
 
 /// Gate B for v0.4 planned execution: the plan-driven interpreter must
@@ -1081,7 +1112,6 @@ fn inactive_hooks_do_not_alter_compressed_outputs() {
 #[test]
 fn v04_planned_matches_reference_real_model() {
     let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
     let (model, tokenizer, has_k_quant) = load_llama(
@@ -1089,17 +1119,7 @@ fn v04_planned_matches_reference_real_model() {
         &tokenizer_path,
         configured_compressed_strategy(),
     );
-    if !has_k_quant {
-        // Q8_0/F32 models keep the v0.3 native fast path (contract D1: Q8_0
-        // is never rerouted through the plan), so the plain run uses the fast
-        // path while the hooked run uses the generic hooked path — different
-        // dispatch, legitimately different float accumulation (tokens still
-        // match). This test asserts bit-exact logits and is only meaningful
-        // when both runs execute the *planned* interpreter, i.e. K-quant.
-        eprintln!(
-            "skipped: {model_path} has no K-quant tensors (planned path not exercised; \
-             Q8_0 keeps the v0.3 fast path per contract D1)"
-        );
+    if skip_without_k_quant(has_k_quant, &model_path) {
         return;
     }
     use ember::plan::ExecutionMode;
@@ -1119,27 +1139,18 @@ fn v04_planned_matches_reference_real_model() {
             reference.tokens, fused.tokens,
             "{model_path} | {prompt}: greedy tokens diverged under fused planned execution"
         );
-        assert_eq!(reference.decode_logits.len(), planned.decode_logits.len());
-        for (step, (expected, actual)) in reference
-            .decode_logits
-            .iter()
-            .zip(&planned.decode_logits)
-            .enumerate()
-        {
-            let label = format!("{model_path} | {prompt}: planned decode step {step}");
-            let max_abs = max_abs_finite(expected, actual, &label);
-            assert!(max_abs <= 1e-3, "{label}: logits max_abs {max_abs} > 1e-3");
-        }
-        assert_eq!(reference.decode_logits.len(), fused.decode_logits.len());
-        for (step, (expected, actual)) in reference
-            .decode_logits
-            .iter()
-            .zip(&fused.decode_logits)
-            .enumerate()
-        {
-            let label = format!("{model_path} | {prompt}: fused decode step {step}");
-            let max_abs = max_abs_finite(expected, actual, &label);
-            assert!(max_abs <= 1e-3, "{label}: logits max_abs {max_abs} > 1e-3");
+        for (route, candidate) in [("planned", &planned), ("fused", &fused)] {
+            assert_eq!(reference.decode_logits.len(), candidate.decode_logits.len());
+            for (step, (expected, actual)) in reference
+                .decode_logits
+                .iter()
+                .zip(&candidate.decode_logits)
+                .enumerate()
+            {
+                let label = format!("{model_path} | {prompt}: {route} decode step {step}");
+                let max_abs = max_abs_finite(expected, actual, &label);
+                assert!(max_abs <= 1e-3, "{label}: logits max_abs {max_abs} > 1e-3");
+            }
         }
     }
 }
@@ -1150,7 +1161,6 @@ fn v04_planned_matches_reference_real_model() {
 #[test]
 fn v04_planned_inactive_hooks_real_model() {
     let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
     let (model, tokenizer, has_k_quant) = load_llama(
@@ -1158,21 +1168,10 @@ fn v04_planned_inactive_hooks_real_model() {
         &tokenizer_path,
         configured_compressed_strategy(),
     );
-    if !has_k_quant {
-        // Q8_0/F32 models keep the v0.3 native fast path (contract D1: Q8_0
-        // is never rerouted through the plan), so the plain run uses the fast
-        // path while the hooked run uses the generic hooked path — different
-        // dispatch, legitimately different float accumulation (tokens still
-        // match). This test asserts bit-exact logits and is only meaningful
-        // when both runs execute the *planned* interpreter, i.e. K-quant.
-        eprintln!(
-            "skipped: {model_path} has no K-quant tensors (planned path not exercised; \
-             Q8_0 keeps the v0.3 fast path per contract D1)"
-        );
+    if skip_without_k_quant(has_k_quant, &model_path) {
         return;
     }
     use ember::plan::ExecutionMode;
-    let backend = CpuBackend;
     let prompt = FROZEN_PROMPTS[0];
     let ids = tokenizer.encode(prompt).expect("encode");
     model.set_execution_mode(ExecutionMode::Planned);
@@ -1181,60 +1180,7 @@ fn v04_planned_inactive_hooks_real_model() {
     let plain = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
 
     // planned run through the experiment machinery with a noop experiment
-    let model_context = ember::experiments::ModelContext::new(
-        ember::experiments::ModelFamily::Llama,
-        None,
-        "llama",
-        model.n_layers(),
-        model.embed_dim(),
-    );
-    let mut cache = model.create_cache(&backend, 2048);
-    let mut tokens = Vec::new();
-    let mut hooked_logits = Vec::new();
-    let mut position = 0usize;
-    let mut current = ids.clone();
-    for _ in 0..decode_tokens {
-        let token_count = current.len();
-        let execution = ember::experiments::ExecutionContext::new(
-            model_context,
-            if position == 0 {
-                ember::experiments::ExecutionPhase::Prefill
-            } else {
-                ember::experiments::ExecutionPhase::Decode
-            },
-            position,
-            token_count,
-            ember::experiments::TracingState::Disabled,
-        );
-        let mut runner = ember::experiments::ExperimentRunner::new(NoopExperiment);
-        let logits = model
-            .forward_last_logits_with_experiment(
-                &backend,
-                &current,
-                &mut cache,
-                position,
-                execution,
-                &mut runner,
-            )
-            .expect("hooked planned forward");
-        let data = logits.data();
-        hooked_logits.push(data.to_vec());
-        tokens.push(ember::sampler::argmax_token(data) as u32);
-        position += current.len();
-        current = vec![*tokens.last().expect("token pushed")];
-    }
-
-    assert_eq!(
-        plain.tokens, tokens,
-        "planned hooked (noop) run diverged tokens from the plain planned run"
-    );
-    assert_eq!(plain.decode_logits.len(), hooked_logits.len());
-    for (step, (expected, actual)) in plain.decode_logits.iter().zip(&hooked_logits).enumerate() {
-        assert_eq!(
-            expected, actual,
-            "planned hooked (noop) run diverged logits at decode step {step}"
-        );
-    }
+    assert_noop_hooks_match_plain(&model, &ids, &plain, decode_tokens, "planned");
 }
 
 /// Gate E on the real model (contract section 13): after warmup, the
@@ -1243,7 +1189,6 @@ fn v04_planned_inactive_hooks_real_model() {
 #[test]
 fn v04_planned_allocations_stay_within_existing_scheduler_bound() {
     let Some((model_path, tokenizer_path, _, _)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
     let (model, tokenizer, _) = load_llama(
@@ -1306,7 +1251,6 @@ fn v04_planned_allocations_stay_within_existing_scheduler_bound() {
 #[test]
 fn v04_planned_into_route_is_bit_identical_with_bounded_scheduler_allocations() {
     let Some((model_path, tokenizer_path, _, _)) = parity_env() else {
-        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
     let (model, tokenizer, _) = load_llama(

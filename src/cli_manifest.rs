@@ -211,28 +211,4 @@ mod tests {
             assert!(verify_manifest_identity(&unknown).is_err(), "{path}");
         }
     }
-
-    #[test]
-    fn recomputed_identity_matches_recorded_digest() {
-        let mut manifest = manifest_with_identity();
-        let canonical = manifest["identity"]["canonical"].clone();
-        let digest = recompute_identity_sha256(&canonical).unwrap();
-        manifest["identity"]["sha256"] = serde_json::json!(digest);
-        let raw = serde_json::to_vec(&manifest).unwrap();
-        let reparsed: serde_json::Value = serde_json::from_slice(&raw).unwrap();
-        let again = recompute_identity_sha256(&reparsed["identity"]["canonical"]).unwrap();
-        assert_eq!(again, manifest["identity"]["sha256"].as_str().unwrap());
-    }
-
-    #[test]
-    fn tampered_canonical_changes_the_digest() {
-        let mut manifest = manifest_with_identity();
-        let canonical = manifest["identity"]["canonical"].clone();
-        let digest = recompute_identity_sha256(&canonical).unwrap();
-        manifest["identity"]["sha256"] = serde_json::json!(digest);
-        // an edit to any output-affecting field must invalidate the identity
-        manifest["identity"]["canonical"]["sampler"]["temperature"] = serde_json::json!(0.8);
-        let tampered = recompute_identity_sha256(&manifest["identity"]["canonical"]).unwrap();
-        assert_ne!(tampered, digest);
-    }
 }

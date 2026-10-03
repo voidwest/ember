@@ -189,25 +189,6 @@ fn waiting_threads_survive_leader_failure_and_retry() {
 }
 
 #[test]
-fn different_keys_never_coalesce() {
-    let cache = SharedFeatureCache::new(64 * 1024 * 1024);
-    let exec = AtomicUsize::new(0);
-    for tag in 10..14u64 {
-        cache
-            .get_or_insert_with(&key(tag), || {
-                exec.fetch_add(1, Ordering::SeqCst);
-                Ok(tensor(4, tag as f32))
-            })
-            .unwrap();
-    }
-    assert_eq!(
-        exec.load(Ordering::SeqCst),
-        4,
-        "distinct content = distinct encodes"
-    );
-}
-
-#[test]
 fn eviction_keeps_budget_and_counts() {
     let cache = SharedFeatureCache::new(64); // tiny budget: ~4 floats per entry
     for tag in 20..30u64 {

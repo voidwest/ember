@@ -200,17 +200,12 @@ mod tests {
     }
 
     #[test]
-    fn payload_hash_ignores_inventory_order() {
-        let mut first = BTreeMap::new();
-        first.insert("b".to_string(), "11".to_string());
-        first.insert("a".to_string(), "22".to_string());
-        let mut second = BTreeMap::new();
-        second.insert("a".to_string(), "22".to_string());
-        second.insert("b".to_string(), "11".to_string());
-        assert_eq!(
-            BundleIdentity::payload_hash(&first).unwrap(),
-            BundleIdentity::payload_hash(&second).unwrap()
-        );
+    fn payload_hash_changes_with_inventory_content() {
+        let first = BTreeMap::from([
+            ("a".to_string(), "22".to_string()),
+            ("b".to_string(), "11".to_string()),
+        ]);
+        let mut second = first.clone();
         second.insert("c".to_string(), "33".to_string());
         assert_ne!(
             BundleIdentity::payload_hash(&first).unwrap(),

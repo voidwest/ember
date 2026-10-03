@@ -654,6 +654,16 @@ mod tests {
         }
     }
 
+    /// A matched-span selector without normalization.
+    fn span(text: &str, occurrence: usize, subtokens: SubtokenSelection) -> TokenSelector {
+        TokenSelector::MatchedTextSpan {
+            text: text.to_string(),
+            occurrence,
+            subtoken_selection: subtokens,
+            normalization: TextNormalization::None,
+        }
+    }
+
     #[test]
     fn prompt_final_selects_last_token() {
         let info = info_from(
@@ -705,27 +715,14 @@ mod tests {
             ],
             vec![(0, 0), (0, 4), (4, 12), (12, 19), (19, 26), (26, 34)],
         );
-        let selector = |sel: SubtokenSelection| TokenSelector::MatchedTextSpan {
-            text: "كتاب".to_string(),
-            occurrence: 0,
-            subtoken_selection: sel,
-            normalization: TextNormalization::None,
-        };
+        let selector = |sel: SubtokenSelection| span("كتاب", 0, sel);
         let first = resolve_static_selector(&selector(SubtokenSelection::First), &info).unwrap();
         assert_eq!(first.selected_indices, vec![2]);
         assert_eq!(first.coverage, CoverageKind::Exact);
         let all = resolve_static_selector(&selector(SubtokenSelection::All), &info).unwrap();
         assert_eq!(all.selected_indices, vec![2]);
         // absent span fails
-        let absent = resolve_static_selector(
-            &TokenSelector::MatchedTextSpan {
-                text: "مفقود".to_string(),
-                occurrence: 0,
-                subtoken_selection: SubtokenSelection::First,
-                normalization: TextNormalization::None,
-            },
-            &info,
-        );
+        let absent = resolve_static_selector(&span("مفقود", 0, SubtokenSelection::First), &info);
         assert!(absent.is_err());
     }
 
@@ -745,12 +742,7 @@ mod tests {
             ],
             vec![(0, 0), (0, 6), (6, 11), (11, 13), (13, 20)],
         );
-        let selector = |occurrence: usize| TokenSelector::MatchedTextSpan {
-            text: "قطة".to_string(),
-            occurrence,
-            subtoken_selection: SubtokenSelection::First,
-            normalization: TextNormalization::None,
-        };
+        let selector = |occurrence: usize| span("قطة", occurrence, SubtokenSelection::First);
         let first = resolve_static_selector(&selector(0), &info).unwrap();
         assert_eq!(first.selected_indices, vec![1]);
         assert_eq!(first.coverage, CoverageKind::Exact);
@@ -761,16 +753,8 @@ mod tests {
         let second = resolve_static_selector(&selector(1), &info).unwrap();
         assert_eq!(second.selected_indices, vec![2]);
         assert_eq!(second.coverage, CoverageKind::Partial);
-        let second_all = resolve_static_selector(
-            &TokenSelector::MatchedTextSpan {
-                text: "قطة".to_string(),
-                occurrence: 1,
-                subtoken_selection: SubtokenSelection::All,
-                normalization: TextNormalization::None,
-            },
-            &info,
-        )
-        .unwrap();
+        let second_all =
+            resolve_static_selector(&span("قطة", 1, SubtokenSelection::All), &info).unwrap();
         assert_eq!(second_all.selected_indices, vec![2, 3]);
         assert_eq!(second_all.coverage, CoverageKind::Enclosing);
         let third = resolve_static_selector(&selector(2), &info).unwrap();
@@ -788,16 +772,8 @@ mod tests {
             vec!["<bos>".into(), "xكت".into(), "ابy".into()],
             vec![(0, 0), (0, 5), (5, 10)],
         );
-        let record = resolve_static_selector(
-            &TokenSelector::MatchedTextSpan {
-                text: "كتاب".to_string(),
-                occurrence: 0,
-                subtoken_selection: SubtokenSelection::All,
-                normalization: TextNormalization::None,
-            },
-            &info,
-        )
-        .unwrap();
+        let record =
+            resolve_static_selector(&span("كتاب", 0, SubtokenSelection::All), &info).unwrap();
         assert_eq!(record.selected_indices, vec![1, 2]);
         assert_eq!(record.coverage, CoverageKind::Enclosing);
         assert!(record.boundary_expansion.is_some());
@@ -875,30 +851,14 @@ mod tests {
             vec!["<bos>".into(), " هذا".into(), " كِتَاب".into()],
             vec![(0, 0), (0, 6), (6, 19)],
         );
-        let record = resolve_static_selector(
-            &TokenSelector::MatchedTextSpan {
-                text: "كِتَاب".to_string(),
-                occurrence: 0,
-                subtoken_selection: SubtokenSelection::First,
-                normalization: TextNormalization::None,
-            },
-            &info,
-        )
-        .unwrap();
+        let record =
+            resolve_static_selector(&span("كِتَاب", 0, SubtokenSelection::First), &info).unwrap();
         assert_eq!(record.selected_indices, vec![2]);
         // The token includes the leading space, so coverage encloses and
         // the expansion is recorded — never silently repaired.
         assert_eq!(record.coverage, CoverageKind::Enclosing);
         assert!(record.boundary_expansion.is_some());
-        let stripped = resolve_static_selector(
-            &TokenSelector::MatchedTextSpan {
-                text: "كتاب".to_string(),
-                occurrence: 0,
-                subtoken_selection: SubtokenSelection::First,
-                normalization: TextNormalization::None,
-            },
-            &info,
-        );
+        let stripped = resolve_static_selector(&span("كتاب", 0, SubtokenSelection::First), &info);
         assert!(stripped.is_err(), "silent normalization must not occur");
     }
 }

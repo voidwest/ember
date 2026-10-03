@@ -2570,27 +2570,8 @@ mod tests {
             let started = std::time::Instant::now();
             let pair = session.run_baseline_intervention(&cfg).unwrap();
             let shared_ms = started.elapsed().as_secs_f64() * 1000.0;
-            // The spec texts name different output directories, so compare
-            // the computed content rather than the hashes.
-            for (old, new) in [
-                (&baseline, &pair.baseline),
-                (&intervention, &pair.intervention),
-            ] {
-                let result = ember::v05::compare::compare_bundles(
-                    Path::new(&old.bundle_dir),
-                    Path::new(&new.bundle_dir),
-                )
-                .unwrap();
-                assert!(result
-                    .outputs
-                    .iter()
-                    .all(|output| output.generated_tokens_equal && output.final_top1_equal));
-                assert!(!result.captures.is_empty());
-                assert!(result.captures.iter().all(|capture| capture
-                    .metrics
-                    .as_ref()
-                    .is_some_and(|metrics| metrics.exact)));
-            }
+            assert_same_content(&baseline.bundle_dir, &pair.baseline.bundle_dir);
+            assert_same_content(&intervention.bundle_dir, &pair.intervention.bundle_dir);
             if round > 0 {
                 full.push(full_ms);
                 shared.push(shared_ms);

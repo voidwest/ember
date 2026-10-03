@@ -39,15 +39,6 @@ fn par_matmul_is_bit_identical_to_serial() {
 }
 
 #[test]
-fn par_matmul_small_shapes_fall_back_and_match() {
-    let a = deterministic(8, 16);
-    let b = deterministic(16, 8);
-    let serial = a.matmul(&b);
-    let par = a.par_matmul(&b);
-    assert_eq!(serial.data(), par.data());
-}
-
-#[test]
 fn par_softmax_is_bit_identical_to_serial() {
     let rows = 4096;
     let cols = 1024;

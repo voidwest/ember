@@ -32,6 +32,12 @@ fn load_npy_f32(path: &std::path::Path) -> (Vec<usize>, Vec<f32>) {
     (shape, data)
 }
 
+fn fixture(file: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/audio")
+        .join(file)
+}
+
 fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
     a.iter()
         .zip(b.iter())
@@ -42,14 +48,10 @@ fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
 #[test]
 fn log_mel_matches_whisper_reference_on_golden_signals() {
     for name in ["chirp", "silence", "noise", "tone_mix"] {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/audio/{name}_mel.npy"));
-        let (shape, reference) = load_npy_f32(&fixture);
+        let (shape, reference) = load_npy_f32(&fixture(&format!("{name}_mel.npy")));
         assert_eq!(shape.len(), 2, "mel fixture must be [mels, frames]");
 
-        let samples_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/audio/{name}_samples.npy"));
-        let (_, samples) = load_npy_f32(&samples_path);
+        let (_, samples) = load_npy_f32(&fixture(&format!("{name}_samples.npy")));
 
         let got = log_mel_spectrogram(&samples).unwrap();
         assert_eq!(
@@ -70,22 +72,12 @@ fn log_mel_matches_whisper_reference_on_golden_signals() {
 #[test]
 fn wav_decode_roundtrip_matches_saved_samples() {
     for name in ["chirp", "silence", "noise", "tone_mix"] {
-        let wav = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/audio/{name}.wav"));
-        let decoded = decode_wav(&wav).unwrap();
+        let decoded = decode_wav(&fixture(&format!("{name}.wav"))).unwrap();
         assert_eq!(decoded.sample_rate, 16_000);
         // the fixtures were written as int16 PCM; compare against the saved
         // f32 originals with int16 quantization slack (~1/32767 plus wav
         // clipping of anything outside [-1, 1])
-        let samples_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("fixtures/audio/{name}_samples.npy"));
-        let samples_path = if samples_path.exists() {
-            samples_path
-        } else {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(format!("tests/fixtures/audio/{name}_samples.npy"))
-        };
-        let (_, original) = load_npy_f32(&samples_path);
+        let (_, original) = load_npy_f32(&fixture(&format!("{name}_samples.npy")));
         assert_eq!(decoded.samples.len(), original.len());
         let d = max_abs_diff(&decoded.samples, &original);
         assert!(d < 1.0 / 32767.0 + 1e-3, "{name}: wav decode drift {d}");
@@ -110,9 +102,8 @@ fn resample_identity_and_length() {
 
 #[test]
 fn to_mono_16k_accepts_all_input_forms() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
-    let via_file = to_mono_16k(&AudioInput::File(dir.join("chirp.wav"))).unwrap();
-    let bytes = std::fs::read(dir.join("chirp.wav")).unwrap();
+    let via_file = to_mono_16k(&AudioInput::File(fixture("chirp.wav"))).unwrap();
+    let bytes = std::fs::read(fixture("chirp.wav")).unwrap();
     let via_bytes = to_mono_16k(&AudioInput::Bytes(bytes)).unwrap();
     assert_eq!(via_file.samples, via_bytes.samples);
 
@@ -124,21 +115,6 @@ fn to_mono_16k_accepts_all_input_forms() {
     .unwrap();
     assert_eq!(via_samples.sample_rate, 16_000);
     assert!((via_samples.samples.len() as i64 - 16_000).abs() <= 1);
-}
-
-#[test]
-#[ignore]
-fn debug_print_chirp_mel() {
-    let samples_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/audio/chirp_samples.npy");
-    let (_, samples) = load_npy_f32(&samples_path);
-    let got = log_mel_spectrogram(&samples).unwrap();
-    println!("shape {:?}", got.shape());
-    println!("row0[:8] {:?}", &got.data()[..8]);
-    println!(
-        "row64[:4] {:?}",
-        &got.data()[64 * got.shape()[1]..64 * got.shape()[1] + 4]
-    );
 }
 
 // ---------------------------------------------------------------------------

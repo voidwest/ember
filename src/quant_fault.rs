@@ -125,19 +125,16 @@ fn argmax(values: &[f32]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::k_matmul::tests::{seeded_activations, seeded_q4_blocks, seeded_q6_blocks};
+    use crate::k_matmul::tests::{seeded_activations, seeded_k_blocks};
     use crate::quant_k::{KQuantDtype, QK_K};
 
     /// Deterministic K-quant weight with realistic per-block scales.
-    /// `seeded_*_blocks` produces valid layouts but wild f16 headers (up to
+    /// `seeded_k_blocks` produces valid layouts but wild f16 headers (up to
     /// ~65504) that exaggerate absolute logit magnitudes; the fault tests
     /// want realistic `d`/`min` so the bounds are meaningful.
     fn kweight(dtype: KQuantDtype, out: usize, input: usize, seed: u64, d: f32) -> KQuantWeight {
         let blocks = out * (input / QK_K);
-        let mut bytes = match dtype {
-            KQuantDtype::Q4K => seeded_q4_blocks(blocks, seed),
-            KQuantDtype::Q6K => seeded_q6_blocks(blocks, seed),
-        };
+        let mut bytes = seeded_k_blocks(dtype, blocks, seed);
         let (block_bytes, d_off, min_off) = match dtype {
             KQuantDtype::Q4K => (144usize, 0usize, 2usize),
             KQuantDtype::Q6K => (210usize, 208usize, 208usize),

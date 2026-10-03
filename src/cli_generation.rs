@@ -2032,77 +2032,121 @@ mod tests {
     use crate::{Commands, LifecycleModeArg, PackedSelectionArg};
     use clap::Parser;
 
+    use ember::{backend::CpuError, kv_cache::KVCache, tensor::CpuTensor};
+
+    /// A one-layer, four-token model whose forwards log which entry point
+    /// ran: prefill/allocating forwards rank token 1 first, reusing forwards
+    /// token 2.
+    #[derive(Default)]
+    struct DispatchModel(std::cell::RefCell<Vec<&'static str>>);
+    impl ForwardModel<CpuBackend> for DispatchModel {
+        fn create_cache(&self, _: &CpuBackend, capacity: usize) -> KVCache {
+            KVCache::new(1, 1, 1, capacity)
+        }
+        fn max_seq_len(&self, _: &CpuBackend) -> usize {
+            64
+        }
+        fn n_layers(&self) -> usize {
+            1
+        }
+        fn embed_dim(&self) -> usize {
+            1
+        }
+        fn vocab_size(&self, _: &CpuBackend) -> usize {
+            4
+        }
+        fn forward_with_cache(
+            &self,
+            _: &CpuBackend,
+            _: &[u32],
+            _: &mut KVCache,
+            _: usize,
+        ) -> Result<CpuTensor, CpuError> {
+            panic!("generation should request last-position logits")
+        }
+        fn forward_last_logits_with_cache(
+            &self,
+            _: &CpuBackend,
+            ids: &[u32],
+            cache: &mut KVCache,
+            start: usize,
+        ) -> Result<CpuTensor, CpuError> {
+            self.0.borrow_mut().push("allocated");
+            cache.validate_start_pos(start);
+            for _ in ids {
+                cache.advance_cursor();
+            }
+            Ok(CpuTensor::from_data(vec![1, 4], vec![0.0, 2.0, 1.0, -10.0]))
+        }
+        fn forward_last_logits_with_cache_reusing(
+            &self,
+            _: &CpuBackend,
+            ids: &[u32],
+            cache: &mut KVCache,
+            start: usize,
+            output: &mut CpuTensor,
+        ) -> Result<(), CpuError> {
+            self.0.borrow_mut().push("reused");
+            cache.validate_start_pos(start);
+            for _ in ids {
+                cache.advance_cursor();
+            }
+            output.data_mut().copy_from_slice(&[0.0, 1.0, 2.0, -10.0]);
+            Ok(())
+        }
+        fn forward_with_activations(
+            &self,
+            _: &CpuBackend,
+            _: &[u32],
+        ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
+            panic!("generation should not capture activations")
+        }
+    }
+
+    fn word_tokenizer() -> ember::tokenizer::EmberTokenizer {
+        ember::tokenizer::EmberTokenizer::from_bytes(
+            r#"{
+            "version":"1.0", "truncation":null, "padding":null,
+            "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
+            "post_processor":null, "decoder":null,
+            "model":{"type":"WordLevel","vocab":{"p":0,"a":1,"b":2,"[UNK]":3},"unk_token":"[UNK]"}
+        }"#,
+        )
+        .unwrap()
+    }
+
+    /// Three tokens from prompt "p" with top-k=1, which makes the run
+    /// deterministic without consulting the optional fused-greedy
+    /// environment setting or mutating process-global state.
+    fn generate<E: GenerationExecution<CpuBackend, DispatchModel>>(
+        model: &DispatchModel,
+        execution: &mut E,
+        cancel: Option<&CancelToken>,
+    ) -> anyhow::Result<String> {
+        generate_with_execution(
+            &CpuBackend,
+            model,
+            execution,
+            &word_tokenizer(),
+            "p",
+            3,
+            1.0,
+            Some(1),
+            None,
+            false,
+            false,
+            None,
+            false,
+            false,
+            1,
+            64,
+            Some(1),
+            cancel,
+        )
+    }
+
     #[test]
     fn generation_reuses_standard_logits_without_bypassing_custom_execution() {
-        use ember::{backend::CpuError, kv_cache::KVCache, tensor::CpuTensor};
-        use std::cell::RefCell;
-
-        #[derive(Default)]
-        struct DispatchModel(RefCell<Vec<&'static str>>);
-        impl ForwardModel<CpuBackend> for DispatchModel {
-            fn create_cache(&self, _: &CpuBackend, capacity: usize) -> KVCache {
-                KVCache::new(1, 1, 1, capacity)
-            }
-            fn max_seq_len(&self, _: &CpuBackend) -> usize {
-                64
-            }
-            fn n_layers(&self) -> usize {
-                1
-            }
-            fn embed_dim(&self) -> usize {
-                1
-            }
-            fn vocab_size(&self, _: &CpuBackend) -> usize {
-                4
-            }
-            fn forward_with_cache(
-                &self,
-                _: &CpuBackend,
-                _: &[u32],
-                _: &mut KVCache,
-                _: usize,
-            ) -> Result<CpuTensor, CpuError> {
-                panic!("generation should request last-position logits")
-            }
-            fn forward_last_logits_with_cache(
-                &self,
-                _: &CpuBackend,
-                ids: &[u32],
-                cache: &mut KVCache,
-                start: usize,
-            ) -> Result<CpuTensor, CpuError> {
-                self.0.borrow_mut().push("allocated");
-                cache.validate_start_pos(start);
-                for _ in ids {
-                    cache.advance_cursor();
-                }
-                Ok(CpuTensor::from_data(vec![1, 4], vec![0.0, 2.0, 1.0, -10.0]))
-            }
-            fn forward_last_logits_with_cache_reusing(
-                &self,
-                _: &CpuBackend,
-                ids: &[u32],
-                cache: &mut KVCache,
-                start: usize,
-                output: &mut CpuTensor,
-            ) -> Result<(), CpuError> {
-                self.0.borrow_mut().push("reused");
-                cache.validate_start_pos(start);
-                for _ in ids {
-                    cache.advance_cursor();
-                }
-                output.data_mut().copy_from_slice(&[0.0, 1.0, 2.0, -10.0]);
-                Ok(())
-            }
-            fn forward_with_activations(
-                &self,
-                _: &CpuBackend,
-                _: &[u32],
-            ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
-                panic!("generation should not capture activations")
-            }
-        }
-
         #[derive(Default)]
         struct CustomExecution(Vec<ExecutionPhase>);
         impl GenerationExecution<CpuBackend, DispatchModel> for CustomExecution {
@@ -2138,64 +2182,13 @@ mod tests {
             }
         }
 
-        let tokenizer = ember::tokenizer::EmberTokenizer::from_bytes(
-            r#"{
-            "version":"1.0", "truncation":null, "padding":null,
-            "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
-            "post_processor":null, "decoder":null,
-            "model":{"type":"WordLevel","vocab":{"p":0,"a":1,"b":2,"[UNK]":3},"unk_token":"[UNK]"}
-        }"#,
-        )
-        .unwrap();
         let model = DispatchModel::default();
-        // Top-k=1 makes the test deterministic without consulting the optional
-        // fused-greedy environment setting or mutating process-global state.
-        let output = generate_with_execution(
-            &CpuBackend,
-            &model,
-            &mut StandardGeneration,
-            &tokenizer,
-            "p",
-            3,
-            1.0,
-            Some(1),
-            None,
-            false,
-            false,
-            None,
-            false,
-            false,
-            1,
-            64,
-            Some(1),
-            None,
-        )
-        .unwrap();
+        let output = generate(&model, &mut StandardGeneration, None).unwrap();
         assert_eq!(output, "a b b");
         assert_eq!(*model.0.borrow(), ["allocated", "reused", "reused"]);
         model.0.borrow_mut().clear();
         let mut custom = CustomExecution::default();
-        let output = generate_with_execution(
-            &CpuBackend,
-            &model,
-            &mut custom,
-            &tokenizer,
-            "p",
-            3,
-            1.0,
-            Some(1),
-            None,
-            false,
-            false,
-            None,
-            false,
-            false,
-            1,
-            64,
-            Some(1),
-            None,
-        )
-        .unwrap();
+        let output = generate(&model, &mut custom, None).unwrap();
         assert_eq!(output, "b b b");
         assert_eq!(*model.0.borrow(), ["allocated", "allocated", "allocated"]);
         assert_eq!(
@@ -2210,114 +2203,14 @@ mod tests {
 
     #[test]
     fn cancellation_stops_before_prefill_and_at_step_boundaries() {
-        let tokenizer = ember::tokenizer::EmberTokenizer::from_bytes(
-            r#"{
-            "version":"1.0", "truncation":null, "padding":null,
-            "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
-            "post_processor":null, "decoder":null,
-            "model":{"type":"WordLevel","vocab":{"p":0,"a":1,"b":2,"[UNK]":3},"unk_token":"[UNK]"}
-        }"#,
-        )
-        .unwrap();
-
-        use ember::{backend::CpuError, kv_cache::KVCache, tensor::CpuTensor};
-
-        /// Minimal deterministic model that counts forward calls.
-        #[derive(Default)]
-        struct CancelModel(std::cell::RefCell<usize>);
-        impl ForwardModel<CpuBackend> for CancelModel {
-            fn create_cache(&self, _: &CpuBackend, capacity: usize) -> KVCache {
-                KVCache::new(1, 1, 1, capacity)
-            }
-            fn max_seq_len(&self, _: &CpuBackend) -> usize {
-                64
-            }
-            fn n_layers(&self) -> usize {
-                1
-            }
-            fn embed_dim(&self) -> usize {
-                1
-            }
-            fn vocab_size(&self, _: &CpuBackend) -> usize {
-                4
-            }
-            fn forward_with_cache(
-                &self,
-                _: &CpuBackend,
-                _: &[u32],
-                _: &mut KVCache,
-                _: usize,
-            ) -> Result<CpuTensor, CpuError> {
-                panic!("generation should request last-position logits")
-            }
-            fn forward_last_logits_with_cache(
-                &self,
-                _: &CpuBackend,
-                ids: &[u32],
-                cache: &mut KVCache,
-                start: usize,
-            ) -> Result<CpuTensor, CpuError> {
-                *self.0.borrow_mut() += 1;
-                cache.validate_start_pos(start);
-                for _ in ids {
-                    cache.advance_cursor();
-                }
-                Ok(CpuTensor::from_data(vec![1, 4], vec![0.0, 2.0, 1.0, -10.0]))
-            }
-            fn forward_last_logits_with_cache_reusing(
-                &self,
-                _: &CpuBackend,
-                ids: &[u32],
-                cache: &mut KVCache,
-                start: usize,
-                output: &mut CpuTensor,
-            ) -> Result<(), CpuError> {
-                *self.0.borrow_mut() += 1;
-                cache.validate_start_pos(start);
-                for _ in ids {
-                    cache.advance_cursor();
-                }
-                output.data_mut().copy_from_slice(&[0.0, 1.0, 2.0, -10.0]);
-                Ok(())
-            }
-            fn forward_with_activations(
-                &self,
-                _: &CpuBackend,
-                _: &[u32],
-            ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
-                panic!("generation should not capture activations")
-            }
-        }
-
         // (a) a pre-cancelled token stops before any model work happens.
-        let model = CancelModel::default();
+        let model = DispatchModel::default();
         let token = CancelToken::new();
         token.cancel();
-        let error = generate_with_execution(
-            &CpuBackend,
-            &model,
-            &mut StandardGeneration,
-            &tokenizer,
-            "p",
-            3,
-            1.0,
-            Some(1),
-            None,
-            false,
-            false,
-            None,
-            false,
-            false,
-            1,
-            64,
-            Some(1),
-            Some(&token),
-        )
-        .unwrap_err();
+        let error = generate(&model, &mut StandardGeneration, Some(&token)).unwrap_err();
         assert!(error.is::<Cancelled>());
-        assert_eq!(
-            *model.0.borrow(),
-            0,
+        assert!(
+            model.0.borrow().is_empty(),
             "no forward should run after a pre-cancel"
         );
 
@@ -2327,14 +2220,14 @@ mod tests {
             token: CancelToken,
             phases: Vec<ExecutionPhase>,
         }
-        impl GenerationExecution<CpuBackend, CancelModel> for CancelDuringDecode {
+        impl GenerationExecution<CpuBackend, DispatchModel> for CancelDuringDecode {
             fn before_prefill(&mut self, _: &[u32]) -> anyhow::Result<()> {
                 Ok(())
             }
             fn forward_last_logits(
                 &mut self,
                 _: &CpuBackend,
-                _: &CancelModel,
+                _: &DispatchModel,
                 ids: &[u32],
                 cache: &mut KVCache,
                 start: usize,
@@ -2361,33 +2254,13 @@ mod tests {
                 Ok(())
             }
         }
-        let model = CancelModel::default();
+        let model = DispatchModel::default();
         let token = CancelToken::new();
         let mut custom = CancelDuringDecode {
             token: token.clone(),
             phases: Vec::new(),
         };
-        let error = generate_with_execution(
-            &CpuBackend,
-            &model,
-            &mut custom,
-            &tokenizer,
-            "p",
-            3,
-            1.0,
-            Some(1),
-            None,
-            false,
-            false,
-            None,
-            false,
-            false,
-            1,
-            64,
-            Some(1),
-            Some(&token),
-        )
-        .unwrap_err();
+        let error = generate(&model, &mut custom, Some(&token)).unwrap_err();
         assert!(error.is::<Cancelled>());
         assert_eq!(
             custom.phases,
@@ -2409,35 +2282,20 @@ mod tests {
         assert_eq!(automatic.arch, "auto");
         assert!(automatic.tokenizer.is_none());
 
-        let llama =
-            Args::try_parse_from(["ember", "--arch", "llama"]).expect("llama args should parse");
-        assert_eq!(
-            llama
-                .tokenizer
-                .as_deref()
-                .unwrap_or_else(|| default_tokenizer_for_arch(&llama.arch)),
-            "tokenizer.json"
-        );
-
-        let gemma4 =
-            Args::try_parse_from(["ember", "--arch", "gemma4"]).expect("gemma4 args should parse");
-        assert_eq!(
-            gemma4
-                .tokenizer
-                .as_deref()
-                .unwrap_or_else(|| default_tokenizer_for_arch(&gemma4.arch)),
-            "tokenizer-gemma4.json"
-        );
-
-        let qwen3 =
-            Args::try_parse_from(["ember", "--arch", "qwen3"]).expect("qwen3 args should parse");
-        assert_eq!(
-            qwen3
-                .tokenizer
-                .as_deref()
-                .unwrap_or_else(|| default_tokenizer_for_arch(&qwen3.arch)),
-            "tokenizer-qwen3.json"
-        );
+        for (arch, expected) in [
+            ("llama", "tokenizer.json"),
+            ("gemma4", "tokenizer-gemma4.json"),
+            ("qwen3", "tokenizer-qwen3.json"),
+        ] {
+            let args = Args::try_parse_from(["ember", "--arch", arch])
+                .unwrap_or_else(|error| panic!("{arch} args should parse: {error}"));
+            assert_eq!(
+                args.tokenizer
+                    .as_deref()
+                    .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch)),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -1083,9 +1083,6 @@ mod tests {
                 9_223_372_036_854_775_807,
             ]
         );
-        assert_eq!(BOUNDARY64.len(), 17);
-        assert_eq!(BOUNDARY32.len(), 16);
-        assert_eq!(CONFIG_BOUNDARY64.len(), 17);
     }
 
     #[test]
@@ -1241,14 +1238,7 @@ mod tests {
 
     #[test]
     fn campaign_rejects_invalid_timeout_before_filesystem_work() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember-invalid-timeout-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = crate::v05::testutil::temp_root("invalid-timeout");
         assert!(!dir.exists());
         for timeout_secs in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e300] {
             let request = CorpusRequest {

@@ -411,14 +411,9 @@ pub fn payload_checksums(files: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v05::manifest::{
-        ManifestExecutionMeta, ManifestExperimentMeta, ManifestGenerated, ManifestInputMeta,
-        ManifestModelMeta, ManifestTokenizerMeta,
-    };
 
     fn temp_root() -> PathBuf {
         let parent = crate::v05::testutil::temp_root("bundle");
-        std::fs::create_dir_all(&parent).unwrap();
         std::fs::create_dir_all(&parent).unwrap();
         parent.join("bundle")
     }
@@ -433,51 +428,14 @@ mod tests {
             .collect()
     }
 
-    fn sample_manifest(payloads: BTreeMap<String, String>) -> SemanticManifest {
-        SemanticManifest {
-            bundle_schema: BUNDLE_SCHEMA_V1.into(),
-            experiment_schema: "ember.experiment.v1".into(),
-            hook_schema: 1,
-            plan_schema: 1,
-            ember_version: "0.5.0-test".into(),
-            ember_commit: "test".into(),
-            experiment: ManifestExperimentMeta {
-                name: "t".into(),
-                description: String::new(),
-                seed: 0,
-            },
-            model: ManifestModelMeta {
-                sha256: "aa".repeat(32),
-                architecture: "llama".into(),
-                layer_count: 1,
-                embed_dim: 4,
-                vocab_size: 16,
-                quantization: "q8_0".into(),
-            },
-            tokenizer: ManifestTokenizerMeta {
-                sha256: "bb".repeat(32),
-                vocab_size: 16,
-            },
-            execution: ManifestExecutionMeta {
-                mode: "reference".into(),
-                deterministic: true,
-                plan_hash: "cc".repeat(32),
-            },
-            inputs: vec![ManifestInputMeta {
-                id: "i1".into(),
-                prompt_hash: "dd".repeat(32),
-            }],
-            token_selections: Vec::new(),
-            captures: Vec::new(),
-            interventions: Vec::new(),
-            generated: ManifestGenerated {
-                token_ids: vec![vec![1]],
-                texts: vec!["x".into()],
-            },
-            payloads,
-            warnings: Vec::new(),
-            complete: true,
-        }
+    /// A complete semantic manifest; its contents are never reached by the
+    /// tests that fail before verification.
+    fn fixture_manifest() -> SemanticManifest {
+        crate::v05::testutil::test_bundle_materials(
+            &crate::v05::testutil::sample_rows(),
+            &crate::v05::testutil::sample_positions(),
+        )
+        .1
     }
 
     fn valid_writer(
@@ -636,8 +594,7 @@ mod tests {
         let root = temp_root();
         std::fs::create_dir_all(&root).unwrap();
         let writer = BundleWriter::new(root.clone(), false, false);
-        let payloads = BTreeMap::new();
-        let result = writer.finalize(sample_manifest(payloads), serde_json::json!({}));
+        let result = writer.finalize(fixture_manifest(), serde_json::json!({}));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("refusing to overwrite"));
         // with overwrite it succeeds
@@ -648,37 +605,35 @@ mod tests {
     }
 
     #[test]
-    fn retained_incomplete_staging_is_marked() {
-        let root = temp_root();
-        // A traversal path is rejected at finalize time, before publish.
-        let mut writer = BundleWriter::new(root.clone(), false, true);
-        writer.add("inputs.jsonl", b"x".to_vec());
-        writer.add("../escape.bin", b"evil".to_vec());
-        let payloads = payload_checksums(&writer.files);
-        let result = writer.finalize(sample_manifest(payloads), serde_json::json!({}));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unsafe components"));
-        assert!(!root.exists(), "a failed bundle must never be published");
-        // With retain_incomplete, the staging directory remains, clearly
-        // marked with a leading dot and `.tmp-` so `verify` can never
-        // mistake it for a bundle.
-        let leftovers = staging_leftovers(&root);
-        assert_eq!(leftovers.len(), 1, "{leftovers:?}");
-        assert!(leftovers[0].starts_with('.'));
-        std::fs::remove_dir_all(root.parent().unwrap()).ok();
-    }
-
-    #[test]
-    fn failed_finalize_cleans_staging_by_default() {
-        let root = temp_root();
-        let mut writer = BundleWriter::new(root.clone(), false, false);
-        writer.add("inputs.jsonl", b"x".to_vec());
-        writer.add("../escape.bin", b"evil".to_vec());
-        let payloads = payload_checksums(&writer.files);
-        let result = writer.finalize(sample_manifest(payloads), serde_json::json!({}));
-        assert!(result.is_err());
-        assert!(staging_leftovers(&root).is_empty());
-        std::fs::remove_dir_all(root.parent().unwrap()).ok();
+    fn failed_finalize_cleans_staging_unless_retained_and_then_marks_it() {
+        for retain in [false, true] {
+            let root = temp_root();
+            // A traversal path is rejected at finalize time, before publish.
+            let mut writer = BundleWriter::new(root.clone(), false, retain);
+            writer.add("inputs.jsonl", b"x".to_vec());
+            writer.add("../escape.bin", b"evil".to_vec());
+            let result = writer.finalize(fixture_manifest(), serde_json::json!({}));
+            let error = result.unwrap_err();
+            assert!(
+                error.contains("unsafe components"),
+                "retain={retain}: {error}"
+            );
+            assert!(
+                !root.exists(),
+                "retain={retain}: a failed bundle must never be published"
+            );
+            let leftovers = staging_leftovers(&root);
+            if retain {
+                // With retain_incomplete, the staging directory remains,
+                // clearly marked with a leading dot and `.tmp-` so `verify`
+                // can never mistake it for a bundle.
+                assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+                assert!(leftovers[0].starts_with('.'));
+            } else {
+                assert!(leftovers.is_empty(), "{leftovers:?}");
+            }
+            std::fs::remove_dir_all(root.parent().unwrap()).ok();
+        }
     }
 
     #[test]

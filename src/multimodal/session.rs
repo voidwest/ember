@@ -1211,27 +1211,4 @@ mod session_scaffold_tests {
         );
         assert_eq!(composed, ScaffoldTokens::reference_render(content));
     }
-
-    #[test]
-    fn second_turn_composition_extends_the_reference() {
-        let reply = "The weather is nice.";
-        let turn2 = "Tell me more.";
-        let next_open = format!(
-            "{}{}{}{}{}{}{}",
-            ScaffoldTokens::system_prefix(),
-            ScaffoldTokens::user_open(),
-            "Hello",
-            ScaffoldTokens::user_close(),
-            ScaffoldTokens::assistant_open(),
-            reply,
-            ScaffoldTokens::user_close(),
-        );
-        let composed_two_turns =
-            next_open.clone() + ScaffoldTokens::EOT + &ScaffoldTokens::user_open() + turn2;
-        assert!(composed_two_turns.starts_with(&next_open));
-        assert!(
-            composed_two_turns.starts_with(&ScaffoldTokens::reference_render("Hello")),
-            "prefix must embed the reference template"
-        );
-    }
 }

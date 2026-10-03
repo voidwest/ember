@@ -276,6 +276,18 @@ fn turns_done(events: &[ConverseEvent]) -> usize {
         .count()
 }
 
+const INTERRUPTED: [AssistantEnd; 2] = [
+    AssistantEnd::InterruptedDuringGeneration,
+    AssistantEnd::InterruptedDuringPlayback,
+];
+
+/// Did any turn in `events` end in one of `ends`?
+fn turn_ended(events: &[ConverseEvent], ends: &[AssistantEnd]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, ConverseEvent::TurnComplete { end, .. } if ends.contains(end)))
+}
+
 // ---------------------------------------------------------------------------
 // Scenario A: full happy-path turn (mic → model → TTS → "speaker") plus
 // same-session continuation.
@@ -309,9 +321,6 @@ fn converse_full_turn_mic_to_speaker_and_same_session_continuation() {
                 .any(|e| matches!(e, ConverseEvent::UserCommitted { .. })),
             "user turn not committed"
         );
-        for e in &events {
-            eprintln!("DBG {e:?}");
-        }
         match events.last() {
             Some(ConverseEvent::TurnComplete { end, timings, .. }) => {
                 assert_eq!(*end, AssistantEnd::Completed);
@@ -333,13 +342,7 @@ fn converse_full_turn_mic_to_speaker_and_same_session_continuation() {
         let events2 =
             run_conversation(&mut conv, &rings, |_, evs, _| turns_done(evs) >= 1, 240_000);
         assert!(
-            events2.iter().any(|e| matches!(
-                e,
-                ConverseEvent::TurnComplete {
-                    end: AssistantEnd::Completed,
-                    ..
-                }
-            )),
+            turn_ended(&events2, &[AssistantEnd::Completed]),
             "second turn incomplete: last={:?}",
             events2.last()
         );
@@ -348,7 +351,6 @@ fn converse_full_turn_mic_to_speaker_and_same_session_continuation() {
     });
 }
 
-// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Scenario B: interrupt during ACTUAL generation — cancel + KV rollback +
 // deferred capture + next-turn readiness in the same session.
@@ -396,13 +398,7 @@ fn converse_barge_in_during_generation_rolls_back_and_recovers() {
         // Cancel may land pre-first-token when the mic is already talking;
         // still fully model-in-the-loop (rollback clean, deferred capture).
         assert!(
-            events.iter().any(|e| matches!(
-                e,
-                ConverseEvent::TurnComplete {
-                    end: AssistantEnd::InterruptedDuringGeneration,
-                    ..
-                }
-            )),
+            turn_ended(&events, &[AssistantEnd::InterruptedDuringGeneration]),
             "barge-in never cancelled a generation; tail={:?}",
             events.last()
         );
@@ -411,23 +407,16 @@ fn converse_barge_in_during_generation_rolls_back_and_recovers() {
                 && conv.session.stats().cache_rebuilds == 0,
             "replies must be cancelled (not committed) without cache rebuilds"
         );
-        // NOTE: with the continuous mic the deferred capture may already
-        // have processed further interrupts (Idle again) before this assert
-        // runs — rollback + recovery is what matters, pinned by the next
-        // turn completing.
-        let _ = conv.state();
+        // NOTE: the state is deliberately not asserted here — with the
+        // continuous mic the deferred capture may already have processed
+        // further interrupts (Idle again). Rollback + recovery is what
+        // matters, pinned by the next turn completing.
 
         // close the interrupting utterance with ambience, then a fresh turn
         quiet_tail(&rings, 1.0);
         let post = run_conversation(&mut conv, &rings, |_, evs, _| turns_done(evs) >= 1, 300_000);
         assert!(
-            post.iter().any(|e| matches!(
-                e,
-                ConverseEvent::TurnComplete {
-                    end: AssistantEnd::Completed,
-                    ..
-                }
-            )),
+            turn_ended(&post, &[AssistantEnd::Completed]),
             "post-interrupt turn must complete normally; last={:?}",
             post.last()
         );
@@ -510,13 +499,7 @@ fn converse_rapid_second_intervention_recovers_cleanly() {
         quiet_tail(&rings, 0.6);
         let ev1 = run_conversation(&mut conv, &rings, |_, evs, _| turns_done(evs) >= 1, 300_000);
         assert!(
-            ev1.iter().any(|e| matches!(
-                e,
-                ConverseEvent::TurnComplete {
-                    end: AssistantEnd::Completed,
-                    ..
-                }
-            )),
+            turn_ended(&ev1, &[AssistantEnd::Completed]),
             "first turn incomplete"
         );
 
@@ -524,36 +507,16 @@ fn converse_rapid_second_intervention_recovers_cleanly() {
         // barge-in #2 lands mid-generation...
         rings.mic(&sine(16_000, 0.9, 320.0, 0.8));
         quiet_tail(&rings, 0.6);
-        let _trigger = Arc::new(AtomicBool::new(false));
         let mic = MicThread::start(&rings, Arc::new(AtomicBool::new(true)), 360.0);
         let ev2 = run_conversation(
             &mut conv,
             &rings,
-            |_, evs, _| {
-                turns_done(evs) >= 1
-                    && evs.iter().any(|e| {
-                        matches!(
-                            e,
-                            ConverseEvent::TurnComplete {
-                                end: AssistantEnd::InterruptedDuringGeneration
-                                    | AssistantEnd::InterruptedDuringPlayback,
-                                ..
-                            }
-                        )
-                    })
-            },
+            |_, evs, _| turns_done(evs) >= 1 && turn_ended(evs, &INTERRUPTED),
             120_000,
         );
         drop(mic);
         assert!(
-            ev2.iter().any(|e| matches!(
-                e,
-                ConverseEvent::TurnComplete {
-                    end: AssistantEnd::InterruptedDuringGeneration
-                        | AssistantEnd::InterruptedDuringPlayback,
-                    ..
-                }
-            )),
+            turn_ended(&ev2, &INTERRUPTED),
             "second barge-in never fired; tail={:?}",
             ev2.last()
         );
@@ -564,13 +527,7 @@ fn converse_rapid_second_intervention_recovers_cleanly() {
         quiet_tail(&rings, 0.8);
         let ev3 = run_conversation(&mut conv, &rings, |_, evs, _| turns_done(evs) >= 1, 360_000);
         assert!(
-            ev3.iter().any(|e| matches!(
-                e,
-                ConverseEvent::TurnComplete {
-                    end: AssistantEnd::Completed,
-                    ..
-                }
-            )),
+            turn_ended(&ev3, &[AssistantEnd::Completed]),
             "post-rapid-interrupt turn must still complete; last={:?}",
             ev3.last()
         );

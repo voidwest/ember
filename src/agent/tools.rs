@@ -530,192 +530,6 @@ impl Tool for SearchTextTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::agent::artifact::ArtifactStore;
-    use crate::agent::CancelFlag;
-    use std::sync::Mutex;
-
-    fn ctx<'a>(artifacts: &'a Mutex<ArtifactStore>, cancel: &'a CancelFlag) -> ToolContext<'a> {
-        ToolContext {
-            run_id: "run-test",
-            step_id: "tool-0",
-            call_seq: 1,
-            deadline: Instant::now() + Duration::from_secs(3600),
-            cancel,
-            artifacts,
-        }
-    }
-
-    fn args_for(schema: &ToolSchema, raw: &str) -> ValidatedArguments {
-        ValidatedArguments::parse(schema, raw).expect("valid args")
-    }
-
-    #[test]
-    fn calculator_is_deterministic_and_structured() {
-        let store = Mutex::new(
-            ArtifactStore::open(std::env::temp_dir().join("ember-calc-t"), "r").unwrap(),
-        );
-        let cancel = CancelFlag::new();
-        let c = ctx(&store, &cancel);
-        let tool = CalculatorTool;
-        let schema = tool.schema();
-        let out = tool
-            .execute(
-                &args_for(&schema, r#"{"operation":"multiply","a":6,"b":7}"#),
-                &c,
-            )
-            .unwrap();
-        match out.payload {
-            ToolPayload::Json(v) => assert_eq!(v["result"], 42.0),
-            other => panic!("expected json payload, got {other:?}"),
-        }
-        let err = tool
-            .execute(
-                &args_for(&schema, r#"{"operation":"divide","a":1,"b":0}"#),
-                &c,
-            )
-            .unwrap_err();
-        assert_eq!(err.kind, ToolFailureKind::Execution);
-        assert!(err.message.contains("division by zero"));
-    }
-
-    #[test]
-    fn lookup_reports_missing_keys_as_tool_failures() {
-        let store = Mutex::new(
-            ArtifactStore::open(std::env::temp_dir().join("ember-lookup-t"), "r").unwrap(),
-        );
-        let cancel = CancelFlag::new();
-        let c = ctx(&store, &cancel);
-        let tool = LookupFixtureTool::new([("alpha", "42"), ("beta", "43")]);
-        let schema = tool.schema();
-        let out = tool
-            .execute(&args_for(&schema, r#"{"key":"alpha"}"#), &c)
-            .unwrap();
-        match out.payload {
-            ToolPayload::Json(v) => assert_eq!(v["value"], "42"),
-            other => panic!("expected json, got {other:?}"),
-        }
-        let err = tool
-            .execute(&args_for(&schema, r#"{"key":"gamma"}"#), &c)
-            .unwrap_err();
-        assert!(err.message.contains("no fixture"));
-    }
-
-    #[test]
-    fn search_text_rejects_files_over_the_read_cap() {
-        let root = std::env::temp_dir().join("ember-search-cap-root");
-        std::fs::create_dir_all(&root).unwrap();
-        let data = "x".repeat(MAX_READ_BYTES as usize + 1);
-        std::fs::write(root.join("big.txt"), data).unwrap();
-        let store = Mutex::new(
-            ArtifactStore::open(std::env::temp_dir().join("ember-search-cap-art"), "r").unwrap(),
-        );
-        let cancel = CancelFlag::new();
-        let c = ctx(&store, &cancel);
-        let tool = SearchTextTool::new(&root);
-        let schema = tool.schema();
-        let err = tool
-            .execute(
-                &args_for(&schema, r#"{"path":"big.txt","pattern":"x"}"#),
-                &c,
-            )
-            .unwrap_err();
-        assert_eq!(err.kind, ToolFailureKind::Execution);
-        assert!(err.message.contains("search cap"));
-        let _ = std::fs::remove_file(root.join("big.txt"));
-    }
-
-    #[test]
-    fn write_artifact_hashes_content_and_lists_ids() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember-wa-{}",
-            std::time::Instant::now().elapsed().as_nanos()
-        ));
-        let store = Mutex::new(ArtifactStore::open(&dir, "run-wa").unwrap());
-        let cancel = CancelFlag::new();
-        let c = ctx(&store, &cancel);
-        let tool = WriteArtifactTool;
-        let schema = tool.schema();
-        let out = tool
-            .execute(
-                &args_for(&schema, "{\"name\":\"note.md\",\"content\":\"# hi\"}"),
-                &c,
-            )
-            .unwrap();
-        assert_eq!(out.artifact_ids.len(), 1);
-        match out.payload {
-            ToolPayload::Json(v) => {
-                assert_eq!(v["sha256"], crate::extraction::sha256_bytes(b"# hi"));
-                assert_eq!(v["media_type"], "text/markdown");
-            }
-            other => panic!("expected json, got {other:?}"),
-        }
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn fail_tool_always_fails_with_the_message() {
-        let store = Mutex::new(
-            ArtifactStore::open(std::env::temp_dir().join("ember-fail-t"), "r").unwrap(),
-        );
-        let cancel = CancelFlag::new();
-        let c = ctx(&store, &cancel);
-        let err = FailTool
-            .execute(&args_for(&FailTool.schema(), r#"{"message":"boom"}"#), &c)
-            .unwrap_err();
-        assert_eq!(err.message, "boom");
-    }
-
-    #[test]
-    fn file_tools_reject_traversal_and_absolute_paths() {
-        let root = std::env::temp_dir().join(format!(
-            "ember-sb-{}",
-            std::time::Instant::now().elapsed().as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("data.txt"), "hello world\nsecond line\n").unwrap();
-        let store = Mutex::new(ArtifactStore::open(&root, "r").unwrap());
-        let cancel = CancelFlag::new();
-        let c = ctx(&store, &cancel);
-        let tool = ReadTextFileTool::new(&root);
-        let schema = tool.schema();
-
-        let ok = tool
-            .execute(&args_for(&schema, r#"{"path":"data.txt"}"#), &c)
-            .unwrap();
-        match ok.payload {
-            ToolPayload::Json(v) => assert_eq!(v["content"], "hello world\nsecond line\n"),
-            other => panic!("expected json, got {other:?}"),
-        }
-        for bad in ["../secret", "/etc/passwd", "./x", ""] {
-            assert!(
-                tool.execute(&args_for(&schema, &format!(r#"{{"path":"{bad}"}}"#)), &c)
-                    .is_err(),
-                "expected rejection of {bad:?}"
-            );
-        }
-
-        let search = SearchTextTool::new(&root);
-        let sschema = search.schema();
-        let hits = search
-            .execute(
-                &args_for(&sschema, r#"{"path":"data.txt","pattern":"line"}"#),
-                &c,
-            )
-            .unwrap();
-        match hits.payload {
-            ToolPayload::Json(v) => {
-                assert_eq!(v["matches"], 1);
-                assert_eq!(v["lines"], serde_json::json!([2]));
-            }
-            other => panic!("expected json, got {other:?}"),
-        }
-        std::fs::remove_dir_all(&root).ok();
-    }
-}
-
 // ---------------------------------------------------------------------------
 // multimodal tool-result fixture (Track W)
 // ---------------------------------------------------------------------------
@@ -811,41 +625,189 @@ impl Tool for ImageFixtureTool {
 }
 
 #[cfg(test)]
-mod image_fixture_tests {
+mod tests {
     use super::*;
     use crate::agent::artifact::ArtifactStore;
     use crate::agent::CancelFlag;
     use std::sync::Mutex;
 
-    #[test]
-    fn deterministic_png_artifact_with_real_media_type() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember-imgfx-{}",
-            std::time::Instant::now().elapsed().as_nanos()
-        ));
-        let store = Mutex::new(ArtifactStore::open(&dir, "run-img").unwrap());
-        let cancel = CancelFlag::new();
-        let ctx = ToolContext {
-            run_id: "run-img",
+    fn ctx<'a>(artifacts: &'a Mutex<ArtifactStore>, cancel: &'a CancelFlag) -> ToolContext<'a> {
+        ToolContext {
+            run_id: "run-test",
             step_id: "tool-0",
             call_seq: 1,
-            deadline: Instant::now() + Duration::from_secs(60),
-            cancel: &cancel,
-            artifacts: &store,
-        };
+            deadline: Instant::now() + Duration::from_secs(3600),
+            cancel,
+            artifacts,
+        }
+    }
+
+    fn args_for(schema: &ToolSchema, raw: &str) -> ValidatedArguments {
+        ValidatedArguments::parse(schema, raw).expect("valid args")
+    }
+
+    fn store(root: impl Into<std::path::PathBuf>, run_id: &str) -> Mutex<ArtifactStore> {
+        Mutex::new(ArtifactStore::open(root, run_id).unwrap())
+    }
+
+    fn unique_dir(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            std::time::Instant::now().elapsed().as_nanos()
+        ))
+    }
+
+    #[test]
+    fn calculator_is_deterministic_and_structured() {
+        let store = store(std::env::temp_dir().join("ember-calc-t"), "r");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let tool = CalculatorTool;
+        let schema = tool.schema();
+        let out = tool
+            .execute(
+                &args_for(&schema, r#"{"operation":"multiply","a":6,"b":7}"#),
+                &c,
+            )
+            .unwrap();
+        match out.payload {
+            ToolPayload::Json(v) => assert_eq!(v["result"], 42.0),
+            other => panic!("expected json payload, got {other:?}"),
+        }
+        let err = tool
+            .execute(
+                &args_for(&schema, r#"{"operation":"divide","a":1,"b":0}"#),
+                &c,
+            )
+            .unwrap_err();
+        assert_eq!(err.kind, ToolFailureKind::Execution);
+        assert!(err.message.contains("division by zero"));
+    }
+
+    #[test]
+    fn lookup_reports_missing_keys_as_tool_failures() {
+        let store = store(std::env::temp_dir().join("ember-lookup-t"), "r");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let tool = LookupFixtureTool::new([("alpha", "42"), ("beta", "43")]);
+        let schema = tool.schema();
+        let out = tool
+            .execute(&args_for(&schema, r#"{"key":"alpha"}"#), &c)
+            .unwrap();
+        match out.payload {
+            ToolPayload::Json(v) => assert_eq!(v["value"], "42"),
+            other => panic!("expected json, got {other:?}"),
+        }
+        let err = tool
+            .execute(&args_for(&schema, r#"{"key":"gamma"}"#), &c)
+            .unwrap_err();
+        assert!(err.message.contains("no fixture"));
+    }
+
+    #[test]
+    fn search_text_rejects_files_over_the_read_cap() {
+        let root = std::env::temp_dir().join("ember-search-cap-root");
+        std::fs::create_dir_all(&root).unwrap();
+        let data = "x".repeat(MAX_READ_BYTES as usize + 1);
+        std::fs::write(root.join("big.txt"), data).unwrap();
+        let store = store(std::env::temp_dir().join("ember-search-cap-art"), "r");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let tool = SearchTextTool::new(&root);
+        let schema = tool.schema();
+        let err = tool
+            .execute(
+                &args_for(&schema, r#"{"path":"big.txt","pattern":"x"}"#),
+                &c,
+            )
+            .unwrap_err();
+        assert_eq!(err.kind, ToolFailureKind::Execution);
+        assert!(err.message.contains("search cap"));
+        let _ = std::fs::remove_file(root.join("big.txt"));
+    }
+
+    #[test]
+    fn write_artifact_hashes_content_and_lists_ids() {
+        let dir = unique_dir("ember-wa");
+        let store = store(&dir, "run-wa");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let tool = WriteArtifactTool;
+        let schema = tool.schema();
+        let out = tool
+            .execute(
+                &args_for(&schema, "{\"name\":\"note.md\",\"content\":\"# hi\"}"),
+                &c,
+            )
+            .unwrap();
+        assert_eq!(out.artifact_ids.len(), 1);
+        match out.payload {
+            ToolPayload::Json(v) => {
+                assert_eq!(v["sha256"], crate::extraction::sha256_bytes(b"# hi"));
+                assert_eq!(v["media_type"], "text/markdown");
+            }
+            other => panic!("expected json, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_tools_reject_traversal_and_absolute_paths() {
+        let root = unique_dir("ember-sb");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("data.txt"), "hello world\nsecond line\n").unwrap();
+        let store = store(&root, "r");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let tool = ReadTextFileTool::new(&root);
+        let schema = tool.schema();
+
+        let ok = tool
+            .execute(&args_for(&schema, r#"{"path":"data.txt"}"#), &c)
+            .unwrap();
+        match ok.payload {
+            ToolPayload::Json(v) => assert_eq!(v["content"], "hello world\nsecond line\n"),
+            other => panic!("expected json, got {other:?}"),
+        }
+        for bad in ["../secret", "/etc/passwd", "./x", ""] {
+            assert!(
+                tool.execute(&args_for(&schema, &format!(r#"{{"path":"{bad}"}}"#)), &c)
+                    .is_err(),
+                "expected rejection of {bad:?}"
+            );
+        }
+
+        let search = SearchTextTool::new(&root);
+        let sschema = search.schema();
+        let hits = search
+            .execute(
+                &args_for(&sschema, r#"{"path":"data.txt","pattern":"line"}"#),
+                &c,
+            )
+            .unwrap();
+        match hits.payload {
+            ToolPayload::Json(v) => {
+                assert_eq!(v["matches"], 1);
+                assert_eq!(v["lines"], serde_json::json!([2]));
+            }
+            other => panic!("expected json, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn deterministic_png_artifact_with_real_media_type() {
+        let dir = unique_dir("ember-imgfx");
+        let store = store(&dir, "run-img");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
         let tool = ImageFixtureTool;
         let schema = tool.schema();
         let a = tool
-            .execute(
-                &ValidatedArguments::parse(&schema, r#"{"name":"p.png","seed":7}"#).unwrap(),
-                &ctx,
-            )
+            .execute(&args_for(&schema, r#"{"name":"p.png","seed":7}"#), &c)
             .unwrap();
         let b = tool
-            .execute(
-                &ValidatedArguments::parse(&schema, r#"{"name":"q.png","seed":7}"#).unwrap(),
-                &ctx,
-            )
+            .execute(&args_for(&schema, r#"{"name":"q.png","seed":7}"#), &c)
             .unwrap();
         // same seed -> identical bytes (reproducible fixture)
         match (&a.payload, &b.payload) {
@@ -871,26 +833,13 @@ mod image_fixture_tests {
 
     #[test]
     fn rejects_non_png_names() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember-imgfx-bad-{}",
-            std::time::Instant::now().elapsed().as_nanos()
-        ));
-        let store = Mutex::new(ArtifactStore::open(&dir, "run").unwrap());
+        let dir = unique_dir("ember-imgfx-bad");
+        let store = store(&dir, "run");
         let cancel = CancelFlag::new();
-        let ctx = ToolContext {
-            run_id: "run",
-            step_id: "tool-0",
-            call_seq: 1,
-            deadline: Instant::now() + Duration::from_secs(60),
-            cancel: &cancel,
-            artifacts: &store,
-        };
+        let c = ctx(&store, &cancel);
         let tool = ImageFixtureTool;
         let err = tool
-            .execute(
-                &ValidatedArguments::parse(&tool.schema(), r#"{"name":"x.txt"}"#).unwrap(),
-                &ctx,
-            )
+            .execute(&args_for(&tool.schema(), r#"{"name":"x.txt"}"#), &c)
             .unwrap_err();
         assert_eq!(err.kind, ToolFailureKind::Execution);
         std::fs::remove_dir_all(&dir).ok();

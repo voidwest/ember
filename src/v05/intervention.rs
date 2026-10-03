@@ -518,7 +518,6 @@ impl InterventionSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v05::token_select::SubtokenSelection;
 
     fn replace_spec() -> InterventionSpec {
         InterventionSpec {
@@ -570,11 +569,5 @@ mod tests {
         assert!(interp.validate_self().is_err()); // interpolate requires source
         interp.source = Some(InterventionSource::Zero);
         assert!(interp.validate_self().is_ok());
-    }
-
-    #[test]
-    fn subtoken_selection_parses() {
-        let value: SubtokenSelection = serde_json::from_str("\"first\"").unwrap();
-        assert_eq!(value, SubtokenSelection::First);
     }
 }

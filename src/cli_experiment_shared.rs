@@ -1518,12 +1518,15 @@ kind = "prompt-final"
             full.push(identity);
         }
 
-        let name = |index: usize| out_dir(dir, &format!("{mode}-{temperature}-shared-{index}"));
-        let base_out = name(0);
-        let co_outs: Vec<_> = (0..co_specs.len()).map(|index| name(1 + index)).collect();
-        let variant_outs: Vec<_> = (0..variant_specs.len())
-            .map(|index| name(1 + co_specs.len() + index))
-            .collect();
+        let outs = |pass: &str| {
+            let name = |index: usize| out_dir(dir, &format!("{mode}-{temperature}-{pass}-{index}"));
+            let co: Vec<_> = (0..co_specs.len()).map(|index| name(1 + index)).collect();
+            let variants: Vec<_> = (0..variant_specs.len())
+                .map(|index| name(1 + co_specs.len() + index))
+                .collect();
+            (name(0), co, variants)
+        };
+        let (base_out, co_outs, variant_outs) = outs("shared");
         let co_targets = targets(&co_specs, &co_texts, &co_outs);
         let variant_targets = targets(&variant_specs, &variant_texts, &variant_outs);
         let (base, co, variants) = execute_shared(
@@ -1574,12 +1577,7 @@ kind = "prompt-final"
         }
 
         // The same pass with every run decoding on its own.
-        let name = |index: usize| out_dir(dir, &format!("{mode}-{temperature}-seq-{index}"));
-        let base_out = name(0);
-        let co_outs: Vec<_> = (0..co_specs.len()).map(|index| name(1 + index)).collect();
-        let variant_outs: Vec<_> = (0..variant_specs.len())
-            .map(|index| name(1 + co_specs.len() + index))
-            .collect();
+        let (base_out, co_outs, variant_outs) = outs("seq");
         let co_targets = targets(&co_specs, &co_texts, &co_outs);
         let variant_targets = targets(&variant_specs, &variant_texts, &variant_outs);
         let (seq_base, seq_co, seq_variants) = execute_shared_sequential(
@@ -1911,15 +1909,9 @@ layers = {layers}
             with(11, std::slice::from_ref(&scale)),
             with(3, std::slice::from_ref(&zero)),
         ];
-        let own_sites = r#"# max_new_tokens = 6
-[[inputs]]
-id = "a"
-text = "w3 w17 w5 w40 w9 w22"
-
-[[inputs]]
-id = "b"
-text = "w8 w1 w33 w2"
-
+        let own_sites = format!(
+            r#"# max_new_tokens = 6
+{INPUTS}
 [[captures]]
 id = "late"
 site = "mlp-output"
@@ -1927,12 +1919,19 @@ layers = [1]
 [captures.tokens]
 kind = "generated-step"
 step = 1
-"#;
+"#
+        );
         let variant_refs: Vec<&str> = variants.iter().map(String::as_str).collect();
         // Make a token some generations produce (and others do not) the
         // end-of-sequence token, so the runs stop at different steps.
-        let (_, generated) =
-            check_all(&model, "reference", 0.0, &base, &[own_sites], &variant_refs);
+        let (_, generated) = check_all(
+            &model,
+            "reference",
+            0.0,
+            &base,
+            &[own_sites.as_str()],
+            &variant_refs,
+        );
         let prompt_words: std::collections::BTreeSet<u32> =
             [3, 17, 5, 40, 9, 22, 8, 1, 33, 2].into_iter().collect();
         let runs: Vec<Vec<u32>> = generated.into_iter().flatten().collect();
@@ -1972,7 +1971,7 @@ step = 1
                 mode,
                 temperature,
                 &base,
-                &[own_sites],
+                &[own_sites.as_str()],
                 &variant_refs,
             );
             let lengths: std::collections::BTreeSet<usize> =

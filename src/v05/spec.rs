@@ -945,20 +945,69 @@ overwrite = false
         );
     }
 
+    /// Single-field edits of `VALID_SPEC` that must fail resolution, with
+    /// the reported path (when pinned) and a message fragment.
     #[test]
-    fn unknown_schema_major_fails() {
-        let text = VALID_SPEC.replace("ember.experiment.v1", "ember.experiment.v2");
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        let error = raw.resolve().unwrap_err();
-        assert!(error.to_string().contains("unsupported experiment schema"));
-        assert_eq!(error.path, "schema");
-    }
-
-    #[test]
-    fn minor_schema_versions_fail_closed() {
-        let text = VALID_SPEC.replace("ember.experiment.v1", "ember.experiment.v1.1");
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        assert!(raw.resolve().is_err());
+    fn invalid_single_field_edits_fail_resolution() {
+        for (case, from, to, path, needle) in [
+            (
+                "unknown schema major",
+                "ember.experiment.v1",
+                "ember.experiment.v2",
+                Some("schema"),
+                "unsupported experiment schema",
+            ),
+            (
+                "minor schema versions fail closed",
+                "ember.experiment.v1",
+                "ember.experiment.v1.1",
+                None,
+                "",
+            ),
+            (
+                "unsupported execution mode fails before inference",
+                "mode = \"planned-fused\"",
+                "mode = \"quantum\"",
+                Some("execution.mode"),
+                "unknown --execution",
+            ),
+            (
+                "negative temperature",
+                "temperature = 0.0",
+                "temperature = -0.5",
+                Some("generation.temperature"),
+                "zero (greedy) or positive",
+            ),
+            (
+                "unsupported tensor format",
+                "safetensors",
+                "npy",
+                Some("output.tensor_format"),
+                "tensor format",
+            ),
+            (
+                "unsafe ids",
+                "name = \"layerwise-target-capture\"",
+                "name = \"../evil\"",
+                None,
+                "unsafe in paths",
+            ),
+            (
+                "non-per-layer site rejects explicit layers",
+                "site = \"residual-post-mlp\"\nlayers = \"all\"",
+                "site = \"logits\"\nlayers = [3]",
+                None,
+                "does not carry layers",
+            ),
+        ] {
+            let text = VALID_SPEC.replace(from, to);
+            let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
+            let error = raw.resolve().unwrap_err();
+            assert!(error.message.contains(needle), "{case}: {error}");
+            if let Some(path) = path {
+                assert_eq!(error.path, path, "{case}");
+            }
+        }
     }
 
     #[test]
@@ -1159,10 +1208,6 @@ directory = "runs/minimal"
         assert_eq!(resolved.output.tensor_format, "safetensors");
         assert!(!resolved.output.overwrite);
         assert!(!resolved.defaults.is_empty());
-        // resolved serialization is deterministic JSON
-        let a = serde_json::to_vec(&resolved).unwrap();
-        let b = serde_json::to_vec(&resolved).unwrap();
-        assert_eq!(a, b);
     }
 
     #[test]
@@ -1297,27 +1342,6 @@ directory = "runs/minimal"
     }
 
     #[test]
-    fn unsupported_execution_mode_fails_before_inference() {
-        let text = VALID_SPEC.replace("mode = \"planned-fused\"", "mode = \"quantum\"");
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        let error = raw.resolve().unwrap_err();
-        assert!(error.message.contains("unknown --execution"), "{}", error);
-        assert_eq!(error.path, "execution.mode");
-    }
-
-    #[test]
-    fn negative_temperature_fails_validation() {
-        let text = VALID_SPEC.replace("temperature = 0.0", "temperature = -0.5");
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        let error = raw.resolve().unwrap_err();
-        assert_eq!(error.path, "generation.temperature");
-        assert!(
-            error.message.contains("zero (greedy) or positive"),
-            "{error}"
-        );
-    }
-
-    #[test]
     fn deterministic_requires_greedy_or_seed() {
         let text = VALID_SPEC
             .replace("temperature = 0.0", "temperature = 0.7")
@@ -1329,15 +1353,6 @@ directory = "runs/minimal"
         let seeded = text.replace("seed = 0", "seed = 7");
         let raw = RawExperimentSpec::from_toml_str(&seeded).unwrap();
         assert!(raw.resolve().is_ok());
-    }
-
-    #[test]
-    fn unsupported_tensor_format_fails() {
-        let text = VALID_SPEC.replace("safetensors", "npy");
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        let error = raw.resolve().unwrap_err();
-        assert!(error.message.contains("tensor format"), "{}", error);
-        assert_eq!(error.path, "output.tensor_format");
     }
 
     #[test]
@@ -1390,24 +1405,5 @@ directory = "runs/intervention"
             "{}",
             error
         );
-    }
-
-    #[test]
-    fn unsafe_ids_fail() {
-        let text = VALID_SPEC.replace("name = \"layerwise-target-capture\"", "name = \"../evil\"");
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        let error = raw.resolve().unwrap_err();
-        assert!(error.message.contains("unsafe in paths"), "{}", error);
-    }
-
-    #[test]
-    fn non_per_layer_sites_reject_explicit_layers() {
-        let text = VALID_SPEC.replace(
-            "site = \"residual-post-mlp\"\nlayers = \"all\"",
-            "site = \"logits\"\nlayers = [3]",
-        );
-        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
-        let error = raw.resolve().unwrap_err();
-        assert!(error.message.contains("does not carry layers"), "{}", error);
     }
 }

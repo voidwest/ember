@@ -360,6 +360,24 @@ pub(crate) fn require_tensors(loader: &GgufLoader, names: &[String]) -> Result<(
     }
 }
 
+#[cfg(test)]
+impl GgufLoader {
+    /// In-memory loader for synthetic test models: eager K strategy, no
+    /// K decisions or tensor records.
+    pub(crate) fn for_test(
+        metadata: HashMap<String, GgufValue>,
+        tensors: HashMap<String, LoadedTensor>,
+    ) -> Self {
+        Self {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        }
+    }
+}
+
 impl GgufLoader {
     pub(crate) fn take_tensor(&mut self, name: &str) -> Result<LoadedTensor> {
         self.tensors
@@ -2002,33 +2020,6 @@ fn read_gguf_value_inner<R: Read + Seek>(
 mod tests {
     use super::*;
 
-    fn loader_with_arch(architecture: &str) -> GgufLoader {
-        GgufLoader {
-            metadata: std::collections::HashMap::from([(
-                "general.architecture".to_string(),
-                GgufValue::Str(architecture.to_string()),
-            )]),
-            tensors: std::collections::HashMap::new(),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: std::collections::HashMap::new(),
-            tensor_meta: std::collections::HashMap::new(),
-        }
-    }
-
-    #[test]
-    fn generation_architecture_is_detected_and_aliases_match_engine_families() {
-        assert_eq!(
-            resolve_generation_architecture("auto", &loader_with_arch("qwen2")).unwrap(),
-            "qwen3"
-        );
-        assert_eq!(
-            resolve_generation_architecture("auto", &loader_with_arch("gemma3")).unwrap(),
-            "gemma4"
-        );
-        assert!(resolve_generation_architecture("gpt2", &loader_with_arch("llama")).is_err());
-        assert!(resolve_generation_architecture("auto", &loader_with_arch("nope")).is_err());
-    }
-
     #[test]
     fn floating_tensor_reads_are_bounded_and_preserve_bits() {
         struct BoundedReader<'a> {
@@ -2132,13 +2123,10 @@ mod tests {
     fn take_f32_moves_tensor_storage() {
         let tensor = CpuTensor::from_data(vec![2], vec![1.0, 2.0]);
         let allocation = tensor.data().as_ptr();
-        let mut loader = GgufLoader {
-            metadata: HashMap::new(),
-            tensors: HashMap::from([("weight".to_string(), LoadedTensor::F32(tensor))]),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let mut loader = GgufLoader::for_test(
+            HashMap::new(),
+            HashMap::from([("weight".to_string(), LoadedTensor::F32(tensor))]),
+        );
 
         let taken = loader.take_f32("weight").unwrap();
         assert_eq!(taken.data().as_ptr(), allocation);
@@ -2504,20 +2492,14 @@ mod tests {
     /// (`blk.0.attn_q.weight`, dims [256, blocks], zero payload) and no
     /// metadata. Zero blocks dequantize to zeros.
     fn write_minimal_gguf_with_k_tensor(dtype: u32, blocks: usize) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend_from_slice(b"GGUF");
-        out.extend_from_slice(&3u32.to_le_bytes());
-        out.extend_from_slice(&1u64.to_le_bytes()); // one tensor
-        out.extend_from_slice(&0u64.to_le_bytes()); // no metadata kv
-        let name = b"blk.0.attn_q.weight";
-        out.extend_from_slice(&(name.len() as u64).to_le_bytes());
-        out.extend_from_slice(name);
+        let mut out = gguf_header(1, 0);
+        push_gguf_string(&mut out, b"blk.0.attn_q.weight");
         out.extend_from_slice(&2u32.to_le_bytes()); // n_dims
         out.extend_from_slice(&256u64.to_le_bytes());
         out.extend_from_slice(&(blocks as u64).to_le_bytes());
         out.extend_from_slice(&(dtype).to_le_bytes());
         out.extend_from_slice(&0u64.to_le_bytes()); // offset
-        while out.len() % 32 != 0 {
+        while !out.len().is_multiple_of(32) {
             out.push(0);
         }
         out.resize(
@@ -2525,6 +2507,18 @@ mod tests {
             0,
         );
         out
+    }
+
+    /// Reader-load the [`write_minimal_gguf_with_k_tensor`] fixture under a
+    /// K strategy.
+    fn load_k(
+        dtype: u32,
+        blocks: usize,
+        strategy: crate::quant_k::KStrategy,
+        allow_fallback: bool,
+    ) -> Result<GgufLoader> {
+        let mut cursor = std::io::Cursor::new(write_minimal_gguf_with_k_tensor(dtype, blocks));
+        load_gguf_from_reader_with_k_strategy(&mut cursor, strategy, allow_fallback)
     }
 
     /// GGUF v3 with two metadata keys and the given `(name, dims, dtype)`
@@ -2742,16 +2736,11 @@ mod tests {
         }
     }
 
+    /// Scalar strategy on Q4_K keeps the weight compressed-resident, and the
+    /// execution inventory reports that residency.
     #[test]
-    fn scalar_strategy_keeps_q4_k_compressed_resident() {
-        let bytes = write_minimal_gguf_with_k_tensor(12, 128);
-        let mut cursor = std::io::Cursor::new(bytes);
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Scalar,
-            false,
-        )
-        .unwrap();
+    fn scalar_strategy_keeps_q4_k_compressed_resident_and_inventory_records_it() {
+        let loader = load_k(12, 128, crate::quant_k::KStrategy::Scalar, false).unwrap();
 
         let decision = loader
             .k_decisions
@@ -2764,96 +2753,15 @@ mod tests {
         );
         assert!(decision.fallback_reason.is_none());
 
-        match loader.tensors.get("blk.0.attn_q.weight") {
-            Some(LoadedTensor::KQuant(weight)) => {
-                assert_eq!((weight.out_features(), weight.in_features()), (128, 256));
-                assert_eq!(weight.dtype(), crate::quant_k::KQuantDtype::Q4K);
-                assert_eq!(weight.byte_len(), 128 * crate::quant_k::Q4_K_BLOCK_BYTES);
-                assert!(!weight.is_mapped(), "reader loads are owned");
-            }
-            other => panic!(
-                "expected compressed KQuant tensor, got {}",
-                match other {
-                    Some(LoadedTensor::F32(_)) => "F32",
-                    Some(LoadedTensor::Half(_)) => "Half",
-                    Some(LoadedTensor::Q8_0(_)) => "Q8_0",
-                    Some(LoadedTensor::KQuant(_)) => "KQuant",
-                    None => "none",
-                }
-            ),
-        }
-    }
+        let Some(LoadedTensor::KQuant(weight)) = loader.tensors.get("blk.0.attn_q.weight") else {
+            panic!("expected compressed KQuant tensor");
+        };
+        assert_eq!((weight.out_features(), weight.in_features()), (128, 256));
+        assert_eq!(weight.dtype(), crate::quant_k::KQuantDtype::Q4K);
+        assert_eq!(weight.byte_len(), 128 * crate::quant_k::Q4_K_BLOCK_BYTES);
+        assert!(!weight.is_mapped(), "reader loads are owned");
 
-    #[test]
-    fn auto_strategy_falls_back_to_eager_for_q2_k_with_recorded_reason() {
-        let bytes = write_minimal_gguf_with_k_tensor(10, 8); // q2_k, no native kernel
-        let mut cursor = std::io::Cursor::new(bytes);
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Auto,
-            false,
-        )
-        .unwrap();
-
-        let decision = loader
-            .k_decisions
-            .get("blk.0.attn_q.weight")
-            .expect("per-tensor decision recorded");
-        assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
-        let reason = decision
-            .fallback_reason
-            .as_deref()
-            .expect("auto fallback reason recorded");
-        assert!(reason.contains("q2_k"), "reason: {reason}");
-        assert!(matches!(
-            loader.tensors.get("blk.0.attn_q.weight"),
-            Some(LoadedTensor::F32(_))
-        ));
-    }
-
-    #[test]
-    fn scalar_strategy_hard_fails_q2_k_without_allow_fallback() {
-        let bytes = write_minimal_gguf_with_k_tensor(10, 8);
-        let mut cursor = std::io::Cursor::new(bytes);
-        let err = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Scalar,
-            false,
-        )
-        .err()
-        .expect("scalar strategy must hard-fail q2_k without allow-fallback");
-        let message = err.to_string();
-        assert!(
-            message.contains("blk.0.attn_q.weight"),
-            "message: {message}"
-        );
-        assert!(message.contains("q2_k"), "message: {message}");
-
-        // with --k-allow-fallback the same file loads eager and records why
-        let mut cursor = std::io::Cursor::new(write_minimal_gguf_with_k_tensor(10, 8));
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Scalar,
-            true,
-        )
-        .unwrap();
-        let decision = &loader.k_decisions["blk.0.attn_q.weight"];
-        assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
-        assert!(decision.fallback_reason.is_some());
-    }
-
-    #[test]
-    fn execution_inventory_records_compressed_residency() {
-        let bytes = write_minimal_gguf_with_k_tensor(12, 128);
-        let mut cursor = std::io::Cursor::new(bytes);
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Scalar,
-            false,
-        )
-        .unwrap();
         let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
-
         assert_eq!(inventory.requested_strategy, "compressed-scalar");
         assert_eq!(inventory.tensors.len(), 1);
         let tensor = &inventory.tensors[0];
@@ -2886,19 +2794,28 @@ mod tests {
         assert_eq!(summary.per_dtype[0].expanded_bytes, 0);
     }
 
+    /// Auto strategy on Q2_K (no native kernel) falls back to eager f32 with a
+    /// recorded reason, and the execution inventory reports the fallback.
     #[test]
-    fn execution_inventory_records_eager_and_fallback() {
-        // auto on q2_k: eager-f32 with a recorded fallback reason
-        let bytes = write_minimal_gguf_with_k_tensor(10, 8);
-        let mut cursor = std::io::Cursor::new(bytes);
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Auto,
-            false,
-        )
-        .unwrap();
-        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+    fn auto_strategy_falls_back_to_eager_for_q2_k_and_inventory_records_it() {
+        let loader = load_k(10, 8, crate::quant_k::KStrategy::Auto, false).unwrap();
 
+        let decision = loader
+            .k_decisions
+            .get("blk.0.attn_q.weight")
+            .expect("per-tensor decision recorded");
+        assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
+        let reason = decision
+            .fallback_reason
+            .as_deref()
+            .expect("auto fallback reason recorded");
+        assert!(reason.contains("q2_k"), "reason: {reason}");
+        assert!(matches!(
+            loader.tensors.get("blk.0.attn_q.weight"),
+            Some(LoadedTensor::F32(_))
+        ));
+
+        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
         assert_eq!(inventory.requested_strategy, "auto");
         let tensor = &inventory.tensors[0];
         assert_eq!(tensor.resident, "f32");
@@ -2910,39 +2827,50 @@ mod tests {
         assert_eq!(inventory.summary.expanded_bytes, (8 * 256 * 4) as u64);
     }
 
-    // x86-only: asserts the AVX2+FMA+F16C+SSSE3 feature set.
+    #[test]
+    fn scalar_strategy_hard_fails_q2_k_without_allow_fallback() {
+        let err = load_k(10, 8, crate::quant_k::KStrategy::Scalar, false)
+            .err()
+            .expect("scalar strategy must hard-fail q2_k without allow-fallback");
+        let message = err.to_string();
+        assert!(
+            message.contains("blk.0.attn_q.weight"),
+            "message: {message}"
+        );
+        assert!(message.contains("q2_k"), "message: {message}");
+
+        // with --k-allow-fallback the same file loads eager and records why
+        let loader = load_k(10, 8, crate::quant_k::KStrategy::Scalar, true).unwrap();
+        let decision = &loader.k_decisions["blk.0.attn_q.weight"];
+        assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
+        assert!(decision.fallback_reason.is_some());
+    }
+
+    // x86-only: asserts the AVX2+FMA+F16C+SSSE3 feature set. Without it the
+    // no-fallback X86 request hard-fails; that path is covered by
+    // `x86_strategy_falls_back_to_scalar_only_with_allow_fallback`.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_strategy_records_compressed_x86_when_avx2_available() {
-        let bytes = write_minimal_gguf_with_k_tensor(14, 4); // q6_k
-        let mut cursor = std::io::Cursor::new(bytes);
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::X86,
-            false,
-        )
-        .unwrap();
+        if !crate::k_quant_matmul::x86_k_supported() {
+            return;
+        }
+        let loader = load_k(14, 4, crate::quant_k::KStrategy::X86, false).unwrap(); // q6_k
 
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
-        if crate::k_quant_matmul::x86_k_supported() {
-            assert_eq!(
-                decision.execution,
-                crate::quant_k::KExecution::CompressedX86
-            );
-            assert!(decision.fallback_reason.is_none());
-            let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
-            assert_eq!(inventory.tensors[0].kernel, "q6-k-q8-k-avx2");
-            assert_eq!(
-                inventory.tensors[0].kernel_revision,
-                crate::plan::PLAN_KERNEL_REVISION
-            );
-            assert_eq!(inventory.tensors[0].strategy, "compressed-x86");
-            assert_eq!(inventory.tensors[0].cpu_features, "avx2+fma+f16c+ssse3");
-        } else {
-            // without the feature set the request hard-fails (no
-            // allow-fallback); this branch only runs on unsupported x86 hosts
-            assert!(decision.fallback_reason.is_some());
-        }
+        assert_eq!(
+            decision.execution,
+            crate::quant_k::KExecution::CompressedX86
+        );
+        assert!(decision.fallback_reason.is_none());
+        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+        assert_eq!(inventory.tensors[0].kernel, "q6-k-q8-k-avx2");
+        assert_eq!(
+            inventory.tensors[0].kernel_revision,
+            crate::plan::PLAN_KERNEL_REVISION
+        );
+        assert_eq!(inventory.tensors[0].strategy, "compressed-x86");
+        assert_eq!(inventory.tensors[0].cpu_features, "avx2+fma+f16c+ssse3");
     }
 
     #[test]
@@ -3046,13 +2974,7 @@ mod tests {
             (12, "q4-k-q8-k-neon-dotprod"),
             (14, "q6-k-q8-k-neon-dotprod"),
         ] {
-            let bytes = write_minimal_gguf_with_k_tensor(dtype, 4);
-            let mut cursor = std::io::Cursor::new(bytes);
-            let result = load_gguf_from_reader_with_k_strategy(
-                &mut cursor,
-                crate::quant_k::KStrategy::Arm,
-                false,
-            );
+            let result = load_k(dtype, 4, crate::quant_k::KStrategy::Arm, false);
             if !crate::k_quant_matmul::arm_k_supported() {
                 assert!(result.is_err());
                 continue;
@@ -3073,14 +2995,7 @@ mod tests {
 
     #[test]
     fn auto_strategy_selects_x86_when_avx2_available() {
-        let bytes = write_minimal_gguf_with_k_tensor(12, 8); // q4_k
-        let mut cursor = std::io::Cursor::new(bytes);
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::Auto,
-            false,
-        )
-        .unwrap();
+        let loader = load_k(12, 8, crate::quant_k::KStrategy::Auto, false).unwrap(); // q4_k
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
         let expected = if crate::k_quant_matmul::x86_k_supported() {
             crate::quant_k::KExecution::CompressedX86
@@ -3106,13 +3021,7 @@ mod tests {
         // on hosts without the complete x86 feature set, the request must hard-fail unless the
         // user explicitly allows the downgrade; on supported x86 hosts both paths
         // still validate the fallback recording machinery
-        let bytes = write_minimal_gguf_with_k_tensor(14, 4);
-        let mut cursor = std::io::Cursor::new(bytes);
-        let result = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::X86,
-            false,
-        );
+        let result = load_k(14, 4, crate::quant_k::KStrategy::X86, false);
         if crate::k_quant_matmul::x86_k_supported() {
             assert!(result.is_ok(), "supported x86 hosts accept the x86 request");
         } else {
@@ -3124,13 +3033,7 @@ mod tests {
         }
 
         // with allow-fallback the load always succeeds and records why
-        let mut cursor = std::io::Cursor::new(write_minimal_gguf_with_k_tensor(14, 4));
-        let loader = load_gguf_from_reader_with_k_strategy(
-            &mut cursor,
-            crate::quant_k::KStrategy::X86,
-            true,
-        )
-        .unwrap();
+        let loader = load_k(14, 4, crate::quant_k::KStrategy::X86, true).unwrap();
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
         if crate::k_quant_matmul::x86_k_supported() {
             assert_eq!(

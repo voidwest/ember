@@ -312,53 +312,34 @@ mod tests {
 
     #[test]
     fn k_quant_decisions_match_the_shared_predicate() {
-        // Large projections parallelize; tiny ones and single-thread runs do not.
-        let big = schedule_matvec(
-            &record(
-                "blk.0.ffn_down.weight",
-                [2048, 8192],
-                KernelId::KQuantAvx2Q4K,
-            ),
-            true,
-            4,
-        );
+        let decide = |name: &str, shape: [usize; 2], kernel, requested, threads| {
+            schedule_matvec(&record(name, shape, kernel), requested, threads)
+        };
+        let (down, q4k) = ("blk.0.ffn_down.weight", KernelId::KQuantAvx2Q4K);
+        // Large projections parallelize; tiny ones, single-thread runs,
+        // unrequested parallelism and f32 records do not.
+        let big = decide(down, [2048, 8192], q4k, true, 4);
         assert_eq!(big.scheduled, "column-parallel-rayon");
-        let small = schedule_matvec(
-            &record("blk.0.tiny.weight", [256, 256], KernelId::KQuantAvx2Q4K),
-            true,
-            4,
-        );
-        assert_eq!(small.scheduled, "serial");
-        let single = schedule_matvec(
-            &record(
-                "blk.0.ffn_down.weight",
-                [2048, 8192],
-                KernelId::KQuantAvx2Q4K,
-            ),
-            true,
-            1,
-        );
-        assert_eq!(single.scheduled, "serial");
-        let unrequested = schedule_matvec(
-            &record(
-                "blk.0.ffn_down.weight",
-                [2048, 8192],
-                KernelId::KQuantAvx2Q4K,
-            ),
-            false,
-            4,
-        );
-        assert_eq!(unrequested.scheduled, "serial");
         assert_eq!(big.macs, 2048 * 8192);
-    }
-
-    #[test]
-    fn f32_records_are_serial() {
-        let entry = schedule_matvec(
-            &record("blk.0.dense.weight", [2048, 2048], KernelId::EagerF32),
-            true,
-            8,
-        );
-        assert_eq!(entry.scheduled, "serial");
+        for (label, entry) in [
+            (
+                "small",
+                decide("blk.0.tiny.weight", [256, 256], q4k, true, 4),
+            ),
+            ("single", decide(down, [2048, 8192], q4k, true, 1)),
+            ("unrequested", decide(down, [2048, 8192], q4k, false, 4)),
+            (
+                "f32",
+                decide(
+                    "blk.0.dense.weight",
+                    [2048, 2048],
+                    KernelId::EagerF32,
+                    true,
+                    8,
+                ),
+            ),
+        ] {
+            assert_eq!(entry.scheduled, "serial", "{label}");
+        }
     }
 }

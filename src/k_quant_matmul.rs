@@ -1765,15 +1765,24 @@ pub fn matmul_k_q8_into(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::k_matmul::tests::{seeded_activations, seeded_q4_blocks, seeded_q6_blocks};
+    use crate::k_matmul::tests::{seeded_activations, seeded_k_blocks};
 
     fn weight(dtype: KQuantDtype, out: usize, input: usize, seed: u64) -> KQuantWeight {
-        let blocks = out * (input / QK_K);
-        let bytes = match dtype {
-            KQuantDtype::Q4K => seeded_q4_blocks(blocks, seed),
-            KQuantDtype::Q6K => seeded_q6_blocks(blocks, seed),
-        };
+        let bytes = seeded_k_blocks(dtype, out * (input / QK_K), seed);
         KQuantWeight::try_new(bytes, [out, input], dtype).unwrap()
+    }
+
+    fn bits(values: &[f32]) -> Vec<u32> {
+        values.iter().map(|value| value.to_bits()).collect()
+    }
+
+    /// The scalar tier plus, where the host supports it, the x86 tier.
+    fn tiers(scalar: KQuantWeight) -> Vec<(&'static str, KQuantWeight)> {
+        let mut tiers = vec![("scalar", scalar.clone())];
+        if x86_k_supported() {
+            tiers.push(("x86", scalar.with_execution(KExecution::CompressedX86)));
+        }
+        tiers
     }
 
     /// A single-token matvec issued outside a Rayon pool takes the decode
@@ -1795,7 +1804,6 @@ mod tests {
                 matmul_k_q8_into(&src, 1, &weight, &mut serial, false).unwrap();
                 let mut team = initial.clone();
                 matmul_k_q8_into(&src, 1, &weight, &mut team, true).unwrap();
-                let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
                 assert_eq!(bits(&team), bits(&serial), "{dtype:?} outputs={outputs}");
             }
         }
@@ -1880,7 +1888,6 @@ mod tests {
                     for parallel in [false, true] {
                         let mut actual = initial.clone();
                         matmul_k_q8_into(&src, rows, &arm, &mut actual, parallel).unwrap();
-                        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
                         assert_eq!(
                             bits(&actual),
                             bits(&expected),
@@ -2048,14 +2055,9 @@ mod tests {
                 assert!(unsafe { super::x86::quantize_q8_k_into(&values, &mut packed) }.is_err());
             }
 
-            let scalar = weight(KQuantDtype::Q4K, 3, 2 * QK_K, 0x51);
-            let mut tiers = vec![("scalar", scalar.clone())];
-            if x86_k_supported() {
-                tiers.push(("x86", scalar.with_execution(KExecution::CompressedX86)));
-            }
             let mut full_src = vec![0.25; 4 * QK_K];
             full_src[3 * QK_K + 17] = non_finite;
-            for (tier, weight) in tiers {
+            for (tier, weight) in tiers(weight(KQuantDtype::Q4K, 3, 2 * QK_K, 0x51)) {
                 for parallel in [false, true] {
                     let mut dst = [1.0, -0.0, 7.5, -2.0, 3.0, 9.0];
                     let before = dst.map(f32::to_bits);
@@ -2246,12 +2248,8 @@ mod tests {
     fn canonical_matmul_accumulates_for_fused_output_projection() {
         for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
             let scalar = weight(dtype, 5, 512, 0xf5 + dtype.gguf_code() as u64);
-            let mut tiers = vec![("scalar", scalar.clone())];
-            if x86_k_supported() {
-                tiers.push(("x86", scalar.with_execution(KExecution::CompressedX86)));
-            }
             let src = seeded_activations(512, 0x55);
-            for (tier, weight) in tiers {
+            for (tier, weight) in tiers(scalar) {
                 let mut projection = vec![0.0; 5];
                 matmul_k_q8_into(&src, 1, &weight, &mut projection, false).unwrap();
                 let initial = [2.0, -1.0, 0.25, -0.0, 7.0];
@@ -2309,16 +2307,7 @@ mod tests {
                             }
                         }
 
-                        let mut tiers = vec![("scalar", scalar_weight.clone())];
-                        if x86_k_supported() {
-                            tiers.push((
-                                "x86",
-                                scalar_weight
-                                    .clone()
-                                    .with_execution(KExecution::CompressedX86),
-                            ));
-                        }
-                        for (tier, weight) in tiers {
+                        for (tier, weight) in tiers(scalar_weight) {
                             let mut actual = initial.clone();
                             matmul_k_q8_into(&src, rows, &weight, &mut actual, false).unwrap();
                             for (index, (&actual, &expected)) in
@@ -2348,10 +2337,11 @@ mod tests {
             let input_features = 512;
             let output_features = 9;
             let blocks = output_features * input_features / QK_K;
-            let mut bytes = match dtype {
-                KQuantDtype::Q4K => seeded_q4_blocks(blocks, 0x41),
-                KQuantDtype::Q6K => seeded_q6_blocks(blocks, 0x61),
+            let seed = match dtype {
+                KQuantDtype::Q4K => 0x41,
+                KQuantDtype::Q6K => 0x61,
             };
+            let mut bytes = seeded_k_blocks(dtype, blocks, seed);
             for block in bytes.chunks_exact_mut(dtype.block_bytes()) {
                 match dtype {
                     KQuantDtype::Q4K => block[..4].fill(0),
@@ -2360,26 +2350,16 @@ mod tests {
             }
             let scalar_weight =
                 KQuantWeight::try_new(bytes, [output_features, input_features], dtype).unwrap();
-            let mut tiers = vec![scalar_weight.clone()];
-            if x86_k_supported() {
-                tiers.push(scalar_weight.with_execution(KExecution::CompressedX86));
-            }
             let src = seeded_activations(rows * input_features, 0x71);
-            for weight in tiers {
+            for (_, weight) in tiers(scalar_weight) {
                 let expected: Vec<f32> = (0..rows * output_features)
                     .map(|index| index as f32 * 0.25 - 3.0)
                     .collect();
                 let mut actual = expected.clone();
                 matmul_k_q8_into(&src, rows, &weight, &mut actual, false).unwrap();
                 assert_eq!(
-                    actual
-                        .iter()
-                        .map(|value| value.to_bits())
-                        .collect::<Vec<_>>(),
-                    expected
-                        .iter()
-                        .map(|value| value.to_bits())
-                        .collect::<Vec<_>>(),
+                    bits(&actual),
+                    bits(&expected),
                     "{dtype:?} {:?}",
                     weight.execution()
                 );
@@ -2392,11 +2372,7 @@ mod tests {
         for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
             let rows = 3;
             let scalar = weight(dtype, 7, 512, 0x31 + dtype.gguf_code() as u64);
-            let mut tiers = vec![("scalar", scalar.clone())];
-            if x86_k_supported() {
-                tiers.push(("x86", scalar.with_execution(KExecution::CompressedX86)));
-            }
-            for (tier, weight) in tiers {
+            for (tier, weight) in tiers(scalar) {
                 let src = seeded_activations(rows * weight.in_features(), 0x91);
                 let mut dst = vec![0.0; rows * weight.out_features()];
                 matmul_k_q8_into(&src, rows, &weight, &mut dst, false).unwrap();
@@ -2421,15 +2397,8 @@ mod tests {
         for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
             let rows = 7;
             let scalar_weight = weight(dtype, 769, 512, 42 + dtype.gguf_code() as u64);
-            let mut tiers = vec![("scalar", scalar_weight.clone())];
-            if x86_k_supported() {
-                tiers.push((
-                    "x86",
-                    scalar_weight.with_execution(KExecution::CompressedX86),
-                ));
-            }
             let src = seeded_activations(rows * 512, 7);
-            for (tier, weight) in tiers {
+            for (tier, weight) in tiers(scalar_weight) {
                 let mut serial: Vec<f32> = (0..rows * weight.out_features())
                     .map(|index| (index % 17) as f32 * 0.125 - 1.0)
                     .collect();
@@ -2492,26 +2461,8 @@ mod tests {
                 || matmul_k_q8_into(&src_b, rows, &weight, &mut dst_b, true).unwrap(),
             );
         });
-        assert_eq!(
-            dst_a
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>(),
-            expected_a
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            dst_b
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>(),
-            expected_b
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(bits(&dst_a), bits(&expected_a));
+        assert_eq!(bits(&dst_b), bits(&expected_b));
     }
 
     #[test]
@@ -2544,49 +2495,30 @@ mod tests {
     }
 
     #[test]
-    fn q4_presplit_dot_four_rows_matches_packed() {
+    fn presplit_dot_four_rows_matches_packed() {
         if !x86_k_supported() {
             return;
         }
-        let w_packed =
-            weight(KQuantDtype::Q4K, 5, 512, 0x5a).with_execution(KExecution::CompressedX86);
-        let w_presplit = w_packed.clone().with_presplit();
-        let src = seeded_activations(4 * 512, 0x5b);
-        let mut packed = Vec::new();
-        quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
-        for column in 0..w_packed.out_features() {
-            let expected = dot_four_rows(&w_packed, column, &packed).unwrap();
-            let actual = dot_four_rows(&w_presplit, column, &packed).unwrap();
-            for row in 0..4 {
-                assert_eq!(
-                    expected[row].to_bits(),
-                    actual[row].to_bits(),
-                    "column {column} row {row}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn q6_presplit_dot_four_rows_matches_packed() {
-        if !x86_k_supported() {
-            return;
-        }
-        let w_packed =
-            weight(KQuantDtype::Q6K, 5, 512, 0x6a).with_execution(KExecution::CompressedX86);
-        let w_presplit = w_packed.clone().with_presplit();
-        let src = seeded_activations(4 * 512, 0x6b);
-        let mut packed = Vec::new();
-        quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
-        for column in 0..w_packed.out_features() {
-            let expected = dot_four_rows(&w_packed, column, &packed).unwrap();
-            let actual = dot_four_rows(&w_presplit, column, &packed).unwrap();
-            for row in 0..4 {
-                assert_eq!(
-                    expected[row].to_bits(),
-                    actual[row].to_bits(),
-                    "column {column} row {row}"
-                );
+        for (dtype, weight_seed, src_seed) in [
+            (KQuantDtype::Q4K, 0x5a, 0x5b),
+            (KQuantDtype::Q6K, 0x6a, 0x6b),
+        ] {
+            let w_packed =
+                weight(dtype, 5, 512, weight_seed).with_execution(KExecution::CompressedX86);
+            let w_presplit = w_packed.clone().with_presplit();
+            let src = seeded_activations(4 * 512, src_seed);
+            let mut packed = Vec::new();
+            quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
+            for column in 0..w_packed.out_features() {
+                let expected = dot_four_rows(&w_packed, column, &packed).unwrap();
+                let actual = dot_four_rows(&w_presplit, column, &packed).unwrap();
+                for row in 0..4 {
+                    assert_eq!(
+                        expected[row].to_bits(),
+                        actual[row].to_bits(),
+                        "{dtype:?} column {column} row {row}"
+                    );
+                }
             }
         }
     }

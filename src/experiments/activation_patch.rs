@@ -488,10 +488,11 @@ fn load_validated_tensor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::{DispatchObservation, DispatchPath, ManifestExperiment};
-    use crate::experiments::{CaptureSink, ModelFamily, TracingState};
+    use crate::artifact::{DispatchObservation, DispatchPath};
+    use crate::experiments::test_support::{CaptureArtifactBuilder, CAPTURE_MODEL_SHA256};
+    use crate::experiments::{ModelFamily, TracingState};
 
-    const MODEL_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const MODEL_SHA256: &str = CAPTURE_MODEL_SHA256;
     const TOKENIZER_SHA256: &str =
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -506,76 +507,25 @@ mod tests {
         .with_provenance(Some(MODEL_SHA256), Some(TOKENIZER_SHA256))
     }
 
-    fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("ember_patch_test_{}_{name}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// Build a tiny capture artifact with one prefill + two decode records at
-    /// layer 1, stage after-mlp, with recognizable values.
+    /// A capture artifact with one prefill + two decode records at layer 1,
+    /// stage after-mlp, with recognizable values; returns the manifest and
+    /// the source input token ids.
     fn make_source_artifact(name: &str) -> (std::path::PathBuf, Vec<u32>) {
-        let dir = temp_dir(name);
-        let config_path = dir.join("capture.toml");
-        std::fs::write(
-            &config_path,
-            format!(
-                "schema_version = 1\noutput_dir = {:?}\nlayers = [1]\nstages = [\"after-mlp\"]\nphase = \"both\"\n",
-                dir.to_str().unwrap()
-            ),
-        )
-        .unwrap();
-        let mut sink = CaptureSink::from_toml_path(
-            config_path.to_str().unwrap(),
-            "patch test prompt",
-            1,
-            serde_json::json!({}),
-            Some(MODEL_SHA256.to_string()),
-            Some(TOKENIZER_SHA256.to_string()),
-            serde_json::json!({}),
-        )
-        .unwrap();
-        let model = patch_model(4, 8);
-        sink.on_model_loaded(&model).unwrap();
-
-        let prefill =
-            ExecutionContext::new(model, ExecutionPhase::Prefill, 0, 2, TracingState::Disabled);
-        let mut prefill_values = vec![1.0f32; 16];
-        let prefill_tensor = TensorAccess::new(2, 8, &mut prefill_values);
-        sink.after_mlp(&prefill, 1, &prefill_tensor, DispatchPath::Generic)
-            .unwrap();
-
+        let mut builder =
+            CaptureArtifactBuilder::new(name, &["after-mlp"], 2, Some(TOKENIZER_SHA256));
+        builder.record_prefill(vec![1.0f32; 16]);
         for position in [2usize, 3] {
-            let decode = ExecutionContext::new(
-                model,
-                ExecutionPhase::Decode,
-                position,
-                1,
-                TracingState::Disabled,
-            );
-            let mut decode_values = vec![(position as f32) * 10.0; 8];
-            let decode_tensor = TensorAccess::new(1, 8, &mut decode_values);
-            sink.after_mlp(&decode, 1, &decode_tensor, DispatchPath::Fast)
-                .unwrap();
+            builder.record_decode(position, vec![(position as f32) * 10.0; 8]);
         }
-
-        let generation =
-            GenerationContext::new(model, 2, 2, 2, TracingState::Disabled, &[1, 2], &[3, 4]);
-        let manifest_path = sink
-            .finalize(
-                &generation,
-                ManifestExperiment {
-                    name: "none".to_string(),
-                    arguments: serde_json::Value::Null,
-                },
-                vec![DispatchObservation {
-                    phase: "prefill".to_string(),
-                    dispatch: DispatchPath::Generic,
-                }],
-            )
-            .unwrap();
-        (manifest_path, vec![1, 2])
+        let input_ids = builder.input_ids().to_vec();
+        let manifest_path = builder.finalize(
+            &[3, 4],
+            vec![DispatchObservation {
+                phase: "prefill".to_string(),
+                dispatch: DispatchPath::Generic,
+            }],
+        );
+        (manifest_path, input_ids)
     }
 
     #[test]

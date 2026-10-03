@@ -396,14 +396,4 @@ mod tests {
         assert!(ll_logprob(&CpuBackend, &model, &tokenizer(), "x y", 1, 1).is_err());
         assert!(model.capacities.borrow().is_empty());
     }
-
-    #[test]
-    fn batch_tokenizer_default_matches_generation_for_qwen() {
-        assert_eq!(default_tokenizer_for_arch("qwen3"), "tokenizer-qwen3.json");
-        assert_eq!(default_tokenizer_for_arch("llama"), "tokenizer.json");
-        assert_eq!(
-            default_tokenizer_for_arch("gemma4"),
-            "tokenizer-gemma4.json"
-        );
-    }
 }

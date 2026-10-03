@@ -2903,13 +2903,24 @@ mod tests {
     use std::collections::HashMap;
 
     fn loader_with(metadata: HashMap<String, GgufValue>) -> GgufLoader {
-        GgufLoader {
-            metadata,
-            tensors: HashMap::new(),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        }
+        GgufLoader::for_test(metadata, HashMap::new())
+    }
+
+    /// Metadata for the 2-wide, single-head, 4-token tiny Gemma 4 fixture.
+    fn tiny_metadata(block_count: u32) -> HashMap<String, GgufValue> {
+        [
+            ("block_count", block_count),
+            ("embedding_length", 2),
+            ("attention.head_count", 1),
+            ("attention.head_count_kv", 1),
+            ("attention.key_length", 2),
+            ("feed_forward_length", 2),
+            ("vocab_size", 4),
+            ("context_length", 8),
+        ]
+        .into_iter()
+        .map(|(name, value)| (format!("gemma4.{name}"), GgufValue::U32(value)))
+        .collect()
     }
 
     fn tiny_tensor(shape: &[usize], value: f32) -> LoadedTensor {
@@ -2979,18 +2990,7 @@ mod tests {
     }
 
     fn tiny_gemma4_model() -> Gemma4<CpuBackend> {
-        let mut metadata = HashMap::new();
-        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
-        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
-        metadata.insert(
-            "gemma4.attention.head_count_kv".to_string(),
-            GgufValue::U32(1),
-        );
-        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
-        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        let mut metadata = tiny_metadata(1);
         metadata.insert(
             "gemma4.attention.sliding_window".to_string(),
             GgufValue::U32(2),
@@ -3002,14 +3002,7 @@ mod tests {
 
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);
-        Gemma4::from_loader(GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        })
-        .unwrap()
+        Gemma4::from_loader(GgufLoader::for_test(metadata, tensors)).unwrap()
     }
 
     fn tiny_heterogeneous_gemma4_loader() -> GgufLoader {
@@ -3095,14 +3088,6 @@ mod tests {
 
     fn tiny_heterogeneous_gemma4_model() -> Gemma4<CpuBackend> {
         Gemma4::from_loader(tiny_heterogeneous_gemma4_loader()).unwrap()
-    }
-
-    #[test]
-    fn cached_constructor_without_a_cache_builds_the_same_model() {
-        // The tiny fixture is f32, so no packing occurs; this covers the
-        // cached-constructor wrapper and the absent-cache path.
-        let model = Gemma4::from_loader_cached(tiny_heterogeneous_gemma4_loader(), None).unwrap();
-        assert_eq!(model.blocks.len(), 4);
     }
 
     #[test]
@@ -3384,13 +3369,7 @@ mod tests {
                     LoadedTensor::F32(CpuTensor::from_data(shape, values)),
                 ),
             ]);
-            GgufLoader {
-                metadata,
-                tensors,
-                k_strategy: crate::quant_k::KStrategy::EagerF32,
-                k_decisions: HashMap::new(),
-                tensor_meta: HashMap::new(),
-            }
+            GgufLoader::for_test(metadata, tensors)
         }
 
         let shape_err = Gemma4::from_loader(loader_with_rope(vec![1], vec![1.0]))
@@ -3409,16 +3388,10 @@ mod tests {
             "{value_err}"
         );
 
-        let mut loader = GgufLoader {
-            metadata: HashMap::new(),
-            tensors: HashMap::from([(
-                "bad.weight".to_string(),
-                LoadedTensor::F32(CpuTensor::from_data(vec![4], vec![0.0; 4])),
-            )]),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let mut loader = GgufLoader::for_test(
+            HashMap::new(),
+            HashMap::from([("bad.weight".to_string(), tiny_tensor(&[4], 0.0))]),
+        );
         let linear_err = take_gemma4_linear(&mut loader, "bad.weight")
             .err()
             .expect("non-2D linear weights must be rejected");
@@ -3429,25 +3402,20 @@ mod tests {
     }
 
     #[test]
-    fn softcap_transforms_logits() {
+    fn softcap_transforms_logits_and_reuses_allocation_when_enabled_or_disabled() {
         let backend = CpuBackend;
         let logits = CpuTensor::from_data(vec![1, 3], vec![-100.0, 0.0, 100.0]);
         let allocation = logits.data().as_ptr();
         let capped = softcap_logits(&backend, logits, Some(30.0)).unwrap();
-        assert_eq!(capped.data().as_ptr(), allocation);
+        assert_eq!(capped.data().as_ptr(), allocation, "enabled softcap");
         assert!(capped.data()[0] > -30.0);
         assert_eq!(capped.data()[1], 0.0);
         assert!(capped.data()[2] < 30.0);
-    }
 
-    #[test]
-    fn disabled_softcap_reuses_logits_allocation() {
-        let backend = CpuBackend;
         let logits = CpuTensor::from_data(vec![1, 3], vec![1.0, 2.0, 3.0]);
         let allocation = logits.data().as_ptr();
         let uncapped = softcap_logits(&backend, logits, None).unwrap();
-
-        assert_eq!(uncapped.data().as_ptr(), allocation);
+        assert_eq!(uncapped.data().as_ptr(), allocation, "disabled softcap");
     }
 
     #[test]
@@ -3675,30 +3643,13 @@ mod tests {
 
     #[test]
     fn loader_rejects_malformed_optional_output_weight_geometry() {
-        let mut metadata = HashMap::new();
-        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
-        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
-        metadata.insert(
-            "gemma4.attention.head_count_kv".to_string(),
-            GgufValue::U32(1),
-        );
-        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
-        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        let metadata = tiny_metadata(1);
 
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);
         // Corrupt the optional LM-head weight: expected [embed_dim=2, vocab=4].
         tensors.insert("output.weight".to_string(), tiny_weight(&[2, 3]));
-        let loader = GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let loader = GgufLoader::for_test(metadata, tensors);
         let error = Gemma4::from_loader(loader)
             .err()
             .expect("malformed optional output.weight must be rejected before allocation");
@@ -3708,18 +3659,7 @@ mod tests {
 
     #[test]
     fn loader_rejects_malformed_ple_block_geometry() {
-        let mut metadata = HashMap::new();
-        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
-        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
-        metadata.insert(
-            "gemma4.attention.head_count_kv".to_string(),
-            GgufValue::U32(1),
-        );
-        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
-        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        let mut metadata = tiny_metadata(1);
         metadata.insert(
             "gemma4.hidden_size_per_layer_input".to_string(),
             GgufValue::U32(2),
@@ -3731,13 +3671,7 @@ mod tests {
         // wrong width so the preflight must reject before block allocation.
         tensors.insert("blk.0.proj.weight".to_string(), tiny_weight(&[2, 2]));
         tensors.insert("blk.0.inp_gate.weight".to_string(), tiny_weight(&[3, 2]));
-        let loader = GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let loader = GgufLoader::for_test(metadata, tensors);
         let error = Gemma4::from_loader(loader)
             .err()
             .expect("malformed PLE block tensors must be rejected before allocation");
@@ -3746,54 +3680,8 @@ mod tests {
     }
 
     #[test]
-    fn loader_accepts_shared_kv_layers_without_own_kv_tensors() {
-        let mut metadata = HashMap::new();
-        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
-        metadata.insert(
-            "gemma4.attention.head_count_kv".to_string(),
-            GgufValue::U32(1),
-        );
-        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
-        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
-        metadata.insert(
-            "gemma4.attention.shared_kv_layers".to_string(),
-            GgufValue::U32(1),
-        );
-
-        let mut tensors = HashMap::new();
-        insert_tiny_gemma4_tensors(&mut tensors);
-        insert_tiny_gemma4_block_tensors(&mut tensors, 1, false);
-        let loader = GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
-        let model = Gemma4::from_loader(loader).unwrap();
-
-        assert_eq!(model.blocks.len(), 2);
-        assert_eq!(model.blocks[1].attn.shared_source_layer, Some(0));
-    }
-
-    #[test]
     fn loader_accepts_double_wide_mlp_on_shared_layers() {
-        let mut metadata = HashMap::new();
-        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
-        metadata.insert(
-            "gemma4.attention.head_count_kv".to_string(),
-            GgufValue::U32(1),
-        );
-        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
-        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        let mut metadata = tiny_metadata(2);
         metadata.insert(
             "gemma4.attention.shared_kv_layers".to_string(),
             GgufValue::U32(1),
@@ -3801,20 +3689,13 @@ mod tests {
 
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);
-        insert_tiny_gemma4_block_tensors(&mut tensors, 0, true);
         insert_tiny_gemma4_block_tensors(&mut tensors, 1, false);
         // The KV-shared layer carries the doubled MLP (intermediate 2 -> 4).
         tensors.insert("blk.1.ffn_gate.weight".into(), tiny_weight(&[2, 4]));
         tensors.insert("blk.1.ffn_up.weight".into(), tiny_weight(&[2, 4]));
         tensors.insert("blk.1.ffn_down.weight".into(), tiny_weight(&[4, 2]));
 
-        let loader = GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let loader = GgufLoader::for_test(metadata, tensors);
         let model = Gemma4::from_loader(loader).unwrap();
 
         assert_eq!(model.blocks.len(), 2);

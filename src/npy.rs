@@ -530,17 +530,20 @@ mod tests {
 
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn npy_stream_writer_writes_expected_shape_and_payload() {
+    fn unique_temp_npy(tag: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock before unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "ember_npy_stream_{}_{}.npy",
-            std::process::id(),
-            unique
-        ));
+        std::env::temp_dir().join(format!(
+            "ember_npy_{tag}_{}_{unique}.npy",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn npy_stream_writer_writes_expected_shape_and_payload() {
+        let path = unique_temp_npy("stream");
         let path_str = path.to_str().expect("temp path should be utf-8");
 
         let mut writer = NpyStreamWriter::create(path_str, &[2, 2, 2]).expect("create npy stream");
@@ -571,15 +574,7 @@ mod tests {
 
     #[test]
     fn no_replace_stream_preserves_a_concurrent_destination() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock before unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "ember_npy_no_replace_{}_{}.npy",
-            std::process::id(),
-            unique
-        ));
+        let path = unique_temp_npy("no_replace");
         let mut writer =
             NpyStreamWriter::create(path.to_str().expect("temp path should be utf-8"), &[1, 1])
                 .expect("create npy stream");
@@ -592,15 +587,7 @@ mod tests {
 
     #[test]
     fn incomplete_stream_never_publishes_final_path() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock before unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "ember_npy_incomplete_{}_{}.npy",
-            std::process::id(),
-            unique
-        ));
+        let path = unique_temp_npy("incomplete");
         {
             let mut writer =
                 NpyStreamWriter::create(path.to_str().expect("temp path should be utf-8"), &[2, 2])

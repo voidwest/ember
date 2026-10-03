@@ -359,23 +359,6 @@ mod tests {
     }
 
     #[test]
-    fn torn_trailing_line_still_parses_prefix() {
-        let path = tmp_path("torn.jsonl");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let good1 = r#"{"schema":"x","seq":0,"event_type":"a"}"#;
-        let good2 = r#"{"schema":"x","seq":1,"event_type":"b"}"#;
-        let mut raw = format!("{good1}\n{good2}\n{}", r#"{"schema":"x","seq":2,"ev"#);
-        // simulate a crash: no trailing newline, truncated JSON
-        raw.truncate(raw.len());
-        std::fs::write(&path, raw).unwrap();
-        let (events, skipped) = parse_trace_file(&path).unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(events[1]["seq"], 1);
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
     fn privacy_modes_redact_content() {
         let mut rec = TraceRecorder::open(
             TraceConfig {

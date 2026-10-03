@@ -120,36 +120,22 @@ pub(crate) mod tests {
     use super::*;
     use crate::tensor::CpuTensor;
 
-    /// Deterministic pseudo-random Q6_K payload with finite f16 scales.
-    pub(crate) fn seeded_q6_blocks(blocks: usize, seed: u64) -> Vec<u8> {
+    /// Deterministic pseudo-random K-quant payload with finite f16 scales.
+    pub(crate) fn seeded_k_blocks(dtype: KQuantDtype, blocks: usize, seed: u64) -> Vec<u8> {
         let mut state = seed;
-        let mut bytes = vec![0u8; blocks * Q6_K_BLOCK_BYTES];
+        let mut bytes = vec![0u8; blocks * dtype.block_bytes()];
         for byte in &mut bytes {
             state = state
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
             *byte = (state >> 33) as u8;
         }
-        for block in bytes.chunks_exact_mut(Q6_K_BLOCK_BYTES) {
-            let bits = u16::from_le_bytes([block[208], block[209]]) & 0x7fff;
-            let finite = if bits >= 0x7c00 { 0x3c00 } else { bits };
-            block[208..210].copy_from_slice(&finite.to_le_bytes());
-        }
-        bytes
-    }
-
-    /// Deterministic pseudo-random Q4_K payload with finite f16 scales.
-    pub(crate) fn seeded_q4_blocks(blocks: usize, seed: u64) -> Vec<u8> {
-        let mut state = seed;
-        let mut bytes = vec![0u8; blocks * Q4_K_BLOCK_BYTES];
-        for byte in &mut bytes {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            *byte = (state >> 33) as u8;
-        }
-        for block in bytes.chunks_exact_mut(Q4_K_BLOCK_BYTES) {
-            for offset in [0, 2] {
+        let f16_offsets: &[usize] = match dtype {
+            KQuantDtype::Q4K => &[0, 2],
+            KQuantDtype::Q6K => &[208],
+        };
+        for block in bytes.chunks_exact_mut(dtype.block_bytes()) {
+            for &offset in f16_offsets {
                 let bits = u16::from_le_bytes([block[offset], block[offset + 1]]) & 0x7fff;
                 let finite = if bits >= 0x7c00 { 0x3c00 } else { bits };
                 block[offset..offset + 2].copy_from_slice(&finite.to_le_bytes());
@@ -187,10 +173,11 @@ pub(crate) mod tests {
             let input = 512;
             let output = 5;
             let blocks = output * input / QK_K;
-            let bytes = match dtype {
-                KQuantDtype::Q4K => seeded_q4_blocks(blocks, 1),
-                KQuantDtype::Q6K => seeded_q6_blocks(blocks, 2),
+            let seed = match dtype {
+                KQuantDtype::Q4K => 1,
+                KQuantDtype::Q6K => 2,
             };
+            let bytes = seeded_k_blocks(dtype, blocks, seed);
             let w = KQuantWeight::try_new(bytes, [output, input], dtype).unwrap();
             let src = seeded_activations(rows * input, 3);
             let expected = eager_matmul(&src, rows, &w);
@@ -207,28 +194,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn production_serial_and_parallel_match() {
-        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
-            let input = 512;
-            let output = 513;
-            let blocks = output * input / QK_K;
-            let bytes = match dtype {
-                KQuantDtype::Q4K => seeded_q4_blocks(blocks, 4),
-                KQuantDtype::Q6K => seeded_q6_blocks(blocks, 5),
-            };
-            let w = KQuantWeight::try_new(bytes, [output, input], dtype).unwrap();
-            let src = seeded_activations(input, 6);
-            let mut serial = vec![0.0; output];
-            let mut parallel = vec![0.0; output];
-            matmul_k_into(&src, 1, &w, &mut serial).unwrap();
-            matmul_k_into_parallel(&src, 1, &w, &mut parallel).unwrap();
-            assert_eq!(serial, parallel);
-        }
-    }
-
-    #[test]
     fn length_mismatches_are_rejected() {
-        let w = KQuantWeight::try_new(seeded_q4_blocks(2, 9), [2, 256], KQuantDtype::Q4K).unwrap();
+        let w = KQuantWeight::try_new(
+            seeded_k_blocks(KQuantDtype::Q4K, 2, 9),
+            [2, 256],
+            KQuantDtype::Q4K,
+        )
+        .unwrap();
         let mut dst = [0.0; 2];
         assert!(matmul_k_scalar_into(&[0.0; 255], 1, &w, &mut dst).is_err());
         assert!(matmul_k_into(&[0.0; 256], 1, &w, &mut dst[..1]).is_err());

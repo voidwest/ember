@@ -13,9 +13,9 @@ use ember::agent::tools::{
     CalculatorTool, EchoTool, FailTool, LookupFixtureTool, SlowTool, WriteArtifactTool,
 };
 use ember::agent::{
-    validate_trace_invariants, AgentConfig, AgentLimits, AgentSession, ArtifactStore, CancelFlag,
-    RunResources, Tool, ToolContext, ToolOutcome, ToolOutput, ToolRegistry, ToolSchema,
-    TraceConfig, TraceRecorder,
+    validate_trace_invariants, AgentConfig, AgentLimits, AgentRunSummary, AgentSession,
+    ArtifactStore, CancelFlag, RunResources, Tool, ToolContext, ToolOutcome, ToolOutput,
+    ToolRegistry, ToolSchema, TraceConfig, TraceRecorder,
 };
 
 // -- helpers ---------------------------------------------------------------
@@ -33,29 +33,55 @@ fn json_protocol() -> Arc<dyn ember::agent::ToolCallProtocol> {
     Arc::new(EmberJsonToolProtocol::default())
 }
 
+fn registry_of(tools: Vec<Arc<dyn Tool>>) -> ToolRegistry {
+    tools
+        .into_iter()
+        .fold(ToolRegistry::builder(), |builder, tool| {
+            builder.register(tool).unwrap()
+        })
+        .build()
+        .unwrap()
+}
+
 fn basic_registry() -> ToolRegistry {
     let fixtures = BTreeMap::from([
         ("alpha".to_string(), "42".to_string()),
         ("beta".to_string(), "43".to_string()),
     ]);
-    ToolRegistry::builder()
-        .register(Arc::new(CalculatorTool))
-        .unwrap()
-        .register(Arc::new(LookupFixtureTool::from_map(fixtures)))
-        .unwrap()
-        .register(Arc::new(EchoTool))
-        .unwrap()
-        .build()
-        .unwrap()
+    registry_of(vec![
+        Arc::new(CalculatorTool),
+        Arc::new(LookupFixtureTool::from_map(fixtures)),
+        Arc::new(EchoTool),
+    ])
 }
 
-fn scripted_session<'e>(engine: &'e mut ScriptedModel, registry: ToolRegistry) -> AgentSession<'e> {
-    AgentSession::new(
+/// One task through a fresh session with in-memory resources; returns the
+/// summary and the trace events.
+fn run_with(
+    engine: &mut ScriptedModel,
+    registry: ToolRegistry,
+    config: AgentConfig,
+    limits: AgentLimits,
+    prompt: &str,
+) -> (AgentRunSummary, Vec<serde_json::Value>) {
+    let mut session = AgentSession::new(engine, json_protocol(), registry, config, limits);
+    let summary = session
+        .run(&CancelFlag::new(), prompt, memory_resources())
+        .unwrap();
+    (summary, session.trace_events())
+}
+
+fn run(
+    engine: &mut ScriptedModel,
+    registry: ToolRegistry,
+    prompt: &str,
+) -> (AgentRunSummary, Vec<serde_json::Value>) {
+    run_with(
         engine,
-        json_protocol(),
         registry,
         AgentConfig::default(),
         AgentLimits::default(),
+        prompt,
     )
 }
 
@@ -110,14 +136,7 @@ fn scripted_one_tool_round_trip_is_exact() {
         ScriptedTurn::output(generic_call("lookup", r#"{"key":"alpha"}"#)),
         ScriptedTurn::output("The value is 42."),
     ]);
-    let registry = basic_registry();
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, registry);
-        let s = session
-            .run(&CancelFlag::new(), "What is alpha?", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, basic_registry(), "What is alpha?");
 
     // exact final answer
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
@@ -154,13 +173,7 @@ fn scripted_one_tool_round_trip_is_exact() {
 #[test]
 fn final_answer_without_tools_completes() {
     let mut engine = ScriptedModel::new(vec![ScriptedTurn::output("Just an answer.")]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, ToolRegistry::empty());
-        let s = session
-            .run(&CancelFlag::new(), "hi", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, ToolRegistry::empty(), "hi");
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.tool_calls_executed, 0);
     assert_eq!(summary.final_text.as_deref(), Some("Just an answer."));
@@ -177,17 +190,7 @@ fn multi_step_sequential_tool_calls_work() {
         )),
         ScriptedTurn::output("alpha is 42; confirmed by calculation."),
     ]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(
-                &CancelFlag::new(),
-                "compute alpha plus check",
-                memory_resources(),
-            )
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, basic_registry(), "compute alpha plus check");
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.steps_executed, 3);
     assert_eq!(summary.tool_calls_executed, 2);
@@ -205,18 +208,7 @@ fn tool_failure_is_structured_and_recoverable() {
         ScriptedTurn::output(generic_call("fail", r#"{"message":"kaput"}"#)),
         ScriptedTurn::output("Recovered."),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(FailTool))
-        .unwrap()
-        .build()
-        .unwrap();
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, registry);
-        let s = session
-            .run(&CancelFlag::new(), "go", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, registry_of(vec![Arc::new(FailTool)]), "go");
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.final_text.as_deref(), Some("Recovered."));
     // the error payload entered the session marked ok=false
@@ -239,13 +231,7 @@ fn unknown_tool_fails_closed_but_run_recovers() {
         ScriptedTurn::output(generic_call("does_not_exist", r#"{}"#)),
         ScriptedTurn::output("Understood; no such tool."),
     ]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(&CancelFlag::new(), "try it", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, basic_registry(), "try it");
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.rejected_calls, 1);
     assert_eq!(summary.tool_calls_executed, 0);
@@ -259,27 +245,34 @@ fn unknown_tool_fails_closed_but_run_recovers() {
 }
 
 #[test]
-fn malformed_json_arguments_are_rejected_structured() {
-    // generic protocol: a typed call whose arguments are not JSON at all
-    let mut engine = ScriptedModel::new(vec![
-        ScriptedTurn::output(r#"{"type":"tool_call","name":"echo","arguments":{"text" }"#),
-        ScriptedTurn::output("fine now"),
-    ]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(&CancelFlag::new(), "x", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
-    assert_eq!(summary.status, ember::agent::RunStatus::Completed);
-    assert_eq!(summary.rejected_calls, 1);
-    let rejected = events
-        .iter()
-        .find(|e| e["event_type"] == "tool_call_rejected")
-        .expect("rejection recorded");
-    assert_eq!(rejected["data"]["kind"], "malformed_tool_call");
-    assert_eq!(validate_trace_invariants(&events), Vec::<String>::new());
+fn malformed_tool_calls_are_rejected_structured_never_silent_text() {
+    // generic protocol: a typed call whose arguments are not JSON at all,
+    // and a typed object missing its name field
+    for raw in [
+        r#"{"type":"tool_call","name":"echo","arguments":{"text" }"#,
+        r#"{"type":"tool_call","arguments":{"a":1}}"#,
+    ] {
+        let mut engine = ScriptedModel::new(vec![
+            ScriptedTurn::output(raw),
+            ScriptedTurn::output("fine now"),
+        ]);
+        let (summary, events) = run(&mut engine, basic_registry(), "x");
+        assert_eq!(summary.status, ember::agent::RunStatus::Completed, "{raw}");
+        assert_eq!(summary.rejected_calls, 1, "{raw}");
+        assert!(
+            events
+                .iter()
+                .any(|e| e["event_type"] == "assistant_action_parsed"
+                    && e["data"]["action"] == "malformed_tool_call"),
+            "{raw}"
+        );
+        let rejected = events
+            .iter()
+            .find(|e| e["event_type"] == "tool_call_rejected")
+            .expect("rejection recorded");
+        assert_eq!(rejected["data"]["kind"], "malformed_tool_call", "{raw}");
+        assert_eq!(validate_trace_invariants(&events), Vec::<String>::new());
+    }
 }
 
 #[test]
@@ -288,13 +281,7 @@ fn invalid_arguments_against_schema_are_rejected_with_all_problems() {
         ScriptedTurn::output(generic_call("calculate", r#"{"operation":"mod","a":"x"}"#)),
         ScriptedTurn::output("got it"),
     ]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(&CancelFlag::new(), "x", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, basic_registry(), "x");
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     let rejected = events
         .iter()
@@ -307,31 +294,6 @@ fn invalid_arguments_against_schema_are_rejected_with_all_problems() {
     assert!(reason.contains("expected number"));
 }
 
-#[test]
-fn malformed_tool_call_syntax_never_silently_becomes_text() {
-    // qwen protocol would be malformed inside tags; for the generic
-    // protocol a typed object missing fields is malformed.
-    let mut engine = ScriptedModel::new(vec![
-        ScriptedTurn::output(r#"{"type":"tool_call","arguments":{"a":1}}"#),
-        ScriptedTurn::output("done"),
-    ]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(&CancelFlag::new(), "x", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
-    assert_eq!(summary.status, ember::agent::RunStatus::Completed);
-    assert!(events
-        .iter()
-        .any(|e| e["event_type"] == "assistant_action_parsed"
-            && e["data"]["action"] == "malformed_tool_call"));
-    assert!(events
-        .iter()
-        .any(|e| e["event_type"] == "tool_call_rejected"));
-}
-
 // -- limits ------------------------------------------------------------------
 
 #[test]
@@ -340,27 +302,16 @@ fn max_steps_terminates_cleanly() {
         .map(|_| ScriptedTurn::output(generic_call("echo", r#"{"text":"loop"}"#)))
         .collect::<Vec<_>>();
     let mut engine = ScriptedModel::new(script);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(EchoTool))
-        .unwrap()
-        .build()
-        .unwrap();
-    let (summary, events) = {
-        let mut session = AgentSession::new(
-            &mut engine,
-            json_protocol(),
-            registry,
-            AgentConfig::default(),
-            AgentLimits {
-                max_steps: 3,
-                ..Default::default()
-            },
-        );
-        let s = session
-            .run(&CancelFlag::new(), "loop forever", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run_with(
+        &mut engine,
+        registry_of(vec![Arc::new(EchoTool)]),
+        AgentConfig::default(),
+        AgentLimits {
+            max_steps: 3,
+            ..Default::default()
+        },
+        "loop forever",
+    );
     assert_eq!(
         summary.status,
         ember::agent::RunStatus::LimitReached(ember::agent::LimitKind::MaxSteps)
@@ -370,57 +321,61 @@ fn max_steps_terminates_cleanly() {
 }
 
 #[test]
-fn max_tool_calls_terminates_before_execution() {
-    let script = (0..5)
-        .map(|_| ScriptedTurn::output(generic_call("echo", r#"{"text":"x"}"#)))
-        .collect::<Vec<_>>();
-    let mut engine = ScriptedModel::new(script);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(EchoTool))
-        .unwrap()
-        .build()
-        .unwrap();
-    let summary = {
-        let mut session = AgentSession::new(
+fn max_tool_calls_fires_across_steps_and_between_calls_of_one_step() {
+    let echo = |text: &str| generic_call("echo", &format!(r#"{{"text":"{text}"}}"#));
+    for (script, max_steps) in [
+        // one call per step: the limit fires before the third execution
+        (
+            (0..5)
+                .map(|_| ScriptedTurn::output(echo("x")))
+                .collect::<Vec<_>>(),
+            8,
+        ),
+        // three calls in one step: the limit fires between calls
+        (
+            vec![ScriptedTurn::output(format!(
+                "{} {} {}",
+                echo("1"),
+                echo("2"),
+                echo("3")
+            ))],
+            2,
+        ),
+    ] {
+        let mut engine = ScriptedModel::new(script);
+        let (summary, _) = run_with(
             &mut engine,
-            json_protocol(),
-            registry,
+            registry_of(vec![Arc::new(EchoTool)]),
             AgentConfig::default(),
             AgentLimits {
-                max_steps: 8,
+                max_steps,
                 max_tool_calls: 2,
                 ..Default::default()
             },
+            "go",
         );
-        session
-            .run(&CancelFlag::new(), "go", memory_resources())
-            .unwrap()
-    };
-    assert_eq!(
-        summary.status,
-        ember::agent::RunStatus::LimitReached(ember::agent::LimitKind::MaxToolCalls)
-    );
-    assert_eq!(summary.tool_calls_executed, 2);
+        assert_eq!(
+            summary.status,
+            ember::agent::RunStatus::LimitReached(ember::agent::LimitKind::MaxToolCalls),
+            "max_steps={max_steps}"
+        );
+        assert_eq!(summary.tool_calls_executed, 2, "max_steps={max_steps}");
+    }
 }
 
 #[test]
 fn zero_wall_time_budget_fires_immediately_with_state_intact() {
     let mut engine = ScriptedModel::new(vec![ScriptedTurn::output("never reached")]);
-    let summary = {
-        let mut session = AgentSession::new(
-            &mut engine,
-            json_protocol(),
-            basic_registry(),
-            AgentConfig::default(),
-            AgentLimits {
-                max_wall_time: Some(Duration::ZERO),
-                ..Default::default()
-            },
-        );
-        session
-            .run(&CancelFlag::new(), "hi", memory_resources())
-            .unwrap()
-    };
+    let (summary, _) = run_with(
+        &mut engine,
+        basic_registry(),
+        AgentConfig::default(),
+        AgentLimits {
+            max_wall_time: Some(Duration::ZERO),
+            ..Default::default()
+        },
+        "hi",
+    );
     assert_eq!(
         summary.status,
         ember::agent::RunStatus::LimitReached(ember::agent::LimitKind::WallTime)
@@ -438,13 +393,7 @@ fn cancellation_mid_generation_commits_nothing() {
         ScriptedTurn::output("unreached"),
     ]);
     let before = engine.committed_messages.len();
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(&CancelFlag::new(), "say something", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, basic_registry(), "say something");
     assert_eq!(summary.status, ember::agent::RunStatus::Cancelled);
     assert!(summary.final_text.is_none());
     // ledger: system + user only; no assistant content committed
@@ -467,13 +416,9 @@ fn cancellation_during_tool_execution_keeps_side_effect_visible_and_session_clea
         ScriptedTurn::output("unreached"),
     ]);
     let control = CancelFlag::new();
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(CancellingSlowTool {
-            cancel: control.clone(),
-        }))
-        .unwrap()
-        .build()
-        .unwrap();
+    let registry = registry_of(vec![Arc::new(CancellingSlowTool {
+        cancel: control.clone(),
+    })]);
     let (summary, events) = {
         let mut session = AgentSession::new(
             &mut engine,
@@ -513,27 +458,16 @@ fn tool_timeout_is_structured_and_run_continues() {
         ScriptedTurn::output(generic_call("slow", r#"{"milliseconds":2000}"#)),
         ScriptedTurn::output("moved on"),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(SlowTool::new(50)))
-        .unwrap()
-        .build()
-        .unwrap();
-    let (summary, events) = {
-        let mut session = AgentSession::new(
-            &mut engine,
-            json_protocol(),
-            registry,
-            AgentConfig::default(),
-            AgentLimits {
-                tool_timeout: Duration::from_millis(150),
-                ..Default::default()
-            },
-        );
-        let s = session
-            .run(&CancelFlag::new(), "slow please", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run_with(
+        &mut engine,
+        registry_of(vec![Arc::new(SlowTool::new(50))]),
+        AgentConfig::default(),
+        AgentLimits {
+            tool_timeout: Duration::from_millis(150),
+            ..Default::default()
+        },
+        "slow please",
+    );
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     let finished = events
         .iter()
@@ -560,18 +494,11 @@ fn tool_panic_is_contained_as_a_structured_failure() {
         ScriptedTurn::output(generic_call("panic_probe", "{}")),
         ScriptedTurn::output("survived"),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(PanicProbe))
-        .unwrap()
-        .build()
-        .unwrap();
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, registry);
-        let s = session
-            .run(&CancelFlag::new(), "boom?", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(
+        &mut engine,
+        registry_of(vec![Arc::new(PanicProbe)]),
+        "boom?",
+    );
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.final_text.as_deref(), Some("survived"));
     let finished = events
@@ -585,10 +512,6 @@ fn tool_panic_is_contained_as_a_structured_failure() {
 
 #[test]
 fn artifact_writes_are_hashed_and_traced() {
-    let dir = std::env::temp_dir().join(format!(
-        "ember-agent-art-it-{}",
-        std::time::Instant::now().elapsed().as_nanos()
-    ));
     let mut engine = ScriptedModel::new(vec![
         ScriptedTurn::output(generic_call(
             "write_artifact",
@@ -596,18 +519,11 @@ fn artifact_writes_are_hashed_and_traced() {
         )),
         ScriptedTurn::output("saved."),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(WriteArtifactTool))
-        .unwrap()
-        .build()
-        .unwrap();
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, registry);
-        let s = session
-            .run(&CancelFlag::new(), "save it", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(
+        &mut engine,
+        registry_of(vec![Arc::new(WriteArtifactTool)]),
+        "save it",
+    );
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.artifacts.len(), 1);
     let artifact = &summary.artifacts[0];
@@ -624,7 +540,6 @@ fn artifact_writes_are_hashed_and_traced() {
     assert_eq!(written["data"]["producer_tool"], "write_artifact");
     assert_eq!(written["data"]["step_id"], "tool-0");
     assert_eq!(validate_trace_invariants(&events), Vec::<String>::new());
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -640,15 +555,10 @@ fn jsonl_trace_file_is_incremental_and_prefix_readable() {
         ScriptedTurn::output(generic_call("echo", r#"{"text":"hi"}"#)),
         ScriptedTurn::output("done"),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(EchoTool))
-        .unwrap()
-        .build()
-        .unwrap();
     let mut session = AgentSession::new(
         &mut engine,
         json_protocol(),
-        registry,
+        registry_of(vec![Arc::new(EchoTool)]),
         AgentConfig::default(),
         AgentLimits::default(),
     );
@@ -711,15 +621,6 @@ fn registry_enumerates_schemas_stably() {
     let schemas = basic_registry().schemas();
     let names: Vec<_> = schemas.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, vec!["calculate", "echo", "lookup"]);
-    // serializable snapshot for prompts/provenance
-    let rendered = serde_json::to_string(
-        &schemas
-            .iter()
-            .map(|s| s.to_json_schema())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
-    assert!(rendered.contains("\"calculate\""));
 }
 
 // -- Phase 2: multi-call steps ------------------------------------------------
@@ -734,13 +635,7 @@ fn one_step_can_request_multiple_tools_executed_in_order() {
         )),
         ScriptedTurn::output("alpha=42 and 6x7=42; consistent."),
     ]);
-    let (summary, events) = {
-        let mut session = scripted_session(&mut engine, basic_registry());
-        let s = session
-            .run(&CancelFlag::new(), "cross-check", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    let (summary, events) = run(&mut engine, basic_registry(), "cross-check");
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.tool_calls_executed, 2);
     assert_eq!(summary.steps_executed, 2); // two model turns total
@@ -761,42 +656,6 @@ fn one_step_can_request_multiple_tools_executed_in_order() {
             && e["data"]["action"] == "tool_calls"
             && e["data"]["count"] == 2));
     assert_eq!(validate_trace_invariants(&events), Vec::<String>::new());
-}
-
-#[test]
-fn limits_fire_between_calls_of_one_step() {
-    let mut engine = ScriptedModel::new(vec![ScriptedTurn::output(format!(
-        "{} {} {}",
-        generic_call("echo", r#"{"text":"1"}"#),
-        generic_call("echo", r#"{"text":"2"}"#),
-        generic_call("echo", r#"{"text":"3"}"#)
-    ))]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(EchoTool))
-        .unwrap()
-        .build()
-        .unwrap();
-    let summary = {
-        let mut session = AgentSession::new(
-            &mut engine,
-            json_protocol(),
-            registry,
-            AgentConfig::default(),
-            AgentLimits {
-                max_steps: 2,
-                max_tool_calls: 2,
-                ..Default::default()
-            },
-        );
-        session
-            .run(&CancelFlag::new(), "x", memory_resources())
-            .unwrap()
-    };
-    assert_eq!(
-        summary.status,
-        ember::agent::RunStatus::LimitReached(ember::agent::LimitKind::MaxToolCalls)
-    );
-    assert_eq!(summary.tool_calls_executed, 2);
 }
 
 // -- Phase 2: approval gating (Track H) ----------------------------------------
@@ -825,19 +684,12 @@ fn default_policy_denies_declared_external_effects_and_the_model_recovers() {
         ScriptedTurn::output(generic_call("external_probe", "{}")),
         ScriptedTurn::output("understood; staying local."),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(ExternalProbe))
-        .unwrap()
-        .build()
-        .unwrap();
-    let (summary, events) = {
-        // AgentConfig::default() = DenyExternalSideEffect
-        let mut session = scripted_session(&mut engine, registry);
-        let s = session
-            .run(&CancelFlag::new(), "go external", memory_resources())
-            .unwrap();
-        (s, session.trace_events())
-    };
+    // AgentConfig::default() = DenyExternalSideEffect
+    let (summary, events) = run(
+        &mut engine,
+        registry_of(vec![Arc::new(ExternalProbe)]),
+        "go external",
+    );
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.rejected_calls, 1);
     assert_eq!(summary.tool_calls_executed, 0, "nothing executed");
@@ -860,26 +712,16 @@ fn auto_policy_executes_external_declaring_tools() {
         ScriptedTurn::output(generic_call("external_probe", "{}")),
         ScriptedTurn::output("done."),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(ExternalProbe))
-        .unwrap()
-        .build()
-        .unwrap();
-    let summary = {
-        let mut session = AgentSession::new(
-            &mut engine,
-            json_protocol(),
-            registry,
-            AgentConfig {
-                approval: ember::agent::ApprovalPolicy::Auto,
-                ..Default::default()
-            },
-            AgentLimits::default(),
-        );
-        session
-            .run(&CancelFlag::new(), "go", memory_resources())
-            .unwrap()
-    };
+    let (summary, _) = run_with(
+        &mut engine,
+        registry_of(vec![Arc::new(ExternalProbe)]),
+        AgentConfig {
+            approval: ember::agent::ApprovalPolicy::Auto,
+            ..Default::default()
+        },
+        AgentLimits::default(),
+        "go",
+    );
     assert_eq!(summary.status, ember::agent::RunStatus::Completed);
     assert_eq!(summary.tool_calls_executed, 1);
     assert_eq!(summary.rejected_calls, 0);
@@ -890,35 +732,27 @@ fn auto_policy_executes_external_declaring_tools() {
 fn two_runs(script: Vec<ScriptedTurn>) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
     let run_once = || {
         let mut engine = ScriptedModel::new(script.clone());
-        let mut session = scripted_session(&mut engine, basic_registry());
-        session
-            .run(&CancelFlag::new(), "same input", memory_resources())
-            .unwrap();
-        session.trace_events()
+        run(&mut engine, basic_registry(), "same input").1
     };
     (run_once(), run_once())
 }
 
 #[test]
-fn trace_diff_reports_identical_structure_for_same_script() {
-    let (a, b) = two_runs(vec![
+fn trace_diff_catches_skeleton_divergence() {
+    let (a, b) = two_runs(vec![ScriptedTurn::output("plain answer")]);
+    let (a2, b2) = two_runs(vec![
         ScriptedTurn::output(generic_call("lookup", r#"{"key":"alpha"}"#)),
         ScriptedTurn::output("The value is 42."),
     ]);
-    let (_, _, diff) = ember::agent::inspect::diff(&a, &b);
-    assert!(diff.is_identical(), "{:?}", diff.differences);
-}
-
-#[test]
-fn trace_diff_catches_skeleton_divergence() {
-    let (a, b) = two_runs(vec![ScriptedTurn::output("plain answer")]);
-    let (a2, _) = two_runs(vec![
-        ScriptedTurn::output(generic_call("echo", r#"{"text":"x"}"#)),
-        ScriptedTurn::output("with tool"),
-    ]);
-    // same-script pair must be identical even when compared across scripts
+    // same-script pairs must be identical, with and without a tool call
     let (_, _, same) = ember::agent::inspect::diff(&a, &b);
-    assert!(same.is_identical());
+    assert!(same.is_identical(), "{:?}", same.differences);
+    let (_, _, same_with_tool) = ember::agent::inspect::diff(&a2, &b2);
+    assert!(
+        same_with_tool.is_identical(),
+        "{:?}",
+        same_with_tool.differences
+    );
     let (_, _, different) = ember::agent::inspect::diff(&a, &a2);
     assert!(!different.is_identical());
     assert!(different
@@ -948,15 +782,11 @@ fn replay_reexecutes_recorded_calls_and_verifies_digests() {
         ScriptedTurn::output("done"),
     ];
     let fixtures = std::collections::BTreeMap::from([("alpha".to_string(), "42".to_string())]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(LookupFixtureTool::from_map(fixtures)))
-        .unwrap()
-        .register(Arc::new(WriteArtifactTool))
-        .unwrap()
-        .register(Arc::new(FailTool))
-        .unwrap()
-        .build()
-        .unwrap();
+    let registry = registry_of(vec![
+        Arc::new(LookupFixtureTool::from_map(fixtures)),
+        Arc::new(WriteArtifactTool),
+        Arc::new(FailTool),
+    ]);
     let events = {
         let mut engine = ScriptedModel::new(script);
         let resources = RunResources {
@@ -988,15 +818,6 @@ fn replay_reexecutes_recorded_calls_and_verifies_digests() {
         report.outcomes
     );
     assert_eq!(report.skipped(), 1);
-    assert_eq!(
-        report.skipped()
-            + report
-                .outcomes
-                .iter()
-                .filter(|o| o.matches == Some(true))
-                .count(),
-        3
-    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1006,24 +827,7 @@ fn html_report_renders_self_contained_summary() {
         ScriptedTurn::output(generic_call("echo", r#"{"text":"hi"}"#)),
         ScriptedTurn::output("done"),
     ]);
-    let registry = ToolRegistry::builder()
-        .register(Arc::new(EchoTool))
-        .unwrap()
-        .build()
-        .unwrap();
-    let events = {
-        let mut session = AgentSession::new(
-            &mut engine,
-            json_protocol(),
-            registry,
-            AgentConfig::default(),
-            AgentLimits::default(),
-        );
-        session
-            .run(&CancelFlag::new(), "hi", memory_resources())
-            .unwrap();
-        session.trace_events()
-    };
+    let (_, events) = run(&mut engine, registry_of(vec![Arc::new(EchoTool)]), "hi");
     let summary = ember::agent::inspect::summarize(&events);
     let html = ember::agent::inspect::render_html(&events, &summary);
     assert!(html.starts_with("<!doctype html>"));

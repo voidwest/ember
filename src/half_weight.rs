@@ -521,6 +521,11 @@ mod tests {
         CpuTensor::from_data(dims.to_vec(), data)
     }
 
+    /// The eager loader's row-major `[k, n]` matrix (GGUF dims `[k, n]`).
+    fn eager_row_major(dtype: HalfDtype, k: usize, n: usize, bits: &[u16]) -> CpuTensor {
+        crate::loader::try_gguf_to_row_major_f32(eager_tensor(dtype, &[k, n], bits)).unwrap()
+    }
+
     fn assert_bits_eq(expected: &[f32], actual: &[f32], what: &str) {
         assert_eq!(expected.len(), actual.len(), "{what}: length");
         for (index, (e, a)) in expected.iter().zip(actual).enumerate() {
@@ -600,12 +605,7 @@ mod tests {
                     let bits = random_bits(dtype, k * n, &mut rng, specials);
                     let x: Vec<f32> = (0..m * k).map(|_| rng.f32()).collect();
                     let weight = HalfWeight::from_bits(dtype, vec![k, n], bits.clone());
-                    let eager = crate::loader::try_gguf_to_row_major_f32(eager_tensor(
-                        dtype,
-                        &[k, n],
-                        &bits,
-                    ))
-                    .unwrap();
+                    let eager = eager_row_major(dtype, k, n, &bits);
                     let x_tensor = CpuTensor::from_data(vec![m, k], x.clone());
                     let expected = x_tensor.par_matmul(&eager);
                     assert_bits_eq(expected.data(), x_tensor.matmul(&eager).data(), "serial");
@@ -634,12 +634,7 @@ mod tests {
             let bits = random_bits(HalfDtype::F16, k * n, &mut rng, false);
             let x: Vec<f32> = (0..m * k).map(|_| rng.f32()).collect();
             let weight = HalfWeight::from_bits(HalfDtype::F16, vec![k, n], bits.clone());
-            let eager = crate::loader::try_gguf_to_row_major_f32(eager_tensor(
-                HalfDtype::F16,
-                &[k, n],
-                &bits,
-            ))
-            .unwrap();
+            let eager = eager_row_major(HalfDtype::F16, k, n, &bits);
             let expected =
                 pool.install(|| CpuTensor::from_data(vec![m, k], x.clone()).par_matmul(&eager));
             let mut out = vec![0.0f32; m * n];
@@ -676,12 +671,7 @@ mod tests {
                     let bits = random_bits(dtype, k * n, &mut rng, specials);
                     let x: Vec<f32> = (0..k).map(|_| rng.f32()).collect();
                     let weight = HalfWeight::from_bits(dtype, vec![k, n], bits.clone());
-                    let eager = crate::loader::try_gguf_to_row_major_f32(eager_tensor(
-                        dtype,
-                        &[k, n],
-                        &bits,
-                    ))
-                    .unwrap();
+                    let eager = eager_row_major(dtype, k, n, &bits);
                     let expected = eager_sequential(&x, eager.data(), n);
                     let mut out = vec![f32::NAN; n];
                     pool.install(|| {

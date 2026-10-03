@@ -543,123 +543,23 @@ pub fn render_human(report: &CompareReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experiments::{
-        CaptureSink, ExecutionContext, ExecutionPhase, GenerationContext, ModelContext,
-        ModelFamily, TensorAccess, TracingState,
-    };
+    use crate::experiments::test_support::CaptureArtifactBuilder;
 
-    struct ArtifactBuilder {
-        sink: CaptureSink,
-        model: ModelContext<'static>,
-        input_ids: Vec<u32>,
-    }
-
-    impl ArtifactBuilder {
-        fn new(name: &str, prompt_len: usize) -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("ember_compare_test_{}_{name}", std::process::id()));
-            std::fs::create_dir_all(&dir).unwrap();
-            let config_path = dir.join("capture.toml");
-            std::fs::write(
-                &config_path,
-                format!(
-                    "schema_version = 1\noutput_dir = {:?}\nlayers = [1]\nstages = [\"after-mlp\", \"after-logits\"]\nphase = \"both\"\n",
-                    dir.to_str().unwrap()
-                ),
-            )
-            .unwrap();
-            let sink = CaptureSink::from_toml_path(
-                config_path.to_str().unwrap(),
-                "compare test prompt",
-                1,
-                serde_json::json!({}),
-                Some(
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                ),
-                None,
-                serde_json::json!({}),
-            )
-            .unwrap();
-            let model = ModelContext::new(ModelFamily::Qwen3, Some("tiny.gguf"), "qwen3", 4, 8);
-            let mut sink = sink;
-            sink.on_model_loaded(&model).unwrap();
-            let input_ids: Vec<u32> = (1..=prompt_len as u32).collect();
-            Self {
-                sink,
-                model,
-                input_ids,
-            }
-        }
-
-        fn record_prefill(&mut self, values: Vec<f32>) {
-            let seq = self.input_ids.len();
-            let execution = ExecutionContext::new(
-                self.model,
-                ExecutionPhase::Prefill,
-                0,
-                seq,
-                TracingState::Disabled,
-            );
-            let mut values = values;
-            let tensor = TensorAccess::new(seq, 8, &mut values);
-            self.sink
-                .after_mlp(
-                    &execution,
-                    1,
-                    &tensor,
-                    crate::artifact::DispatchPath::Generic,
-                )
-                .unwrap();
-        }
-
-        fn record_decode(&mut self, position: usize, values: Vec<f32>) {
-            let execution = ExecutionContext::new(
-                self.model,
-                ExecutionPhase::Decode,
-                position,
-                1,
-                TracingState::Disabled,
-            );
-            let mut values = values;
-            let tensor = TensorAccess::new(1, 8, &mut values);
-            self.sink
-                .after_mlp(&execution, 1, &tensor, crate::artifact::DispatchPath::Fast)
-                .unwrap();
-        }
-
-        fn finalize(mut self) -> std::path::PathBuf {
-            let generation = GenerationContext::new(
-                self.model,
-                self.input_ids.len(),
-                1,
-                1,
-                TracingState::Disabled,
-                &self.input_ids,
-                &[9],
-            );
-            self.sink
-                .finalize(
-                    &generation,
-                    crate::artifact::ManifestExperiment {
-                        name: "none".to_string(),
-                        arguments: serde_json::Value::Null,
-                    },
-                    Vec::new(),
-                )
-                .unwrap()
-        }
+    /// A compare-test artifact capturing after-mlp and after-logits.
+    fn builder(name: &str, prompt_len: usize) -> CaptureArtifactBuilder {
+        CaptureArtifactBuilder::new(name, &["after-mlp", "after-logits"], prompt_len, None)
     }
 
     fn identical_artifacts(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let mut left = ArtifactBuilder::new(&format!("{name}_left"), 2);
+        let mut left = builder(&format!("{name}_left"), 2);
         left.record_prefill(vec![1.0; 16]);
         left.record_decode(2, vec![2.0; 8]);
-        let left_path = left.finalize();
+        let left_path = left.finalize(&[9], Vec::new());
 
-        let mut right = ArtifactBuilder::new(&format!("{name}_right"), 2);
+        let mut right = builder(&format!("{name}_right"), 2);
         right.record_prefill(vec![1.0; 16]);
         right.record_decode(2, vec![2.0; 8]);
-        let right_path = right.finalize();
+        let right_path = right.finalize(&[9], Vec::new());
         (left_path, right_path)
     }
 
@@ -675,16 +575,19 @@ mod tests {
         assert!(report.records.iter().all(|r| r.exact_equal));
         assert_eq!(report.run.model_sha256_match, Some(true));
         assert!(report.run.input_token_ids_match);
+        // created_at_unix appears only as the documented ignored field
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        assert_eq!(json.matches("created_at_unix").count(), 1);
         std::fs::remove_dir_all(left.parent().unwrap()).ok();
         std::fs::remove_dir_all(right.parent().unwrap()).ok();
     }
 
     #[test]
     fn same_artifact_reports_fully_identical() {
-        let mut artifact = ArtifactBuilder::new("same_artifact", 2);
+        let mut artifact = builder("same_artifact", 2);
         artifact.record_prefill(vec![1.0; 16]);
         artifact.record_decode(2, vec![2.0; 8]);
-        let path = artifact.finalize();
+        let path = artifact.finalize(&[9], Vec::new());
         let report = compare_artifacts(path.to_str().unwrap(), path.to_str().unwrap()).unwrap();
         assert_eq!(report.status, CompareStatus::Identical);
         assert!(report.run.provenance_match);
@@ -693,17 +596,17 @@ mod tests {
 
     #[test]
     fn one_element_perturbation_detected() {
-        let mut left_builder = ArtifactBuilder::new("perturb_left", 2);
+        let mut left_builder = builder("perturb_left", 2);
         left_builder.record_prefill(vec![1.0; 16]);
         left_builder.record_decode(2, vec![2.0; 8]);
-        let left = left_builder.finalize();
+        let left = left_builder.finalize(&[9], Vec::new());
 
-        let mut right_builder = ArtifactBuilder::new("perturb_right", 2);
+        let mut right_builder = builder("perturb_right", 2);
         let mut perturbed = vec![1.0; 16];
         perturbed[0] += 0.5;
         right_builder.record_prefill(perturbed);
         right_builder.record_decode(2, vec![2.0; 8]);
-        let right = right_builder.finalize();
+        let right = right_builder.finalize(&[9], Vec::new());
 
         let report = compare_artifacts(left.to_str().unwrap(), right.to_str().unwrap()).unwrap();
         assert_eq!(report.status, CompareStatus::Differs);
@@ -722,13 +625,13 @@ mod tests {
 
     #[test]
     fn shape_mismatch_reported_without_metrics() {
-        let mut left = ArtifactBuilder::new("left_shape", 2);
+        let mut left = builder("left_shape", 2);
         left.record_prefill(vec![1.0; 16]);
-        let left_path = left.finalize();
+        let left_path = left.finalize(&[9], Vec::new());
 
-        let mut right = ArtifactBuilder::new("right_shape", 3);
+        let mut right = builder("right_shape", 3);
         right.record_prefill(vec![1.0; 24]);
-        let right_path = right.finalize();
+        let right_path = right.finalize(&[9], Vec::new());
 
         let report =
             compare_artifacts(left_path.to_str().unwrap(), right_path.to_str().unwrap()).unwrap();
@@ -767,16 +670,16 @@ mod tests {
 
     #[test]
     fn missing_records_reported_on_both_sides() {
-        let mut left = ArtifactBuilder::new("left_missing", 2);
+        let mut left = builder("left_missing", 2);
         left.record_prefill(vec![1.0; 16]);
         left.record_decode(2, vec![2.0; 8]);
-        let left_path = left.finalize();
+        let left_path = left.finalize(&[9], Vec::new());
 
-        let mut right = ArtifactBuilder::new("right_missing", 2);
+        let mut right = builder("right_missing", 2);
         right.record_prefill(vec![1.0; 16]);
         right.record_decode(2, vec![2.0; 8]);
         right.record_decode(3, vec![3.0; 8]);
-        let right_path = right.finalize();
+        let right_path = right.finalize(&[9], Vec::new());
 
         let report =
             compare_artifacts(left_path.to_str().unwrap(), right_path.to_str().unwrap()).unwrap();
@@ -808,19 +711,6 @@ mod tests {
         let error =
             compare_artifacts(broken_path.to_str().unwrap(), right.to_str().unwrap()).unwrap_err();
         assert!(error.contains("duplicate capture record"), "{}", error);
-        std::fs::remove_dir_all(left.parent().unwrap()).ok();
-        std::fs::remove_dir_all(right.parent().unwrap()).ok();
-    }
-
-    #[test]
-    fn json_output_is_deterministic() {
-        let (left, right) = identical_artifacts("determinism");
-        let report = compare_artifacts(left.to_str().unwrap(), right.to_str().unwrap()).unwrap();
-        let first = serde_json::to_string_pretty(&report).unwrap();
-        let second = serde_json::to_string_pretty(&report).unwrap();
-        assert_eq!(first, second);
-        // created_at_unix appears only as the documented ignored field
-        assert_eq!(first.matches("created_at_unix").count(), 1);
         std::fs::remove_dir_all(left.parent().unwrap()).ok();
         std::fs::remove_dir_all(right.parent().unwrap()).ok();
     }

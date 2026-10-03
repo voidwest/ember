@@ -953,6 +953,7 @@ impl AudioModel {
 mod tests {
     use super::*;
     use crate::loader::{GgufValue, LoadedTensor};
+    use crate::multimodal::expect_load_error;
     use std::collections::HashMap;
 
     fn metadata(stack_factor: u32) -> HashMap<String, GgufValue> {
@@ -973,54 +974,27 @@ mod tests {
         ])
     }
 
-    fn tensor(shape: &[usize]) -> LoadedTensor {
-        let elements = shape.iter().product();
-        LoadedTensor::F32(CpuTensor::from_data(shape.to_vec(), vec![0.0; elements]))
-    }
-
-    fn loader(
-        metadata: HashMap<String, GgufValue>,
-        tensors: HashMap<String, LoadedTensor>,
-    ) -> GgufLoader {
-        GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        }
+    fn load_error(stack_factor: u32, tensors: HashMap<String, LoadedTensor>) -> String {
+        let mut loader = GgufLoader::for_test(metadata(stack_factor), tensors);
+        expect_load_error(|| AudioModel::from_mmproj_loader(&mut loader))
     }
 
     #[test]
     fn zero_stack_factor_is_an_error_not_a_projector_panic() {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut loader = loader(metadata(0), HashMap::new());
-            AudioModel::from_mmproj_loader(&mut loader)
-        }));
-        let result = result.expect("malformed audio metadata must not panic");
-        let error = match result {
-            Ok(_) => panic!("zero stack factor unexpectedly loaded"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("stack factor must be non-zero"));
+        let error = load_error(0, HashMap::new());
+        assert!(error.contains("stack factor must be non-zero"));
     }
 
     #[test]
     fn malformed_conv_rank_is_rejected_before_hf_layout_conversion() {
-        let mut tensors = HashMap::new();
         // GGUF conv1 shape is [kernel, in_channels, out_channels]. This
         // rank-2 value used to reach runtime indexing after a permissive load.
-        tensors.insert("a.audio_tower.conv1.weight".into(), tensor(&[3, 128]));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut loader = loader(metadata(8), tensors);
-            AudioModel::from_mmproj_loader(&mut loader)
-        }));
-        let result = result.expect("malformed conv rank must not panic");
-        let error = match result {
-            Ok(_) => panic!("malformed conv rank unexpectedly loaded"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("a.audio_tower.conv1.weight"));
-        assert!(error.to_string().contains("gguf dims"));
+        let conv1 = LoadedTensor::F32(CpuTensor::from_data(vec![3, 128], vec![0.0; 3 * 128]));
+        let error = load_error(
+            8,
+            HashMap::from([("a.audio_tower.conv1.weight".into(), conv1)]),
+        );
+        assert!(error.contains("a.audio_tower.conv1.weight"));
+        assert!(error.contains("gguf dims"));
     }
 }

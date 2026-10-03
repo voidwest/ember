@@ -524,21 +524,7 @@ pub(crate) fn run_inspect_sweep(dir: &Path, json: bool) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::cli_experiment::execute_prepared;
-    use crate::experiment_testutil::{spec_text, tiny_model};
-
-    fn run_args(spec: &Path, output: Option<PathBuf>) -> RunArgs {
-        RunArgs {
-            spec: spec.to_path_buf(),
-            execution: None,
-            threads: None,
-            output,
-            retain_incomplete: false,
-            variants: Vec::new(),
-            sign_key: None,
-            no_sign: true,
-            json: false,
-        }
-    }
+    use crate::experiment_testutil::{run_args, spec_text, tiny_model};
 
     const BODY: &str = r#"
 [[inputs]]

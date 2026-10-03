@@ -1689,10 +1689,16 @@ impl Drop for StagingGuard {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn target(max_seq: usize) -> KvCompatibilityTarget {
+        target_with_head_dim(max_seq, 4)
+    }
+
+    /// A two-layer, two-KV-head llama compatibility target; also the fixture
+    /// for `kv_compare` tests.
+    pub(crate) fn target_with_head_dim(max_seq: usize, head_dim: usize) -> KvCompatibilityTarget {
         KvCompatibilityTarget {
             model_sha256: "aa".repeat(32),
             tokenizer_sha256: Some("bb".repeat(32)),
@@ -1700,12 +1706,12 @@ mod tests {
             max_seq,
             layer_count: 2,
             n_kv_heads: 2,
-            head_dim: 4,
+            head_dim,
             precision: KvPrecision::F16,
             layout: KvLayout::LayerHeadPositionDimensionCompact,
             rope: KvRopeMetadata {
                 layout: KvRopeLayout::AdjacentPair,
-                dimension_count: 4,
+                dimension_count: head_dim,
                 theta: 10_000.0,
                 frequency_layout: "uniform-theta".into(),
                 position_origin: "absolute-zero-based".into(),
@@ -1950,12 +1956,6 @@ mod tests {
     }
 
     #[test]
-    fn working_directory_and_ancestors_are_never_snapshot_outputs() {
-        assert!(reject_dangerous_snapshot_output(Path::new(".")).is_err());
-        assert!(reject_dangerous_snapshot_output(Path::new("..")).is_err());
-    }
-
-    #[test]
     fn normalize_path_collapses_dots_and_uses_cwd_for_relative() {
         let cwd = std::env::current_dir().unwrap();
         // Relative path with a self-dot collapses cleanly.
@@ -2084,8 +2084,8 @@ mod tests {
 
     #[test]
     fn token_id_hash_is_domain_separated_and_little_endian() {
-        // Mirrors the contract asserted in cli_kv::tests so the single
-        // source of truth here stays cross-checked against its former clone.
+        // The prefix-token hash recorded by `ember kv` traces: a pinned
+        // golden value, so any change to the encoding is caught here.
         assert_eq!(
             hash_token_ids(&[1, 2, u32::MAX]),
             "7ba3fbe5e313572a9a6ee56956380b6a07a48019956aaf835c5d441babe7924e"
@@ -2101,18 +2101,8 @@ mod tests {
         // End-to-end: the hash recorded into provenance by export_native must
         // equal the standalone hasher applied to the same token IDs.
         let tokens: Vec<u32> = (0..5).collect();
-        let mut cache = KVCache::new(2, 2, 4, 8);
-        for position in 0..5 {
-            for layer in 0..2 {
-                let keys: Vec<f32> = (0..8).map(|i| (position * 8 + i) as f32).collect();
-                cache.append(layer, position, &keys, &[0.0; 8]);
-            }
-            cache.advance_cursor();
-        }
-        let exported =
-            KvSnapshot::export_native(&cache, target(8), Some(&tokens), Some(99)).unwrap();
         assert_eq!(
-            exported.manifest().provenance.prefix_token_ids_sha256,
+            snapshot(5, 8).manifest().provenance.prefix_token_ids_sha256,
             Some(hash_token_ids(&tokens))
         );
     }

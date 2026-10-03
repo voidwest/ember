@@ -338,14 +338,7 @@ mod tests {
 
     #[test]
     fn unknown_kind_for_missing_trailing_snapshot_files() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember-inspect-kind-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = crate::v05::testutil::temp_root("inspect-kind");
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("manifest.json"), b"{}").unwrap();
         assert_eq!(detect_kind(&dir), FileKind::Unknown);
@@ -358,15 +351,6 @@ mod tests {
         let path = dir.join(format!("ember-inspect-magic-{}", std::process::id()));
         std::fs::write(&path, b"GGUF\x03\0\0\0rest").unwrap();
         assert_eq!(detect_kind(&path), FileKind::Gguf);
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn non_gguf_bytes_are_unknown() {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("ember-inspect-junk-{}", std::process::id()));
-        std::fs::write(&path, b"definitely not a model file").unwrap();
-        assert_eq!(detect_kind(&path), FileKind::Unknown);
         std::fs::remove_file(&path).unwrap();
     }
 }

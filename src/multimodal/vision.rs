@@ -1180,6 +1180,7 @@ fn ensure_mask_shape(
 mod tests {
     use super::*;
     use crate::loader::{GgufValue, LoadedTensor};
+    use crate::multimodal::expect_load_error;
     use std::collections::HashMap;
 
     fn metadata(patch_size: u32) -> HashMap<String, GgufValue> {
@@ -1201,95 +1202,55 @@ mod tests {
         ])
     }
 
-    fn tensor(shape: &[usize]) -> LoadedTensor {
-        let elements = shape.iter().product();
-        LoadedTensor::F32(CpuTensor::from_data(shape.to_vec(), vec![0.0; elements]))
+    fn tensors(specs: &[(&str, &[usize])]) -> HashMap<String, LoadedTensor> {
+        specs
+            .iter()
+            .map(|&(name, shape)| {
+                let elements = shape.iter().product();
+                let tensor = CpuTensor::from_data(shape.to_vec(), vec![0.0; elements]);
+                (name.to_string(), LoadedTensor::F32(tensor))
+            })
+            .collect()
     }
 
-    fn loader(
-        metadata: HashMap<String, GgufValue>,
-        tensors: HashMap<String, LoadedTensor>,
-    ) -> GgufLoader {
-        GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        }
+    fn load_error(patch_size: u32, specs: &[(&str, &[usize])]) -> String {
+        let mut loader = GgufLoader::for_test(metadata(patch_size), tensors(specs));
+        expect_load_error(|| VisionModel::from_mmproj_loader(&mut loader))
     }
 
     #[test]
     fn zero_patch_size_is_an_error_not_a_num_patches_panic() {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut loader = loader(metadata(0), HashMap::new());
-            VisionModel::from_mmproj_loader(&mut loader)
-        }));
-        let result = result.expect("malformed vision metadata must not panic");
-        let error = match result {
-            Ok(_) => panic!("zero patch size unexpectedly loaded"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("patch size must be non-zero"));
+        let error = load_error(0, &[]);
+        assert!(error.contains("patch size must be non-zero"));
     }
 
     #[test]
     fn malformed_patch_rank_is_rejected_before_tensor_indexing() {
-        let mut tensors = HashMap::new();
-        tensors.insert(
-            "v.vision.embeddings.patch_embedding.weight".into(),
-            tensor(&[2, 2, 3]),
+        let error = load_error(
+            2,
+            &[("v.vision.embeddings.patch_embedding.weight", &[2, 2, 3])],
         );
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut loader = loader(metadata(2), tensors);
-            VisionModel::from_mmproj_loader(&mut loader)
-        }));
-        let result = result.expect("malformed patch rank must not panic");
-        let error = match result {
-            Ok(_) => panic!("malformed patch rank unexpectedly loaded"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("patch_embedding.weight"));
-        assert!(error.to_string().contains("gguf dims"));
+        assert!(error.contains("patch_embedding.weight"));
+        assert!(error.contains("gguf dims"));
     }
 
     #[test]
     fn malformed_linear_rank_is_rejected_without_transpose_panic() {
-        let mut tensors = HashMap::new();
-        tensors.insert(
-            "v.vision.embeddings.patch_embedding.weight".into(),
-            tensor(&[2, 2, 3, 4]),
+        let error = load_error(
+            2,
+            &[
+                ("v.vision.embeddings.patch_embedding.weight", &[2, 2, 3, 4]),
+                ("v.vision.embeddings.patch_embedding.bias", &[4]),
+                ("v.vision.embeddings.position_embedding.weight", &[4, 1]),
+                ("v.vision.encoder.layers.0.layer_norm1.weight", &[4]),
+                ("v.vision.encoder.layers.0.layer_norm1.bias", &[4]),
+                (
+                    "v.vision.encoder.layers.0.self_attn.q_proj.weight",
+                    &[4, 4, 1],
+                ),
+            ],
         );
-        tensors.insert(
-            "v.vision.embeddings.patch_embedding.bias".into(),
-            tensor(&[4]),
-        );
-        tensors.insert(
-            "v.vision.embeddings.position_embedding.weight".into(),
-            tensor(&[4, 1]),
-        );
-        tensors.insert(
-            "v.vision.encoder.layers.0.layer_norm1.weight".into(),
-            tensor(&[4]),
-        );
-        tensors.insert(
-            "v.vision.encoder.layers.0.layer_norm1.bias".into(),
-            tensor(&[4]),
-        );
-        tensors.insert(
-            "v.vision.encoder.layers.0.self_attn.q_proj.weight".into(),
-            tensor(&[4, 4, 1]),
-        );
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut loader = loader(metadata(2), tensors);
-            VisionModel::from_mmproj_loader(&mut loader)
-        }));
-        let result = result.expect("malformed linear rank must not panic");
-        let error = match result {
-            Ok(_) => panic!("malformed linear rank unexpectedly loaded"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("q_proj.weight"));
-        assert!(error.to_string().contains("expected"));
+        assert!(error.contains("q_proj.weight"));
+        assert!(error.contains("expected"));
     }
 }

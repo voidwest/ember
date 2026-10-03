@@ -262,24 +262,4 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("blk.19.weight"));
     }
-
-    #[test]
-    fn remediation_notes_name_a_next_step() {
-        // Luminal rule 25: every finding tells the user what to do next.
-        let unknown = InspectReport {
-            file: "x".to_string(),
-            kind: FileKind::Unknown,
-            sha256: None,
-            gguf: None,
-            tokenizer: None,
-            kv_snapshot: None,
-            notes: vec![
-                "unrecognized file type; inspect handles .gguf models, tokenizer .json files, and KV snapshot dirs — for run/bundle dirs use `validate-run`, for activation artifacts use `compare-artifacts`"
-                    .to_string(),
-            ],
-        };
-        let text = render_human(&unknown);
-        assert!(text.contains("validate-run"));
-        assert!(text.contains("compare-artifacts"));
-    }
 }

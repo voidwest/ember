@@ -1162,10 +1162,19 @@ mod tests {
     }
 
     #[test]
-    fn a_kept_result_survives_a_write_and_read() {
-        let path = temp_path("result-roundtrip");
+    fn missing_file_is_an_empty_store_not_an_error() {
+        let store = load(temp_path("missing")).expect("a missing file is a fresh install");
+        assert!(store.runs.is_empty());
+        assert!(store.models.is_empty());
+        assert!(store.draft.is_none());
+    }
+
+    #[test]
+    fn round_trips_through_disk() {
+        let path = temp_path("roundtrip");
         let mut store = AppStore::default();
         let mut run = run(1, 1_700_000_000, false);
+        // A kept result survives the write and read with the rest.
         run.result = Some(RecordResult {
             baseline_text: "Paris.".into(),
             intervention_text: "fog".into(),
@@ -1185,25 +1194,7 @@ mod tests {
             peak_relative_l2: Some(1.25),
             tokens_equal: false,
         });
-        store.push_run(run.clone());
-        store.write(path.clone()).expect("write");
-        let loaded = load(path).expect("read");
-        assert_eq!(loaded.runs[0].result, run.result);
-    }
-
-    #[test]
-    fn missing_file_is_an_empty_store_not_an_error() {
-        let store = load(temp_path("missing")).expect("a missing file is a fresh install");
-        assert!(store.runs.is_empty());
-        assert!(store.models.is_empty());
-        assert!(store.draft.is_none());
-    }
-
-    #[test]
-    fn round_trips_through_disk() {
-        let path = temp_path("roundtrip");
-        let mut store = AppStore::default();
-        store.push_run(run(1, 1_700_000_000, false));
+        store.push_run(run);
         store.touch_model("/models/llama-q8_0.gguf", 1_700_000_001);
         store.draft = Some(Draft {
             revision: 4,
@@ -1216,6 +1207,7 @@ mod tests {
         store.write(&path).expect("write");
 
         let read = load(&path).expect("read back");
+        assert!(read.runs[0].result.is_some());
         assert_eq!(read.runs, store.runs);
         assert_eq!(read.models, store.models);
         assert_eq!(read.draft, store.draft);
@@ -1291,22 +1283,6 @@ mod tests {
     }
 
     #[test]
-    fn a_store_without_optional_sections_still_reads() {
-        // Runs-only file, written by an earlier build of the same major schema.
-        let path = temp_path("minimal");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            format!("{{\"schema\":\"{STORE_SCHEMA}\",\"schema_version\":{STORE_SCHEMA_MAJOR}}}"),
-        )
-        .expect("write");
-        let store = load(&path).expect("optional sections default");
-        assert!(store.runs.is_empty());
-        assert!(store.draft.is_none());
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
     fn run_numbers_continue_from_a_legacy_store() {
         // A store written before `last_run_number` existed: numbering resumes
         // from the highest stored run instead of restarting at 1.
@@ -1376,12 +1352,7 @@ mod tests {
                 finished_at: 200
             }]
         );
-        let numbers: Vec<(u64, i64)> = on_disk
-            .runs
-            .iter()
-            .map(|run| (run.number, run.finished_at))
-            .collect();
-        assert_eq!(numbers, vec![(2, 200), (1, 100)]);
+        assert_eq!(keys(&on_disk), vec![(2, 200), (1, 100)]);
         assert_eq!(on_disk.last_run_number, 2);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -1514,7 +1485,11 @@ mod tests {
             format!("{{\"schema\":\"{STORE_SCHEMA}\",\"schema_version\":{STORE_SCHEMA_MAJOR}}}"),
         )
         .unwrap();
+        // Runs-only file, written by an earlier build of the same major
+        // schema: the optional sections default.
         let loaded = load(&path).unwrap();
+        assert!(loaded.runs.is_empty());
+        assert!(loaded.draft.is_none());
         assert_eq!(loaded.schema_minor, 0);
         assert!(!loaded.written_by_newer_build());
         loaded.save_merged(&path).unwrap();

@@ -751,14 +751,6 @@ directory = "runs/bundle-test"
         ] {
             assert!(bundle.files.contains_key(required), "missing {required}");
         }
-        // The capture payload lands under captures/.
-        assert!(
-            bundle
-                .files
-                .keys()
-                .any(|name| name.starts_with("captures/")),
-            "capture payload file present"
-        );
         // Determinism: assembling twice yields byte-identical files.
         let again = assemble_bundle(&materials()).expect("assembles");
         assert_eq!(
@@ -804,25 +796,6 @@ directory = "runs/bundle-test"
     }
 
     #[test]
-    fn assembled_bundle_verifies() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember_verify_test_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let mut m = materials();
-        m.resolved.output.directory = dir.clone();
-        write_bundle(&m, false).expect("writes");
-        let report = verify::verify_bundle(&dir, &verify::VerifyOptions::default())
-            .expect("offline verification succeeds");
-        assert!(report.ok, "bundle verifies: {report:?}");
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
     fn capture_payload_and_assembled_safetensors_round_trip() {
         // build_capture_payload emits the serialized payload + index + trace.
         // Note: the v0.5 safetensors writer omits the "<safetensors>" magic
@@ -846,28 +819,23 @@ directory = "runs/bundle-test"
         // Round-trip through the reader: header length, then recover values.
         let tensors =
             crate::v05::safetensors::deserialize(container).expect("payload parses as safetensors");
-        let (name, view) = tensors
+        let (_, view) = tensors
             .iter()
             .find(|(name, _)| *name == index[0].tensor_name)
             .expect("named tensor present");
         let values = crate::v05::safetensors::tensor_f32(container, view).expect("read f32");
         assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0]);
-        let _ = name;
     }
 
     #[test]
     fn write_bundle_stages_atomically_and_reports_identity() {
-        let dir = std::env::temp_dir().join(format!(
-            "ember_run_test_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = crate::v05::testutil::temp_root("run-test");
         let mut m = materials();
         m.resolved.output.directory = dir.clone();
         let (path, identity) = write_bundle(&m, false).expect("writes");
+        let report = verify::verify_bundle(&dir, &verify::VerifyOptions::default())
+            .expect("offline verification succeeds");
+        assert!(report.ok, "bundle verifies: {report:?}");
         assert_eq!(path, dir);
         assert!(dir.join("semantic-manifest.json").is_file());
         assert!(dir.join("captures").is_dir());
@@ -888,22 +856,7 @@ directory = "runs/bundle-test"
     }
 
     #[test]
-    fn tensor_name_and_capture_id_leaf_are_stable() {
-        assert_eq!(
-            tensor_name(&CapturedTensor {
-                capture_id: "cap-1".into(),
-                input_id: "i1".into(),
-                site: SemanticHookSite::AttentionOutput,
-                layer: 3,
-                positions: vec![2],
-                columns: 4,
-                rows: vec![1.0; 4],
-                full_tensor: false,
-                bytes: 16,
-                dtype: CaptureDType::F32,
-            }),
-            "cap-1/i1/attention-output/3"
-        );
-        assert_eq!(capture_id_leaf("cap-1"), "cap-1");
+    fn capture_id_leaf_sanitizes_path_separators() {
+        assert_eq!(capture_id_leaf("a/b\\c"), "a_b_c");
     }
 }

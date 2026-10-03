@@ -1269,11 +1269,7 @@ mod tests {
     fn llama_cpp_external_rejects_invalid_binary_path() {
         let dir = temp_test_dir("invalid_bin");
         let model = write_file(&dir, "model.gguf", "dummy");
-        let samples = write_file(
-            &dir,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
+        let samples = write_samples(&dir);
         let mut config = external_config(&dir, &model, &samples, &dir.join("missing-bin"));
         config.layers.clear();
         let err = LlamaCppExternalBackend::from_config(&config).expect_err("invalid binary");
@@ -1287,11 +1283,7 @@ mod tests {
     fn llama_cpp_external_rejects_invalid_model_path() {
         let dir = temp_test_dir("invalid_model");
         let script = write_executable(&dir, "extract.sh", "#!/bin/sh\nexit 0\n");
-        let samples = write_file(
-            &dir,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
+        let samples = write_samples(&dir);
         let config = external_config(&dir, &dir.join("missing.gguf"), &samples, &script);
         let err = LlamaCppExternalBackend::from_config(&config).expect_err("invalid model");
         assert!(err.to_string().contains("invalid GGUF model path"));
@@ -1303,11 +1295,7 @@ mod tests {
         let dir = temp_test_dir("unsupported_layers");
         let script = write_executable(&dir, "extract.sh", "#!/bin/sh\nexit 0\n");
         let model = write_file(&dir, "model.gguf", "dummy");
-        let samples = write_file(
-            &dir,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
+        let samples = write_samples(&dir);
         let mut config = external_config(&dir, &model, &samples, &script);
         config.layers = vec![0];
         let err = LlamaCppExternalBackend::from_config(&config).expect_err("unsupported layers");
@@ -1326,11 +1314,7 @@ mod tests {
             "#!/bin/sh\necho external extractor failed >&2\nexit 23\n",
         );
         let model = write_file(&dir, "model.gguf", "dummy");
-        let samples = write_file(
-            &dir,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
+        let samples = write_samples(&dir);
         let config = external_config(&dir.join("run"), &model, &samples, &script);
         let err = run_llama_cpp_external_backend(&config).expect_err("external failure");
         let text = err.to_string();
@@ -1343,109 +1327,30 @@ mod tests {
     fn llama_cpp_external_validates_produced_manifest_skeleton() {
         let dir = temp_test_dir("manifest_skeleton");
         let run_dir = dir.join("run");
+        let staged = dir.join("staged");
+        fs::create_dir_all(&staged).expect("create staged dir");
         let model = write_file(&dir, "model.gguf", "dummy");
-        let samples = write_file(
-            &dir,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        let samples = write_samples(&dir);
+        // The extractor publishes a complete, contract-valid skeleton (no
+        // layers, no logits) prepared for `run_dir` into the run directory
+        // the harness hands it (`--request <run_dir>/request.json`).
+        write_artifact_dir(
+            &staged,
+            &run_dir,
+            &model,
+            &samples,
+            &dir.join("extract.sh"),
+            &tokenization_line(&[1, 2, 3]),
+            None,
         );
-        let prompt_hash = stable_prompt_hash("hello");
-        let order_hash = sample_order_hash(&[("s0".to_string(), prompt_hash.clone())]);
-        let config = external_config(&run_dir, &model, &samples, &dir.join("extract.sh"));
-        let canonical_config = canonical_config_toml(&config).unwrap();
-        let config_hash = stable_bytes_hash(canonical_config.as_bytes());
-
-        let manifest = serde_json::json!({
-            "schema_version": ARTIFACT_CONTRACT_VERSION,
-            "layout": ARTIFACT_LAYOUT,
-            "artifact_kind": "ember_hidden_states",
-            "created_at_unix": 0,
-            "run_id": null,
-            "run_dir": run_dir.to_string_lossy(),
-            "config_path": CONFIG_FILENAME,
-            "samples_path": SAMPLES_FILENAME,
-            "tokenization_path": TOKENIZATION_FILENAME,
-            "positions_path": POSITIONS_FILENAME,
-            "checksums_path": CHECKSUMS_FILENAME,
-            "report_path": REPORT_FILENAME,
-            "logits_path": null,
-            "tensor_contract": {
-                "storage": "layer-sharded-npy",
-                "dtype": "f32",
-                "byte_order": "little-endian",
-                "sample_axis": 0,
-                "hidden_axis": 1,
-                "layers": [],
-                "logits": null
-            },
-            "sample_count": 1,
-            "sample_order_hash": order_hash,
-            "config_hash": config_hash,
-            "dtype": "f32",
-            "output_format": "npy",
-            "model": {
-                "path": model.to_string_lossy(),
-                "architecture": null,
-                "n_layers": 0,
-                "embed_dim": 0,
-                "max_seq_len": 0,
-                "file_size_bytes": null,
-                "sha256": null,
-                "gguf_metadata": null
-            },
-            "backend": {
-                "name": "llama-cpp-external",
-                "version": null,
-                "executable": null,
-                "commit": null,
-                "details": {}
-            },
-            "extraction_config": config
-        });
-        let samples_content = format!(
-            "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"input_index\":0,\"prompt\":\"hello\",\"prompt_hash\":\"{prompt_hash}\"}}\n"
-        );
-        let tokenization_content = format!(
-            "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"token_ids\":[1,2,3],\"token_count\":3,\"prompt_hash\":\"{prompt_hash}\",\"offsets\":[[0,0],[0,2],[2,5]],\"offset_unit\":\"unicode_character_index\"}}\n"
-        );
-        let positions_content = "{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"position_mode\":\"prompt_final\",\"pooling\":\"single\",\"selected_token_positions\":[2],\"source_field\":null,\"source_value\":null,\"source_byte_span\":null}\n";
-        let manifest_content = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
-        let report_content = "{\"schema_version\":2,\"layout\":\"ember.layer_sharded_npy.v1\",\"status\":\"complete\",\"sample_count\":1,\"layer_count\":0,\"logits_written\":false}\n";
-        let checksums = serde_json::json!({
-            CONFIG_FILENAME: crate::extraction::sha256_bytes(canonical_config.as_bytes()),
-            MANIFEST_FILENAME: crate::extraction::sha256_bytes(manifest_content.as_bytes()),
-            SAMPLES_FILENAME: crate::extraction::sha256_bytes(samples_content.as_bytes()),
-            TOKENIZATION_FILENAME: crate::extraction::sha256_bytes(tokenization_content.as_bytes()),
-            POSITIONS_FILENAME: crate::extraction::sha256_bytes(positions_content.as_bytes()),
-            REPORT_FILENAME: crate::extraction::sha256_bytes(report_content.as_bytes()),
-        });
-        let checksums_content = format!("{}\n", serde_json::to_string_pretty(&checksums).unwrap());
+        // config.toml is the harness's own output; validation must check it.
+        fs::remove_file(staged.join(CONFIG_FILENAME)).expect("drop staged config");
         let script_body = format!(
-            r#"#!/bin/sh
-run_dir=$(dirname "$2")
-cat > "$run_dir/{samples_filename}" <<'JSON'
-{samples_content}JSON
-cat > "$run_dir/{tokenization_filename}" <<'JSON'
-{tokenization_content}JSON
-cat > "$run_dir/{positions_filename}" <<'JSON'
-{positions_content}JSON
-cat > "$run_dir/{manifest_filename}" <<'JSON'
-{manifest_content}JSON
-cat > "$run_dir/{report_filename}" <<'JSON'
-{report_content}JSON
-cat > "$run_dir/{checksums_filename}" <<'JSON'
-{checksums_content}JSON
-"#,
-            samples_filename = SAMPLES_FILENAME,
-            tokenization_filename = TOKENIZATION_FILENAME,
-            positions_filename = POSITIONS_FILENAME,
-            manifest_filename = MANIFEST_FILENAME,
-            report_filename = REPORT_FILENAME,
-            checksums_filename = CHECKSUMS_FILENAME,
+            "#!/bin/sh\ncp '{}'/* \"$(dirname \"$2\")\"/\n",
+            staged.display()
         );
         let script = write_executable(&dir, "extract.sh", &script_body);
-        let mut config = config;
-        config.llama_cpp_binary = Some(script.to_string_lossy().to_string());
+        let config = external_config(&run_dir, &model, &samples, &script);
 
         let output = run_llama_cpp_external_backend(&config).expect("external skeleton validates");
         assert_eq!(output.sample_count, 1);
@@ -1515,22 +1420,33 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
         path
     }
 
+    #[cfg(unix)]
+    fn write_samples(dir: &std::path::Path) -> PathBuf {
+        write_file(
+            dir,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        )
+    }
+
     // ------------------------------------------------------------------
     // compare_backend_artifacts: parity reporting between two artifact dirs
     // ------------------------------------------------------------------
 
-    /// Write a complete, validation-passing v0.2 artifact run directory.
-    /// `logits` optionally writes logits.npy and advertises it in the manifest.
+    /// Write the files of a complete, validation-passing v0.2 artifact run
+    /// directory for `run_dir` into `out` (usually `run_dir` itself), with the
+    /// prompt-final [`POSITIONS_LINE`]. `logits` optionally writes logits.npy
+    /// and advertises it in the manifest.
     fn write_artifact_dir(
-        dir: &std::path::Path,
+        out: &std::path::Path,
+        run_dir: &std::path::Path,
         model: &std::path::Path,
         samples: &std::path::Path,
         binary: &std::path::Path,
         tokenization: &str,
-        positions: &str,
         logits: Option<(&[usize; 2], Vec<f32>)>,
     ) {
-        let config = external_config(dir, model, samples, binary);
+        let config = external_config(run_dir, model, samples, binary);
         let canonical_config = canonical_config_toml(&config).expect("canonical config");
         let config_hash = stable_bytes_hash(canonical_config.as_bytes());
         let prompt_hash = stable_prompt_hash("hello");
@@ -1546,7 +1462,7 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
         let (logits_path, logits_contract) = match logits {
             Some((shape, data)) => {
                 crate::npy::write_npy_2d(
-                    &dir.join(LOGITS_FILENAME).to_string_lossy(),
+                    &out.join(LOGITS_FILENAME).to_string_lossy(),
                     &data,
                     shape,
                 )
@@ -1564,7 +1480,7 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
             "artifact_kind": "ember_hidden_states",
             "created_at_unix": 0,
             "run_id": null,
-            "run_dir": dir.to_string_lossy(),
+            "run_dir": run_dir.to_string_lossy(),
             "config_path": CONFIG_FILENAME,
             "samples_path": SAMPLES_FILENAME,
             "tokenization_path": TOKENIZATION_FILENAME,
@@ -1610,7 +1526,7 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
             "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"input_index\":0,\"prompt\":\"hello\",\"prompt_hash\":\"{prompt_hash}\"}}\n"
         );
         let tokenization_content = format!("{tokenization}\n");
-        let positions_content = format!("{positions}\n");
+        let positions_content = format!("{POSITIONS_LINE}\n");
         let report_content = format!(
             "{{\"schema_version\":2,\"layout\":\"ember.layer_sharded_npy.v1\",\"status\":\"complete\",\"sample_count\":1,\"layer_count\":0,\"logits_written\":{logits_written}}}\n"
         );
@@ -1623,16 +1539,16 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
             POSITIONS_FILENAME: crate::extraction::sha256_bytes(positions_content.as_bytes()),
             REPORT_FILENAME: crate::extraction::sha256_bytes(report_content.as_bytes()),
         });
-        std::fs::write(dir.join(CONFIG_FILENAME), &canonical_config).unwrap();
-        std::fs::write(dir.join(SAMPLES_FILENAME), &samples_content).unwrap();
-        std::fs::write(dir.join(TOKENIZATION_FILENAME), &tokenization_content).unwrap();
-        std::fs::write(dir.join(POSITIONS_FILENAME), &positions_content).unwrap();
-        std::fs::write(dir.join(REPORT_FILENAME), &report_content).unwrap();
-        std::fs::write(dir.join(MANIFEST_FILENAME), &manifest_content).unwrap();
+        std::fs::write(out.join(CONFIG_FILENAME), &canonical_config).unwrap();
+        std::fs::write(out.join(SAMPLES_FILENAME), &samples_content).unwrap();
+        std::fs::write(out.join(TOKENIZATION_FILENAME), &tokenization_content).unwrap();
+        std::fs::write(out.join(POSITIONS_FILENAME), &positions_content).unwrap();
+        std::fs::write(out.join(REPORT_FILENAME), &report_content).unwrap();
+        std::fs::write(out.join(MANIFEST_FILENAME), &manifest_content).unwrap();
         if logits_file_bytes.is_some() {
             // checksums.json records the npy *file* bytes; the writer pads
             // the header, so hash what is actually on disk.
-            let file_bytes = std::fs::read(dir.join(LOGITS_FILENAME)).expect("logits on disk");
+            let file_bytes = std::fs::read(out.join(LOGITS_FILENAME)).expect("logits on disk");
             let checksums = checksums.as_object_mut().expect("checksums object");
             checksums.insert(
                 LOGITS_FILENAME.to_string(),
@@ -1640,7 +1556,7 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
             );
         }
         let checksums_content = format!("{}\n", serde_json::to_string_pretty(&checksums).unwrap());
-        std::fs::write(dir.join(CHECKSUMS_FILENAME), &checksums_content).unwrap();
+        std::fs::write(out.join(CHECKSUMS_FILENAME), &checksums_content).unwrap();
     }
 
     fn tokenization_line(token_ids: &[u32]) -> String {
@@ -1653,33 +1569,51 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
 
     const POSITIONS_LINE: &str = "{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"position_mode\":\"prompt_final\",\"pooling\":\"single\",\"selected_token_positions\":[2],\"source_field\":null,\"source_value\":null,\"source_byte_span\":null}";
 
+    /// Sibling `native`/`external` run dirs sharing one model, samples file
+    /// and extractor script, for `compare_backend_artifacts` parity tests.
+    struct CompareFixture {
+        native: PathBuf,
+        external: PathBuf,
+        model: PathBuf,
+        samples: PathBuf,
+        binary: PathBuf,
+    }
+
+    impl CompareFixture {
+        fn new(name: &str) -> Self {
+            let root = temp_test_dir(name);
+            let (native, external) = (root.join("native"), root.join("external"));
+            std::fs::create_dir_all(&native).unwrap();
+            std::fs::create_dir_all(&external).unwrap();
+            Self {
+                native,
+                external,
+                model: write_file(&root, "model.gguf", "dummy"),
+                samples: write_samples(&root),
+                binary: write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0"),
+            }
+        }
+
+        fn write(
+            &self,
+            dir: &std::path::Path,
+            tokenization: &str,
+            logits: Option<(&[usize; 2], Vec<f32>)>,
+        ) {
+            let (model, samples, binary) = (&self.model, &self.samples, &self.binary);
+            write_artifact_dir(dir, dir, model, samples, binary, tokenization, logits);
+        }
+    }
+
     #[test]
     fn compare_backend_artifacts_identical_reports_clean() {
-        let root = temp_test_dir("compare_clean");
-        let native = root.join("native");
-        let external = root.join("external");
-        std::fs::create_dir_all(&native).unwrap();
-        std::fs::create_dir_all(&external).unwrap();
-        let model = write_file(&root, "model.gguf", "dummy");
-        let samples = write_file(
-            &root,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
-        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        let fixture = CompareFixture::new("compare_clean");
         let tokens = tokenization_line(&[1, 2, 3]);
-        for dir in [&native, &external] {
-            write_artifact_dir(
-                dir,
-                &model,
-                &samples,
-                &binary,
-                &tokens,
-                POSITIONS_LINE,
-                None,
-            );
+        for dir in [&fixture.native, &fixture.external] {
+            fixture.write(dir, &tokens, None);
         }
-        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        let report =
+            compare_backend_artifacts(&fixture.native, &fixture.external).expect("compare");
         assert!(report.sample_order_hash_matches);
         assert!(report.prompt_hash_mismatches.is_empty());
         assert!(report.token_id_mismatches.is_empty());
@@ -1692,42 +1626,15 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
 
     #[test]
     fn compare_backend_artifacts_detects_token_and_position_mismatches() {
-        let root = temp_test_dir("compare_mismatch");
-        let native = root.join("native");
-        let external = root.join("external");
-        std::fs::create_dir_all(&native).unwrap();
-        std::fs::create_dir_all(&external).unwrap();
-        let model = write_file(&root, "model.gguf", "dummy");
-        let samples = write_file(
-            &root,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
-        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
-        write_artifact_dir(
-            &native,
-            &model,
-            &samples,
-            &binary,
-            &tokenization_line(&[1, 2, 3]),
-            POSITIONS_LINE,
-            None,
-        );
+        let fixture = CompareFixture::new("compare_mismatch");
+        fixture.write(&fixture.native, &tokenization_line(&[1, 2, 3]), None);
         // external: different token ids. (Position records are fully
         // canonicalized by validation — prompt-final fixes pooling, source
         // field and positions — so position_mismatch is a defensive check
         // that cannot fire on a valid pair; we assert it stays empty.)
-        let external_positions = POSITIONS_LINE;
-        write_artifact_dir(
-            &external,
-            &model,
-            &samples,
-            &binary,
-            &tokenization_line(&[1, 2, 4]),
-            external_positions,
-            None,
-        );
-        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        fixture.write(&fixture.external, &tokenization_line(&[1, 2, 4]), None);
+        let report =
+            compare_backend_artifacts(&fixture.native, &fixture.external).expect("compare");
         assert_eq!(report.token_id_mismatches, vec![0]);
         assert!(report.position_mismatches.is_empty());
         assert!(report.prompt_hash_mismatches.is_empty());
@@ -1736,42 +1643,24 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
 
     #[test]
     fn compare_backend_artifacts_logits_identical_then_perturbed() {
-        let root = temp_test_dir("compare_logits");
-        let native = root.join("native");
-        let external = root.join("external");
-        std::fs::create_dir_all(&native).unwrap();
-        std::fs::create_dir_all(&external).unwrap();
-        let model = write_file(&root, "model.gguf", "dummy");
-        let samples = write_file(
-            &root,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
-        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        let fixture = CompareFixture::new("compare_logits");
         let tokens = tokenization_line(&[1, 2, 3]);
         let logits = (
             [1usize, 8],
             vec![0.5f32, 0.1, 2.0, -1.0, 0.0, 0.3, 4.0, 1.5],
         );
-        write_artifact_dir(
-            &native,
-            &model,
-            &samples,
-            &binary,
+        fixture.write(
+            &fixture.native,
             &tokens,
-            POSITIONS_LINE,
             Some((&logits.0, logits.1.clone())),
         );
-        write_artifact_dir(
-            &external,
-            &model,
-            &samples,
-            &binary,
+        fixture.write(
+            &fixture.external,
             &tokens,
-            POSITIONS_LINE,
             Some((&logits.0, logits.1.clone())),
         );
-        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        let report =
+            compare_backend_artifacts(&fixture.native, &fixture.external).expect("compare");
         assert_eq!(report.logits_status, "identical");
         let comparison = report.logits_comparison.expect("comparison present");
         assert!(comparison.exact_bits_equal);
@@ -1783,16 +1672,9 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
         // perturb the external logits so the argmax flips
         let mut perturbed = logits.1.clone();
         perturbed[0] = 100.0; // argmax was index 6 (4.0); now index 0
-        write_artifact_dir(
-            &external,
-            &model,
-            &samples,
-            &binary,
-            &tokens,
-            POSITIONS_LINE,
-            Some((&[1usize, 8], perturbed)),
-        );
-        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        fixture.write(&fixture.external, &tokens, Some((&[1usize, 8], perturbed)));
+        let report =
+            compare_backend_artifacts(&fixture.native, &fixture.external).expect("compare");
         assert_eq!(report.logits_status, "different");
         let comparison = report.logits_comparison.expect("comparison present");
         assert!(!comparison.exact_bits_equal);
@@ -1803,38 +1685,12 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
 
     #[test]
     fn compare_backend_artifacts_logits_one_side_only() {
-        let root = temp_test_dir("compare_logits_one_side");
-        let native = root.join("native");
-        let external = root.join("external");
-        std::fs::create_dir_all(&native).unwrap();
-        std::fs::create_dir_all(&external).unwrap();
-        let model = write_file(&root, "model.gguf", "dummy");
-        let samples = write_file(
-            &root,
-            "samples.jsonl",
-            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
-        );
-        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        let fixture = CompareFixture::new("compare_logits_one_side");
         let tokens = tokenization_line(&[1, 2, 3]);
-        write_artifact_dir(
-            &native,
-            &model,
-            &samples,
-            &binary,
-            &tokens,
-            POSITIONS_LINE,
-            Some((&[1usize, 8], vec![0.0; 8])),
-        );
-        write_artifact_dir(
-            &external,
-            &model,
-            &samples,
-            &binary,
-            &tokens,
-            POSITIONS_LINE,
-            None,
-        );
-        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        fixture.write(&fixture.native, &tokens, Some((&[1usize, 8], vec![0.0; 8])));
+        fixture.write(&fixture.external, &tokens, None);
+        let report =
+            compare_backend_artifacts(&fixture.native, &fixture.external).expect("compare");
         assert_eq!(report.logits_status, "native_only");
         assert!(report.logits_comparison.is_none());
     }

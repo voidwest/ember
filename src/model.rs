@@ -1800,28 +1800,19 @@ mod tests {
             GgufValue::Str("gpt2".to_string()),
         );
         metadata.insert("gpt2.block_count".to_string(), GgufValue::U32(1_000_000));
-        let loader = GgufLoader {
-            metadata,
-            tensors: HashMap::new(),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let loader = GgufLoader::for_test(metadata, HashMap::new());
         let count_err = Gpt2::from_loader(loader)
             .err()
             .expect("hostile block_count must be rejected before allocation");
         assert!(count_err.to_string().contains("block_count"), "{count_err}");
 
-        let mut loader = GgufLoader {
-            metadata: HashMap::new(),
-            tensors: HashMap::from([(
+        let mut loader = GgufLoader::for_test(
+            HashMap::new(),
+            HashMap::from([(
                 "bad.weight".to_string(),
                 LoadedTensor::F32(CpuTensor::from_data(vec![4], vec![0.0; 4])),
             )]),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        );
         let linear_err = take_gpt2_linear(&mut loader, "bad.weight", None)
             .err()
             .expect("non-2D linear weights must be rejected");
@@ -2052,24 +2043,6 @@ mod tests {
             .expect("forward");
         assert_eq!(out.shape(), &[2, 4], "block preserves shape");
         assert!(out.data().iter().all(|v| v.is_finite()));
-    }
-
-    #[test]
-    fn kv_cache_append_get_roundtrip_and_causal_advance() {
-        let mut cache = KVCache::new(2, 1, 4, 8);
-        assert_eq!(cache.cursor(), 0);
-        // layer 0 stores k/v at cursor 0
-        let k0 = vec![1.0f32, 2.0, 3.0, 4.0];
-        let v0 = vec![5.0f32, 6.0, 7.0, 8.0];
-        cache.append(0, 0, &k0, &v0);
-        assert_eq!(cache.cursor(), 0, "cursor advances only via advance()");
-        cache.advance_cursor();
-        assert_eq!(cache.cursor(), 1);
-        let (ck, cv, _) = cache.get_with_scratch(0);
-        let k32: Vec<f32> = ck.iter().map(|v| v.to_f32()).collect();
-        let v32: Vec<f32> = cv.iter().map(|v| v.to_f32()).collect();
-        assert_eq!(&k32[..4], &[1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(&v32[..4], &[5.0, 6.0, 7.0, 8.0]);
     }
 }
 

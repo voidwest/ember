@@ -730,36 +730,10 @@ fn perturb_values(values: &mut [f16], operation: KvPerturbOperation) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kv_snapshot::{KvLayout, KvPrecision, KvQkNormOrder, KvRopeLayout, KvRopeMetadata};
+    use crate::kv_snapshot::tests::target_with_head_dim;
 
     fn target(max_seq: usize) -> KvCompatibilityTarget {
-        KvCompatibilityTarget {
-            model_sha256: "11".repeat(32),
-            tokenizer_sha256: Some("22".repeat(32)),
-            architecture: "llama".into(),
-            max_seq,
-            layer_count: 2,
-            n_kv_heads: 2,
-            head_dim: 2,
-            precision: KvPrecision::F16,
-            layout: KvLayout::LayerHeadPositionDimensionCompact,
-            rope: KvRopeMetadata {
-                layout: KvRopeLayout::AdjacentPair,
-                dimension_count: 2,
-                theta: 10_000.0,
-                frequency_layout: "uniform-theta".into(),
-                position_origin: "absolute-zero-based".into(),
-                keys_state: "post-rope".into(),
-                qk_norm_order: KvQkNormOrder::AfterRope,
-                has_q_norm: false,
-                has_k_norm: false,
-                qk_norm_epsilon: None,
-            },
-            value_state: "projection-output".into(),
-            execution_mode: "planned".into(),
-            execution_fingerprint: "33".repeat(32),
-            plan_hash: Some("44".repeat(32)),
-        }
+        target_with_head_dim(max_seq, 2)
     }
 
     fn snapshot(sequence_length: usize) -> KvSnapshot {

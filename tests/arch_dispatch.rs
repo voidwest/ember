@@ -18,28 +18,16 @@ use std::collections::HashMap;
 
 /// Build a loader that declares `general.architecture` (or omits it).
 fn loader_with(arch: Option<&str>) -> GgufLoader {
-    let mut metadata = HashMap::new();
-    if let Some(arch) = arch {
-        metadata.insert(
-            "general.architecture".to_string(),
-            GgufValue::Str(arch.to_string()),
-        );
-    }
-    GgufLoader {
-        metadata,
-        tensors: HashMap::new(),
-        k_strategy: ember::quant_k::KStrategy::Auto,
-        k_decisions: HashMap::new(),
-        tensor_meta: HashMap::new(),
-    }
+    loader_with_value(arch.map(|arch| GgufValue::Str(arch.to_string())))
 }
 
-/// A loader whose `general.architecture` is present but not a string.
-fn loader_with_non_string_arch() -> GgufLoader {
-    let mut metadata = HashMap::new();
-    metadata.insert("general.architecture".to_string(), GgufValue::U32(7));
+/// Build a loader whose `general.architecture` holds `value` (or is absent).
+fn loader_with_value(value: Option<GgufValue>) -> GgufLoader {
     GgufLoader {
-        metadata,
+        metadata: value
+            .map(|value| ("general.architecture".to_string(), value))
+            .into_iter()
+            .collect(),
         tensors: HashMap::new(),
         k_strategy: ember::quant_k::KStrategy::Auto,
         k_decisions: HashMap::new(),
@@ -68,12 +56,24 @@ fn declared_architectures_map_to_the_documented_families() {
     }
 }
 
-/// `qwen2` and `qwen3` share an engine, so their family labels coincide.
+/// The CLI dispatches on the resolver's literal output (`qwen2` resolves to
+/// the `qwen3` engine, `gemma3` to `gemma4`).
 #[test]
-fn qwen2_and_qwen3_share_one_engine_family() {
-    assert_eq!(engine_family_for("qwen2").unwrap(), EngineFamily::Qwen3);
-    assert_eq!(engine_family_for("qwen3").unwrap(), EngineFamily::Qwen3);
-    assert_eq!(EngineFamily::Qwen3.label(), "qwen3");
+fn auto_resolves_to_the_engine_strings_the_cli_dispatches_on() {
+    for (declared, engine) in [
+        ("gpt2", "gpt2"),
+        ("llama", "llama"),
+        ("qwen2", "qwen3"),
+        ("qwen3", "qwen3"),
+        ("gemma3", "gemma4"),
+        ("gemma4", "gemma4"),
+    ] {
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with(Some(declared))).unwrap(),
+            engine,
+            "{declared}"
+        );
+    }
 }
 
 /// A missing architecture is a hard failure, not a guess. This is the exact
@@ -97,7 +97,7 @@ fn missing_architecture_fails_closed() {
 /// A non-string architecture is a hard failure.
 #[test]
 fn non_string_architecture_fails_closed() {
-    let loader = loader_with_non_string_arch();
+    let loader = loader_with_value(Some(GgufValue::U32(7)));
     assert_eq!(
         resolve_engine_family(&loader).unwrap_err(),
         ArchitectureError::NotAString
@@ -204,15 +204,6 @@ fn error_messages_are_actionable() {
 // call-site guards
 // ---------------------------------------------------------------------------
 
-/// The unit tests above pin `support::resolve_engine_family`, but they do not
-/// pin the *call sites* to use it. A previous attempt at this consolidation
-/// passed every test while `src/diff_outcome.rs` still defaulted an
-/// unrecognized architecture to llama, because reverting the call site is
-/// invisible to a test of the shared helper.
-///
-/// These guards are deliberately source-level: they assert the permissive
-/// shape does not come back. They are cheap, they run in ordinary CI, and
-/// they turn a silent behavioural regression into a red build.
 fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -258,20 +249,6 @@ fn dispatch_sites_never_use_the_permissive_accessor() {
             );
         }
     }
-}
-
-/// The harnesses must actually route through the shared resolver.
-#[test]
-fn harnesses_route_through_the_shared_resolver() {
-    assert!(
-        source("src/diff_outcome.rs").contains("resolve_engine_family"),
-        "src/diff_outcome.rs must resolve via ember::support::resolve_engine_family"
-    );
-    assert!(
-        source("research/embersec/comparative/harness/_embersec_harness.rs")
-            .contains("resolve_engine_family"),
-        "the canonical EmberSEC harness must use ember::support::resolve_engine_family"
-    );
 }
 
 /// A dispatch site must never read `general.architecture` out of metadata

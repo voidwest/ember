@@ -26,6 +26,30 @@ fn rgb_image(width: usize, height: usize) -> CpuTensor {
     CpuTensor::from_data(vec![3, height, width], data)
 }
 
+/// PNG bytes of interleaved HWC RGB8 pixels.
+fn encode_png(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
+    use image::ImageEncoder;
+    let mut buf = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut buf)
+        .write_image(rgb, width, height, image::ExtendedColorType::Rgb8)
+        .expect("encode png");
+    buf
+}
+
+/// Lossless PNG of a CHW uint8-range tensor (PngEncoder expects HWC).
+fn png_bytes(img: &CpuTensor) -> Vec<u8> {
+    let (h, w) = (img.shape()[1], img.shape()[2]);
+    let mut hwc = vec![0u8; 3 * h * w];
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..3 {
+                hwc[(y * w + x) * 3 + c] = img.data()[c * h * w + y * w + x] as u8;
+            }
+        }
+    }
+    encode_png(&hwc, w as u32, h as u32)
+}
+
 #[test]
 fn lanczos_resize_is_deterministic_and_sized() {
     let img = rgb_image(64, 48);
@@ -102,24 +126,7 @@ fn decode_rgb_roundtrip_via_png() {
     let path = std::env::temp_dir().join("ember_mm_decode_test.png");
     let img = rgb_image(8, 6);
     // write a PNG using the image crate and decode it back
-    let mut buf = std::io::Cursor::new(Vec::new());
-    {
-        use image::ImageEncoder;
-        let enc = image::codecs::png::PngEncoder::new(&mut buf);
-        // PngEncoder expects interleaved HWC RGB; our tensor is CHW
-        let (h, w) = (6usize, 8usize);
-        let mut u8data = vec![0u8; 3 * h * w];
-        for y in 0..h {
-            for x in 0..w {
-                for c in 0..3 {
-                    u8data[(y * w + x) * 3 + c] = img.data()[c * h * w + y * w + x] as u8;
-                }
-            }
-        }
-        enc.write_image(&u8data, 8, 6, image::ExtendedColorType::Rgb8)
-            .unwrap();
-    }
-    std::fs::write(&path, buf.into_inner()).unwrap();
+    std::fs::write(&path, png_bytes(&img)).unwrap();
     let decoded = decode_rgb(&path).unwrap();
     assert_eq!(decoded.shape(), &[3, 6, 8]);
     // lossless PNG: values identical
@@ -307,67 +314,74 @@ fn smolvlm_template_and_expansion() {
     assert_eq!(grid.matches("<image>").count(), 2 * 3 * 64 + 64);
 }
 
-#[test]
-fn smolvlm_assembler_scatters_features() {
-    // build a tiny embedding table and tokenizer-free assemble with a
-    // hand-rolled tokenizer stub is overkill; instead verify the scatter
-    // mechanics through the real tokenizer + a small table.
-    let path = std::env::temp_dir().join("ember_mm_tokenizer_test.json");
-    // minimal BPE tokenizer with the special tokens the assembler needs
-    // (all 36 row/col tokens, built programmatically)
-    let mut added = vec![
-        serde_json::json!({"id": 1, "content": "<|im_start|>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 2, "content": "<|im_end|>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 3, "content": "<end_of_utterance>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 4, "content": "<fake_token_around_image>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 5, "content": "<global-img>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 6, "content": "<image>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-    ];
+/// Minimal BPE tokenizer with `plain` pieces (ids from 0), the special
+/// tokens the SmolVLM assembler needs (ids from 1, including all 36
+/// row/col tokens, built programmatically), and an embedding table whose
+/// row `v` is `[10v, 10v + 1, ...]`.
+fn smolvlm_fixture(
+    file_name: &str,
+    plain: &[&str],
+    vocab_size: usize,
+    embed_dim: usize,
+) -> (
+    ember::tokenizer::EmberTokenizer,
+    ember::llama::LlamaEmbedding<CpuBackend>,
+) {
     let mut vocab = serde_json::Map::new();
-    for (i, piece) in [
-        "a", "b", "c", "d", "e", "f", "g", "User", "What", "is", "this", "?", ":",
-    ]
-    .iter()
-    .enumerate()
-    {
+    for (i, piece) in plain.iter().enumerate() {
         vocab.insert((*piece).to_string(), serde_json::json!(i));
     }
-    vocab.insert("<|im_start|>".into(), serde_json::json!(1));
-    vocab.insert("<|im_end|>".into(), serde_json::json!(2));
-    vocab.insert("<end_of_utterance>".into(), serde_json::json!(3));
-    vocab.insert("<fake_token_around_image>".into(), serde_json::json!(4));
-    vocab.insert("<global-img>".into(), serde_json::json!(5));
-    vocab.insert("<image>".into(), serde_json::json!(6));
-    for i in 0..36 {
-        let (r, c) = (i / 6 + 1, i % 6 + 1);
-        let content = format!("<row_{r}_col_{c}>");
-        added.push(serde_json::json!({"id": 7 + i, "content": content, "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}));
-        vocab.insert(content, serde_json::json!(7 + i));
+    let specials = [
+        "<|im_start|>",
+        "<|im_end|>",
+        "<end_of_utterance>",
+        "<fake_token_around_image>",
+        "<global-img>",
+        "<image>",
+    ]
+    .map(String::from)
+    .into_iter()
+    .chain((0..36).map(|i| format!("<row_{}_col_{}>", i / 6 + 1, i % 6 + 1)));
+    let mut added = Vec::new();
+    for (i, content) in specials.enumerate() {
+        let id = i + 1;
+        added.push(serde_json::json!({"id": id, "content": content, "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}));
+        vocab.insert(content, serde_json::json!(id));
     }
     let tok_json = serde_json::json!({
-        "version": "1.0",
-        "truncation": null,
-        "padding": null,
+        "version": "1.0", "truncation": null, "padding": null,
         "added_tokens": added,
         "normalizer": {"type": "NFC"},
         "pre_tokenizer": {"type": "Whitespace"},
         "model": {"type": "BPE", "vocab": vocab, "merges": []},
         "post_processor": null
     });
+    let path = std::env::temp_dir().join(file_name);
     std::fs::write(&path, serde_json::to_string(&tok_json).unwrap()).unwrap();
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&path).unwrap();
 
-    // embedding table with distinct rows
+    let table: Vec<f32> = (0..vocab_size * embed_dim)
+        .map(|i| ((i / embed_dim) * 10 + i % embed_dim) as f32)
+        .collect();
+    let table =
+        ember::llama::LlamaEmbedding::F32(CpuTensor::from_data(vec![vocab_size, embed_dim], table));
+    (tokenizer, table)
+}
+
+#[test]
+fn smolvlm_assembler_scatters_features() {
+    // build a tiny embedding table and tokenizer-free assemble with a
+    // hand-rolled tokenizer stub is overkill; instead verify the scatter
+    // mechanics through the real tokenizer + a small table.
     let embed_dim = 4;
-    let vocab = 20;
-    let mut table = vec![0.0f32; vocab * embed_dim];
-    for v in 0..vocab {
-        for e in 0..embed_dim {
-            table[v * embed_dim + e] = (v * 10 + e) as f32;
-        }
-    }
-    let table = CpuTensor::from_data(vec![vocab, embed_dim], table);
-    let table = ember::llama::LlamaEmbedding::F32(table);
+    let (tokenizer, table) = smolvlm_fixture(
+        "ember_mm_tokenizer_test.json",
+        &[
+            "a", "b", "c", "d", "e", "f", "g", "User", "What", "is", "this", "?", ":",
+        ],
+        20,
+        embed_dim,
+    );
 
     // image features: 2 tiles x 1 token each (image_seq_len = 1)
     let asm = SmolVlmAssembler {
@@ -442,57 +456,13 @@ fn smolvlm_assembler_scatters_features() {
 
 #[test]
 fn smolvlm_assembler_binds_multiple_images_in_order() {
-    // reuse a minimal tokenizer like the scatter test
-    let path = std::env::temp_dir().join("ember_mm_tokenizer_multi.json");
-    let mut added = vec![
-        serde_json::json!({"id": 1, "content": "<|im_start|>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 2, "content": "<|im_end|>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 3, "content": "<end_of_utterance>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 4, "content": "<fake_token_around_image>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 5, "content": "<global-img>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-        serde_json::json!({"id": 6, "content": "<image>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
-    ];
-    let mut vocab = serde_json::Map::new();
-    for (i, piece) in ["a", "b", "c"].iter().enumerate() {
-        vocab.insert((*piece).to_string(), serde_json::json!(i));
-    }
-    for (id, piece) in [
-        (1usize, "<|im_start|>"),
-        (2, "<|im_end|>"),
-        (3, "<end_of_utterance>"),
-        (4, "<fake_token_around_image>"),
-        (5, "<global-img>"),
-        (6, "<image>"),
-    ] {
-        vocab.insert(piece.into(), serde_json::json!(id));
-    }
-    for i in 0..36 {
-        let (r, c) = (i / 6 + 1, i % 6 + 1);
-        let content = format!("<row_{r}_col_{c}>");
-        added.push(serde_json::json!({"id": 7 + i, "content": content, "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}));
-        vocab.insert(content, serde_json::json!(7 + i));
-    }
-    let tok_json = serde_json::json!({
-        "version": "1.0", "truncation": null, "padding": null,
-        "added_tokens": added,
-        "normalizer": {"type": "NFC"},
-        "pre_tokenizer": {"type": "Whitespace"},
-        "model": {"type": "BPE", "vocab": vocab, "merges": []},
-        "post_processor": null
-    });
-    std::fs::write(&path, serde_json::to_string(&tok_json).unwrap()).unwrap();
-    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&path).unwrap();
-
     let embed_dim = 4;
-    let vocab_size = 50;
-    let mut table = vec![0.0f32; vocab_size * embed_dim];
-    for v in 0..vocab_size {
-        for e in 0..embed_dim {
-            table[v * embed_dim + e] = (v * 10 + e) as f32;
-        }
-    }
-    let table =
-        ember::llama::LlamaEmbedding::F32(CpuTensor::from_data(vec![vocab_size, embed_dim], table));
+    let (tokenizer, table) = smolvlm_fixture(
+        "ember_mm_tokenizer_multi.json",
+        &["a", "b", "c"],
+        50,
+        embed_dim,
+    );
 
     let asm = SmolVlmAssembler {
         image_seq_len: 1,
@@ -622,27 +592,11 @@ fn content_parts_represent_arbitrary_interleaving() {
 
 #[test]
 fn image_input_decodes_from_memory_bytes_and_pixels() {
-    use ember::multimodal::{ContentPart, ImageInput};
+    use ember::multimodal::ImageInput;
 
     // encode a tiny PNG in memory
     let img = rgb_image(8, 6);
-    let mut buf = std::io::Cursor::new(Vec::new());
-    {
-        use ::image::ImageEncoder;
-        let enc = ::image::codecs::png::PngEncoder::new(&mut buf);
-        let (h, w) = (6usize, 8usize);
-        let mut u8data = vec![0u8; 3 * h * w];
-        for y in 0..h {
-            for x in 0..w {
-                for c in 0..3 {
-                    u8data[(y * w + x) * 3 + c] = img.data()[c * h * w + y * w + x] as u8;
-                }
-            }
-        }
-        enc.write_image(&u8data, 8, 6, ::image::ExtendedColorType::Rgb8)
-            .unwrap();
-    }
-    let bytes: Vec<u8> = buf.into_inner();
+    let bytes = png_bytes(&img);
 
     let via_bytes = ImageInput::Bytes(bytes.clone()).decode().unwrap();
     assert_eq!(via_bytes.shape(), &[3, 6, 8]);
@@ -656,8 +610,6 @@ fn image_input_decodes_from_memory_bytes_and_pixels() {
 
     // malformed bytes fail closed with a clear error
     assert!(ImageInput::Bytes(vec![0; 10]).decode().is_err());
-
-    let _ = ContentPart::Image(ImageInput::Bytes(bytes)); // representable as a part
 }
 
 #[test]
@@ -802,7 +754,6 @@ fn feature_cache_reuses_bit_exact_and_evicts() {
     // hit replays bit-exactly
     let hit = cache.lookup(&key(1)).unwrap().clone();
     assert_eq!(hit.data(), t.data());
-    let _ = hit;
     // different content -> miss; different config -> miss
     assert!(cache.lookup(&key(2)).is_none());
     let mut fp = PreprocessFingerprint::new("t");
@@ -1223,17 +1174,8 @@ fn image_decode_applies_decoder_limits() {
     let err = decode_rgb_bytes(&bomb).expect_err("huge png must be rejected by the limits");
     assert!(err.to_string().to_lowercase().contains("limit"), "{err}");
     // A sane image still decodes through the same path.
-    use image::ImageEncoder;
-    let mut buf = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut buf)
-        .write_image(
-            &[0, 0, 0, 255, 255, 255],
-            2,
-            1,
-            image::ExtendedColorType::Rgb8,
-        )
-        .expect("encode 2x1 png");
-    let t = decode_rgb_bytes(&buf).expect("valid png decodes");
+    let png = encode_png(&[0, 0, 0, 255, 255, 255], 2, 1);
+    let t = decode_rgb_bytes(&png).expect("valid png decodes");
     assert_eq!(t.shape(), [3, 1, 2]);
 }
 
@@ -1251,12 +1193,8 @@ fn validated_image_input_rejects_malformed_pixels() {
 #[test]
 fn validated_image_input_decodes_bytes_with_format() {
     use ember::multimodal::request::{ImageInput, ValidatedImageFormat, ValidatedImageInput};
-    use image::ImageEncoder;
-    let mut buf = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut buf)
-        .write_image(&[0, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
-        .expect("encode 1x1 png");
-    let v = ValidatedImageInput::decode(&ImageInput::Bytes(buf)).expect("validated decode");
+    let png = encode_png(&[0, 0, 0], 1, 1);
+    let v = ValidatedImageInput::decode(&ImageInput::Bytes(png)).expect("validated decode");
     assert_eq!((v.width, v.height), (1, 1));
     assert_eq!(v.format, ValidatedImageFormat::Png);
     assert_eq!(v.rgb.shape(), [3, 1, 1]);

@@ -333,7 +333,9 @@ pub(crate) fn print_probe(report: &ProbeReport) {
 mod tests {
     use super::*;
     use crate::cli_experiment::{execute_prepared, prepare_run};
-    use crate::experiment_testutil::{resolve, spec_text, tiny_model, TinyModel};
+    use crate::experiment_testutil::{
+        copy_dir, resolve, resolve_err, spec_text, tiny_model, TinyModel,
+    };
     use ember::quant_k::KStrategy;
     use ember::v05::intervention::SteerNormalization;
     use ember::v05::verify::{load_bundle_for_source, verify_bundle, VerifyOptions};
@@ -488,8 +490,7 @@ target = 7
 
         // Tampering with the direction fails verification.
         let tampered = model.dir.join("tampered");
-        std::fs::create_dir_all(tampered.join("artifacts/probe")).unwrap();
-        copy_tree(&path, &tampered);
+        copy_dir(&path, &tampered);
         let forged = ember::v05::safetensors::serialize(&[ember::v05::safetensors::TensorData {
             name: "direction",
             dtype: ember::v05::safetensors::TensorDType::F32,
@@ -503,19 +504,6 @@ target = 7
                 .unwrap()
                 .ok
         );
-    }
-
-    fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
-        for entry in std::fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            let target = to.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                std::fs::create_dir_all(&target).unwrap();
-                copy_tree(&entry.path(), &target);
-            } else {
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
     }
 
     #[test]
@@ -594,18 +582,7 @@ target = 7
     #[test]
     fn probe_specs_fail_closed() {
         let model = tiny_model("probe-invalid", 2, 64, false);
-        let parse = |body: String| {
-            ember::v05::spec::RawExperimentSpec::from_toml_str(&spec_text(
-                &model,
-                "reference",
-                0,
-                &body,
-            ))
-            .unwrap()
-            .resolve()
-            .unwrap_err()
-            .to_string()
-        };
+        let parse = |body: String| resolve_err(&model, &body);
         let one_class = probe_body(
             1,
             "train = [{ text = \"w1\", label = 1 }, { text = \"w2\", label = 1 }]",

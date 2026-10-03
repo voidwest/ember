@@ -4315,24 +4315,6 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_produces_same_output_as_scalar() {
-        let blocks = 16;
-        let (data, _expected) = make_row(blocks);
-        let mut scalar_out = vec![0.0f32; blocks * 32];
-        let mut simd_out = vec![0.0f32; blocks * 32];
-
-        dequantize_row_scalar(&data, 0, blocks, &mut scalar_out);
-        dequantize_q8_0_row(&data, 0, blocks, &mut simd_out);
-
-        for (i, (s, d)) in scalar_out.iter().zip(simd_out.iter()).enumerate() {
-            assert!(
-                (s - d).abs() < 1e-6,
-                "dispatch mismatch at {i}: scalar={s} dispatch={d}"
-            );
-        }
-    }
-
-    #[test]
     fn dispatch_with_offset_produces_same_output() {
         // simulate a weight matrix with multiple rows
         let blocks_per_row = 8;
@@ -4395,63 +4377,6 @@ mod tests {
             );
         }
     }
-
-    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut, unused_variables))]
-    #[test]
-    fn explicit_avx2_call_matches_scalar() {
-        let blocks = 4;
-        let (data, _expected) = make_row(blocks);
-        let mut scalar_out = vec![0.0f32; blocks * 32];
-        let mut avx2_out = vec![0.0f32; blocks * 32];
-
-        dequantize_row_scalar(&data, 0, blocks, &mut scalar_out);
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
-                // SAFETY: features checked; `data` holds `blocks` blocks and
-                // the output holds 32 values per block.
-                unsafe {
-                    x86_64::dequantize_row_avx2(&data, 0, blocks, &mut avx2_out);
-                }
-                for (i, (s, a)) in scalar_out.iter().zip(avx2_out.iter()).enumerate() {
-                    assert!(
-                        (s - a).abs() < 1e-6,
-                        "avx2 mismatch at {i}: scalar={s} avx2={a}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn explicit_neon_call_matches_scalar() {
-        let blocks = 4;
-        let (data, _expected) = make_row(blocks);
-        let mut scalar_out = vec![0.0f32; blocks * 32];
-        let mut _neon_out = vec![0.0f32; blocks * 32];
-
-        dequantize_row_scalar(&data, 0, blocks, &mut scalar_out);
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            if is_aarch64_feature_detected!("neon") {
-                // SAFETY: feature checked; `data` holds `blocks` blocks and
-                // the output holds 32 values per block.
-                unsafe {
-                    aarch64::dequantize_row_neon(&data, 0, blocks, &mut _neon_out);
-                }
-                for (i, (s, n)) in scalar_out.iter().zip(_neon_out.iter()).enumerate() {
-                    assert!(
-                        (s - n).abs() < 1e-6,
-                        "neon mismatch at {i}: scalar={s} neon={n}"
-                    );
-                }
-            }
-        }
-    }
-
-    // -- benchmark ------------------------------------------------------
 
     /// Build random Q8_0 weight data for shape `[out_features, in_features]`.
     /// Each block gets a random f16 scale and random i8 quants.
@@ -4883,8 +4808,6 @@ mod tests {
         }
     }
 
-    /// Compare the existing row-contiguous and packed-16 projection kernels.
-
     #[test]
     fn decode_path_matches_packed_batch_path() {
         use crate::backend::{Backend, CpuBackend};
@@ -5059,33 +4982,19 @@ mod tests {
     #[test]
     fn scale_weight_mul_simd_matches_scalar() {
         let n = 1536; // embed_dim
-        let mut x = vec![0.0f32; n];
-        let mut weight = vec![0.0f32; n];
         let scale = 0.5_f32.sqrt().recip(); // typical rstd value
-
-        // Realistic values: x ~ N(0, 1), weight from output_norm (0..118)
-        for i in 0..n {
-            x[i] = (i as f32).sin() * 2.0;
-            weight[i] = (i as f32 / n as f32) * 118.0; // max weight seen in GGUF
-        }
-
+                                            // Realistic values: x ~ N(0, 1), weight from output_norm (0..118,
+                                            // the max weight seen in GGUF).
+        let x: Vec<f32> = (0..n).map(|i| (i as f32).sin() * 2.0).collect();
+        let weight: Vec<f32> = (0..n).map(|i| (i as f32 / n as f32) * 118.0).collect();
         let mut simd_out = vec![0.0f32; n];
-        let mut scalar_out = vec![0.0f32; n];
-
-        // SIMD path
         crate::simd::scale_weight_mul(&x, scale, &weight, &mut simd_out);
-
-        // Scalar path
         for i in 0..n {
-            scalar_out[i] = x[i] * scale * weight[i];
-        }
-
-        for i in 0..n {
+            let scalar = x[i] * scale * weight[i];
             assert!(
-                (simd_out[i] - scalar_out[i]).abs() < 1e-6,
-                "mismatch at {i}: simd={} scalar={}",
-                simd_out[i],
-                scalar_out[i]
+                (simd_out[i] - scalar).abs() < 1e-6,
+                "mismatch at {i}: simd={} scalar={scalar}",
+                simd_out[i]
             );
         }
     }

@@ -1014,14 +1014,6 @@ mod tests {
     }
 
     #[test]
-    fn test_add() {
-        let a = CpuTensor::from_data(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
-        let b = CpuTensor::from_data(vec![2, 2], vec![1.0, 1.0, 1.0, 1.0]);
-        let c = a.add(&b);
-        assert_eq!(c.data(), &[2.0, 3.0, 4.0, 5.0]);
-    }
-
-    #[test]
     fn softmax_shares_mass_across_positive_infinities() {
         let tensor = CpuTensor::from_data(vec![1, 3], vec![f32::INFINITY, 0.0, f32::INFINITY]);
         assert_eq!(tensor.softmax().data(), &[0.5, 0.0, 0.5]);

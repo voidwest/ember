@@ -578,12 +578,11 @@ mod tests {
         };
         let mut kinds: Vec<_> = errors.errors.iter().map(|e| e.kind).collect();
         kinds.sort_unstable_by_key(|k| format!("{k:?}"));
-        let expected = vec![
+        let mut expected = vec![
             ValidationErrorKind::EnumViolation,   // op=div
             ValidationErrorKind::MissingRequired, // a absent
             ValidationErrorKind::UnknownField,    // zz
         ];
-        let mut expected = expected;
         expected.sort_unstable_by_key(|k| format!("{k:?}"));
         assert_eq!(kinds, expected);
     }
@@ -800,7 +799,6 @@ mod canonical_tests {
             r#"{"alpha":{"x":"s\"q","y":[3,{"a":null,"b":true}]},"mid":[],"zeta":1}"#
         );
         let pretty = canonical_json_pretty(&v);
-        assert!(pretty.starts_with("{\n  \"alpha\": {"));
         assert_eq!(
             pretty,
             concat!(

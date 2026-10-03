@@ -1472,16 +1472,6 @@ mod tests {
     }
 
     #[test]
-    fn prefix_token_trace_hash_is_domain_separated_and_little_endian() {
-        // The shared hasher lives in kv_snapshot; this test locks in that the
-        // contract observed here matches the single source of truth.
-        assert_eq!(
-            ember::kv_snapshot::hash_token_ids(&[1, 2, u32::MAX]),
-            "7ba3fbe5e313572a9a6ee56956380b6a07a48019956aaf835c5d441babe7924e"
-        );
-    }
-
-    #[test]
     fn trace_outputs_must_be_distinct_and_outside_snapshot() {
         assert!(prepare_trace_outputs(
             Path::new("validation/logits.npy"),

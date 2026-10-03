@@ -575,15 +575,6 @@ mod tests {
     }
 
     #[test]
-    fn sign_verify_round_trip_with_identity_check() {
-        let manifest = run_manifest_value();
-        let envelope = build_envelope(&manifest, &SEED, 1_700_000_000).unwrap();
-        let verified = verify_envelope(&envelope).unwrap();
-        assert!(verified.identity_digest.is_some());
-        assert_eq!(verified.signer_fingerprint.len(), 64);
-    }
-
-    #[test]
     fn tampered_input_fails_digest_check() {
         let manifest = run_manifest_value();
         let mut envelope = build_envelope(&manifest, &SEED, 1_700_000_000).unwrap();
@@ -644,6 +635,8 @@ mod tests {
         let envelope = build_envelope(&manifest, &SEED, 1_700_000_000).unwrap();
         assert_eq!(envelope["schema"], EVIDENCE_SCHEMA);
         let verified = verify_envelope(&envelope).unwrap();
+        assert!(verified.identity_digest.is_some());
+        assert_eq!(verified.signer_fingerprint.len(), 64);
         assert!(verified.timestamp_signed);
         assert_eq!(verified.signed_at_unix, Some(1_700_000_000));
         let tamper: [(&str, serde_json::Value); 4] = [

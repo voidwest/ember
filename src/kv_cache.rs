@@ -767,6 +767,23 @@ mod tests {
         );
         assert_eq!(k_out[0].to_f32(), 1.0);
         assert_eq!(v_out[0].to_f32(), 2.0);
+
+        // Element order survives the round trip through get_with_scratch,
+        // and append alone never moves the cursor.
+        let mut cache = KVCache::new(2, 1, 4, 8);
+        assert_eq!(cache.cursor(), 0);
+        cache.append(0, 0, &[1.0, 2.0, 3.0, 4.0], &[5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(
+            cache.cursor(),
+            0,
+            "cursor advances only via advance_cursor()"
+        );
+        cache.advance_cursor();
+        assert_eq!(cache.cursor(), 1);
+        let (k, v, _) = cache.get_with_scratch(0);
+        let widen = |values: &[f16]| values[..4].iter().map(|v| v.to_f32()).collect::<Vec<_>>();
+        assert_eq!(widen(k), [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(widen(v), [5.0, 6.0, 7.0, 8.0]);
     }
 
     #[test]

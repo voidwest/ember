@@ -2040,50 +2040,15 @@ directory = "runs/runner-test"
 
     #[test]
     fn decode_phase_generated_step_intervention_applies_to_decode_row() {
-        // Build a spec whose mlp-output intervention targets generated step 1
-        // (the first decode token, absolute position = prompt_len + 0).
-        let text = r#"
-schema = "ember.experiment.v1"
-
-[experiment]
-name = "decode-intervention-test"
-description = "generated-step intervention"
-seed = 1
-
-[model]
-path = "/models/tiny.gguf"
-expected_sha256 = "aa"
-
-[execution]
-mode = "planned"
-threads = 1
-deterministic = true
-
-[generation]
-max_new_tokens = 2
-temperature = 0.0
-
-[[inputs]]
-id = "i1"
-text = "hello world"
-
-[[interventions]]
-id = "iv-gen"
-site = "mlp-output"
-layers = [1]
-operation = { kind = "zero" }
-
-[interventions.tokens]
-kind = "generated-step"
-step = 1
-
-[output]
-directory = "runs/decode-intervention-test"
-"#;
-        let spec = RawExperimentSpec::from_toml_str(text)
-            .unwrap()
-            .resolve()
-            .expect("resolves");
+        // One input; iv-zero (mlp-output, layer 1, zero) retargeted to
+        // generated step 1 (the first decode token, absolute position =
+        // prompt_len + 0).
+        let mut spec = test_spec();
+        spec.inputs.truncate(1);
+        spec.captures.clear();
+        spec.interventions.truncate(1);
+        spec.interventions[0].id = "iv-gen".into();
+        spec.interventions[0].tokens = TokenSelector::GeneratedStep { step: 1 };
         let mut e = new_experiment(&spec, 0);
         let prefill = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
         e.before_prefill(&prefill).expect("prepare");
@@ -2123,47 +2088,16 @@ directory = "runs/decode-intervention-test"
 
     #[test]
     fn generated_step_capture_fires_only_on_requested_step() {
-        let text = r#"
-schema = "ember.experiment.v1"
-
-[experiment]
-name = "gen-capture-test"
-description = "generated-step capture"
-seed = 1
-
-[model]
-path = "/models/tiny.gguf"
-expected_sha256 = "aa"
-
-[execution]
-mode = "planned"
-threads = 1
-deterministic = true
-
-[generation]
-max_new_tokens = 2
-temperature = 0.0
-
-[[inputs]]
-id = "i1"
-text = "hello world"
-
-[[captures]]
-id = "cap-gen"
-site = "mlp-output"
-layers = [0]
-
-[captures.tokens]
-kind = "generated-step"
-step = 1
-
-[output]
-directory = "runs/gen-capture-test"
-"#;
-        let spec = RawExperimentSpec::from_toml_str(text)
-            .unwrap()
-            .resolve()
-            .expect("resolves");
+        // One input; an mlp-output layer-0 selected-rows capture of
+        // generated step 1, no interventions.
+        let mut spec = test_spec();
+        spec.inputs.truncate(1);
+        spec.interventions.clear();
+        spec.captures.remove(0);
+        spec.captures[0].id = "cap-gen".into();
+        spec.captures[0].layers = LayerSelector::List(vec![0]);
+        spec.captures[0].storage = CaptureStorage::SelectedRows;
+        spec.captures[0].tokens = TokenSelector::GeneratedStep { step: 1 };
         let mut e = new_experiment(&spec, 0);
         let prefill = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
         e.before_prefill(&prefill).expect("prepare");

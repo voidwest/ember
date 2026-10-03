@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "external_benchmark.py"
@@ -16,6 +18,16 @@ SCRIPT = ROOT / "scripts" / "external_benchmark.py"
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def run_harness(spec_path: Path, output: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--spec", str(spec_path), "--output", str(output)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_external_benchmark_captures_pairwise_outputs(tmp_path: Path) -> None:
@@ -41,13 +53,7 @@ def test_external_benchmark_captures_pairwise_outputs(tmp_path: Path) -> None:
     output = tmp_path / "run"
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--spec", str(spec_path), "--output", str(output)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_harness(spec_path, output)
     assert result.returncode == 0, result.stderr
 
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
@@ -69,40 +75,23 @@ def test_external_benchmark_captures_pairwise_outputs(tmp_path: Path) -> None:
     assert all(path.read_bytes() == b"out\x00\n" for path in stdout_files)
 
 
-def test_external_benchmark_rejects_unpaired_json_surrogate_preflight(tmp_path: Path) -> None:
-    spec_path = tmp_path / "spec.json"
-    spec_path.write_bytes(
+@pytest.mark.parametrize(
+    "spec",
+    [
         b'{"schema":"ember.external-benchmark.v1","id":"surrogate",'
         b'"runtimes":[{"id":"r","command":["echo"],'
-        b'"metadata":{"bad":"\\ud800"}}],"cases":[{"id":"c"}]}'
-    )
-    output = tmp_path / "run"
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--spec", str(spec_path), "--output", str(output)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 2
-    assert not output.exists()
-
-
-def test_external_benchmark_rejects_surrogate_cwd_preflight(tmp_path: Path) -> None:
-    spec_path = tmp_path / "spec.json"
-    spec_path.write_bytes(
+        b'"metadata":{"bad":"\\ud800"}}],"cases":[{"id":"c"}]}',
         b'{"schema":"ember.external-benchmark.v1","id":"cwd-surrogate",'
         b'"runtimes":[{"id":"r","command":["echo"],"cwd":"\\ud800"}],'
-        b'"cases":[{"id":"c"}]}'
-    )
+        b'"cases":[{"id":"c"}]}',
+    ],
+    ids=["metadata", "cwd"],
+)
+def test_external_benchmark_rejects_unpaired_surrogate_preflight(tmp_path: Path, spec: bytes) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_bytes(spec)
     output = tmp_path / "run"
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--spec", str(spec_path), "--output", str(output)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_harness(spec_path, output)
     assert result.returncode == 2
     assert not output.exists()
 
@@ -139,13 +128,7 @@ def test_external_benchmark_revalidates_executable_each_trial(tmp_path: Path) ->
     output = tmp_path / "run"
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--spec", str(spec_path), "--output", str(output)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_harness(spec_path, output)
     assert result.returncode == 1, result.stderr
     records = json.loads((output / "results.json").read_text(encoding="utf-8"))["records"]
     assert [record["status"] for record in records] == ["ok", "identity-mismatch"]
@@ -186,13 +169,7 @@ def test_external_benchmark_revalidates_working_directory_each_trial(tmp_path: P
     output = tmp_path / "run"
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--spec", str(spec_path), "--output", str(output)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = run_harness(spec_path, output)
     assert result.returncode == 1, result.stderr
     records = json.loads((output / "results.json").read_text(encoding="utf-8"))["records"]
     assert [record["status"] for record in records] == ["ok", "identity-mismatch"]

@@ -677,91 +677,84 @@ mod tests {
         )
     }
 
+    fn digest(args: &[&str], prompt: &str) -> String {
+        execution_identity_digest(&canonical_for(&args_with(args), prompt))
+    }
+
     #[test]
     fn execution_identity_is_stable_across_builds_and_sensitive_to_inputs() {
-        let base = args_with(&[
+        let base = [
             "--arch",
             "llama",
             "--model",
             "m.gguf",
             "--temperature",
             "0.8",
-        ]);
-        let a = execution_identity_digest(&canonical_for(&base, "hello"));
+        ];
+        let a = digest(&base, "hello");
         // same inputs => same identity (field order and timestamps are irrelevant)
-        let b = execution_identity_digest(&canonical_for(&base, "hello"));
+        let b = digest(&base, "hello");
         assert_eq!(a, b);
         // any output-affecting input change => different identity
-        let prompt = execution_identity_digest(&canonical_for(&base, "hello there"));
-        let temp = execution_identity_digest(&canonical_for(
-            &args_with(&[
-                "--arch",
-                "llama",
-                "--model",
-                "m.gguf",
-                "--temperature",
-                "0.0",
-            ]),
-            "hello",
-        ));
-        let seed = execution_identity_digest(&canonical_for(
-            &args_with(&[
-                "--arch",
-                "llama",
-                "--model",
-                "m.gguf",
-                "--temperature",
-                "0.8",
-                "--seed",
-                "7",
-            ]),
-            "hello",
-        ));
-        let arch = execution_identity_digest(&canonical_for(
-            &args_with(&[
-                "--arch",
-                "qwen3",
-                "--model",
-                "m.gguf",
-                "--temperature",
-                "0.8",
-            ]),
-            "hello",
-        ));
-        assert_ne!(b, prompt);
-        assert_ne!(b, temp);
-        assert_ne!(b, seed);
-        assert_ne!(b, arch);
+        let temp = [
+            "--arch",
+            "llama",
+            "--model",
+            "m.gguf",
+            "--temperature",
+            "0.0",
+        ];
+        let seed = [
+            "--arch",
+            "llama",
+            "--model",
+            "m.gguf",
+            "--temperature",
+            "0.8",
+            "--seed",
+            "7",
+        ];
+        let arch = [
+            "--arch",
+            "qwen3",
+            "--model",
+            "m.gguf",
+            "--temperature",
+            "0.8",
+        ];
+        assert_ne!(b, digest(&base, "hello there"), "prompt");
+        assert_ne!(b, digest(&temp, "hello"), "temperature");
+        assert_ne!(b, digest(&seed, "hello"), "seed");
+        assert_ne!(b, digest(&arch, "hello"), "arch");
     }
 
     #[test]
     fn execution_identity_is_sensitive_to_the_execution_mode() {
-        let base = args_with(&["--arch", "llama", "--model", "m.gguf"]);
         // The decode execution concept is output-affecting, so the identity
         // must distinguish it (including the default).
-        let reference = execution_identity_digest(&canonical_for(
-            &args_with(&[
+        let reference = digest(
+            &[
                 "--arch",
                 "llama",
                 "--model",
                 "m.gguf",
                 "--execution",
                 "reference",
-            ]),
+            ],
             "hello",
-        ));
-        let planned = execution_identity_digest(&canonical_for(
-            &args_with(&[
+        );
+        let planned = digest(
+            &[
                 "--arch",
                 "llama",
                 "--model",
                 "m.gguf",
                 "--execution",
                 "planned",
-            ]),
+            ],
             "hello",
-        ));
-        let default = execution_identity_digest(&canonical_for(&base, "hello"));
+        );
+        let default = digest(&["--arch", "llama", "--model", "m.gguf"], "hello");
         assert_ne!(reference, planned);
         assert_eq!(default, planned, "default execution mode must be planned");
         assert_ne!(default, reference);

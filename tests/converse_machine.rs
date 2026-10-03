@@ -227,12 +227,11 @@ fn degenerate_inputs_fail_closed_without_panic() {
 
 #[test]
 fn playback_ring_full_rejects_rather_than_blocks() {
-    let (_p, _consumer) = capture_ring(64);
     let (mut writer, mut reader) = playback_ring(64);
     // fill the 64-sample ring
     let rejected = writer.push(&vec![0.5f32; 100]);
     assert_eq!(rejected, 36, "over-push rejected, not blocked");
     let mut out = vec![0.0f32; 64];
     reader.pull(&mut out);
-    assert!(out.iter().take(64).all(|&v| v == 0.5));
+    assert!(out.iter().all(|&v| v == 0.5));
 }

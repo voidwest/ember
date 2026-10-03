@@ -518,18 +518,8 @@ mod tests {
 
     #[test]
     fn identical_bundles_report_semantic_identity() {
-        let root_a = temp_root("a");
-        let root_b = temp_root("b");
-        testutil::write_test_bundle(
-            &root_a,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
-        testutil::write_test_bundle(
-            &root_b,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root_a = testutil::sample_bundle("a");
+        let root_b = testutil::sample_bundle("b");
         let result = compare_bundles(&root_a, &root_b).unwrap();
         assert!(result.identity.semantic_hash_equal);
         assert!(result.identity.schema_compatible);
@@ -542,19 +532,18 @@ mod tests {
         assert_eq!(metrics.maximum_absolute_difference, Some(0.0));
         assert_eq!(metrics.cosine_similarity, Some(1.0));
         assert!(result.interventions.is_empty());
+        // JSON output is deterministic across repeated comparisons.
+        let first = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
+        let second = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
+        assert_eq!(first, second);
         let _ = std::fs::remove_dir_all(&root_a);
         let _ = std::fs::remove_dir_all(&root_b);
     }
 
     #[test]
     fn perturbed_payload_produces_correct_metrics() {
-        let root_a = temp_root("a");
+        let root_a = testutil::sample_bundle("a");
         let root_b = temp_root("b");
-        testutil::write_test_bundle(
-            &root_a,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
         let mut perturbed = testutil::sample_rows();
         perturbed[0] += 0.5;
         testutil::write_test_bundle(&root_b, &perturbed, &testutil::sample_positions());
@@ -566,27 +555,6 @@ mod tests {
         assert_eq!(metrics.mean_absolute_difference, Some(0.125));
         let cosine = metrics.cosine_similarity.unwrap();
         assert!(cosine > 0.99 && cosine < 1.0);
-        let _ = std::fs::remove_dir_all(&root_a);
-        let _ = std::fs::remove_dir_all(&root_b);
-    }
-
-    #[test]
-    fn json_output_is_deterministic() {
-        let root_a = temp_root("a");
-        let root_b = temp_root("b");
-        testutil::write_test_bundle(
-            &root_a,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
-        testutil::write_test_bundle(
-            &root_b,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
-        let first = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
-        let second = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
-        assert_eq!(first, second);
         let _ = std::fs::remove_dir_all(&root_a);
         let _ = std::fs::remove_dir_all(&root_b);
     }

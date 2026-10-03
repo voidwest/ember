@@ -375,21 +375,26 @@ fn termination_of(status: std::process::ExitStatus) -> Termination {
 mod tests {
     use super::*;
 
+    /// argv-only command: `program` plus literal `args`, never a shell.
+    fn cmd(program: &str, args: &[&str], timeout: Duration) -> SupervisedCommand {
+        SupervisedCommand::new(
+            PathBuf::from(program),
+            args.iter().map(|arg| arg.to_string()).collect(),
+            timeout,
+        )
+    }
+
     /// Platform-native no-op success: `true` on Unix, `cmd /c exit 0` on
     /// Windows. No shell is involved in the harness itself; the argv below
     /// targets the platform command directly.
     fn success_command() -> SupervisedCommand {
         #[cfg(unix)]
         {
-            SupervisedCommand::new(PathBuf::from("true"), vec![], Duration::from_secs(10))
+            cmd("true", &[], Duration::from_secs(10))
         }
         #[cfg(windows)]
         {
-            SupervisedCommand::new(
-                PathBuf::from("cmd"),
-                vec!["/c".to_string(), "exit".to_string(), "0".to_string()],
-                Duration::from_secs(10),
-            )
+            cmd("cmd", &["/c", "exit", "0"], Duration::from_secs(10))
         }
     }
 
@@ -405,9 +410,9 @@ mod tests {
 
     #[test]
     fn missing_binary_is_not_a_crash() {
-        let command = SupervisedCommand::new(
-            PathBuf::from("/nonexistent/ember-test-binary-xyz"),
-            vec![],
+        let command = cmd(
+            "/nonexistent/ember-test-binary-xyz",
+            &[],
             Duration::from_secs(10),
         );
         let error = run_supervised(&command).unwrap_err();
@@ -418,21 +423,21 @@ mod tests {
     /// Nonzero exit with stderr: the harness reports, it does not fail.
     #[test]
     fn nonzero_exit_captures_stderr() {
-        #[cfg(unix)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("/bin/sh"),
-            vec!["-c".to_string(), "echo boom >&2; exit 3".to_string()],
-            Duration::from_secs(10),
-        );
-        #[cfg(windows)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("cmd"),
-            vec!["/c".to_string(), "echo boom 1>&2 & exit 3".to_string()],
-            Duration::from_secs(10),
-        );
         // NOTE: /bin/sh IS invoked here, but as the supervised *subject*
         // under test (proving we survive odd children), never as a harness
         // mechanism. The harness itself never uses a shell.
+        #[cfg(unix)]
+        let command = cmd(
+            "/bin/sh",
+            &["-c", "echo boom >&2; exit 3"],
+            Duration::from_secs(10),
+        );
+        #[cfg(windows)]
+        let command = cmd(
+            "cmd",
+            &["/c", "echo boom 1>&2 & exit 3"],
+            Duration::from_secs(10),
+        );
         let result = run_supervised(&command).unwrap();
         assert_eq!(result.termination, Termination::ExitCode(3));
         assert!(!result.killed_by_harness);
@@ -443,17 +448,9 @@ mod tests {
     #[test]
     fn stdout_is_captured_verbatim() {
         #[cfg(unix)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("/bin/echo"),
-            vec!["hello-stdout".to_string()],
-            Duration::from_secs(10),
-        );
+        let command = cmd("/bin/echo", &["hello-stdout"], Duration::from_secs(10));
         #[cfg(windows)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("cmd"),
-            vec!["/c".to_string(), "echo hello-stdout".to_string()],
-            Duration::from_secs(10),
-        );
+        let command = cmd("cmd", &["/c", "echo hello-stdout"], Duration::from_secs(10));
         let result = run_supervised(&command).unwrap();
         assert_eq!(result.termination, Termination::Success);
         assert!(result.stdout.text_lossy().contains("hello-stdout"));
@@ -465,17 +462,9 @@ mod tests {
     fn argv_with_spaces_and_metacharacters_is_exact() {
         let payload = "a b; rm -rf / | $(evil) `x` \"quoted\"";
         #[cfg(unix)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("/bin/echo"),
-            vec![payload.to_string()],
-            Duration::from_secs(10),
-        );
+        let command = cmd("/bin/echo", &[payload], Duration::from_secs(10));
         #[cfg(windows)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("cmd"),
-            vec!["/c".to_string(), "echo".to_string(), payload.to_string()],
-            Duration::from_secs(10),
-        );
+        let command = cmd("cmd", &["/c", "echo", payload], Duration::from_secs(10));
         let result = run_supervised(&command).unwrap();
         assert_eq!(result.termination, Termination::Success);
         // If a shell had interpreted argv, `;`, `|`, `$()` or backticks
@@ -487,21 +476,11 @@ mod tests {
     #[test]
     fn hang_is_killed_reaped_and_reported() {
         #[cfg(unix)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("/bin/sleep"),
-            vec!["60".to_string()],
-            Duration::from_millis(300),
-        );
+        let command = cmd("/bin/sleep", &["60"], Duration::from_millis(300));
         #[cfg(windows)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("cmd"),
-            vec![
-                "/c".to_string(),
-                "timeout".to_string(),
-                "/t".to_string(),
-                "60".to_string(),
-                "/nobreak".to_string(),
-            ],
+        let command = cmd(
+            "cmd",
+            &["/c", "timeout", "/t", "60", "/nobreak"],
             Duration::from_millis(300),
         );
         let start = Instant::now();
@@ -519,19 +498,15 @@ mod tests {
     #[test]
     fn flood_is_bounded_and_flagged() {
         #[cfg(unix)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("/bin/sh"),
-            vec!["-c".to_string(), "yes FLOOD | head -c 3000000".to_string()],
+        let command = cmd(
+            "/bin/sh",
+            &["-c", "yes FLOOD | head -c 3000000"],
             Duration::from_secs(20),
         );
         #[cfg(windows)]
-        let command = SupervisedCommand::new(
-            PathBuf::from("powershell"),
-            vec![
-                "-NoProfile".to_string(),
-                "-Command".to_string(),
-                "$s='FLOOD '*500000; $s".to_string(),
-            ],
+        let command = cmd(
+            "powershell",
+            &["-NoProfile", "-Command", "$s='FLOOD '*500000; $s"],
             Duration::from_secs(20),
         );
         let result = run_supervised(&command).unwrap();
@@ -566,11 +541,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_death_is_classified() {
-        let command = SupervisedCommand::new(
-            PathBuf::from("/bin/sh"),
-            vec!["-c".to_string(), "kill -SEGV $$".to_string()],
-            Duration::from_secs(10),
-        );
+        let command = cmd("/bin/sh", &["-c", "kill -SEGV $$"], Duration::from_secs(10));
         let result = run_supervised(&command).unwrap();
         assert!(matches!(result.termination, Termination::Signal(_)));
         assert!(!result.killed_by_harness);

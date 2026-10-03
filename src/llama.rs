@@ -3992,13 +3992,7 @@ mod tests {
     fn llama_config_honors_full_context_length_metadata() {
         let mut metadata = HashMap::new();
         metadata.insert("llama.context_length".to_string(), GgufValue::U32(131_072));
-        let loader = GgufLoader {
-            metadata,
-            tensors: HashMap::new(),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        let loader = GgufLoader::for_test(metadata, HashMap::new());
 
         let config = LlamaConfig::from_gguf_metadata(&loader).unwrap();
 
@@ -4012,14 +4006,8 @@ mod tests {
                 .iter()
                 .map(|(key, value)| ((*key).to_string(), GgufValue::U32(*value)))
                 .collect();
-            let loader = GgufLoader {
-                metadata,
-                tensors: HashMap::new(),
-                k_strategy: crate::quant_k::KStrategy::EagerF32,
-                k_decisions: HashMap::new(),
-                tensor_meta: HashMap::new(),
-            };
-            LlamaConfig::from_gguf_metadata(&loader).unwrap()
+            LlamaConfig::from_gguf_metadata(&GgufLoader::for_test(metadata, HashMap::new()))
+                .unwrap()
         }
 
         let odd = config_with(&[("llama.attention.key_length", 1)])
@@ -4056,16 +4044,13 @@ mod tests {
             shape: Vec<usize>,
             values: Vec<f32>,
         ) -> GgufLoader {
-            GgufLoader {
+            GgufLoader::for_test(
                 metadata,
-                tensors: HashMap::from([(
+                HashMap::from([(
                     "rope_freqs.weight".to_string(),
                     LoadedTensor::F32(CpuTensor::from_data(shape, values)),
                 )]),
-                k_strategy: crate::quant_k::KStrategy::EagerF32,
-                k_decisions: HashMap::new(),
-                tensor_meta: HashMap::new(),
-            }
+            )
         }
 
         let shape_err = Llama::from_loader(loader_with_rope(base_metadata(), vec![1], vec![1.0]))
@@ -4088,16 +4073,13 @@ mod tests {
             "{value_err}"
         );
 
-        let mut loader = GgufLoader {
-            metadata: HashMap::new(),
-            tensors: HashMap::from([(
+        let mut loader = GgufLoader::for_test(
+            HashMap::new(),
+            HashMap::from([(
                 "bad.weight".to_string(),
                 LoadedTensor::F32(CpuTensor::from_data(vec![4], vec![0.0; 4])),
             )]),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
+        );
         let mut packing_ns = 0u64;
         let linear_err = take_llama_linear(
             &mut loader,
@@ -4116,13 +4098,7 @@ mod tests {
     }
 
     fn metadata_loader(metadata: HashMap<String, GgufValue>) -> GgufLoader {
-        GgufLoader {
-            metadata,
-            tensors: HashMap::new(),
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        }
+        GgufLoader::for_test(metadata, HashMap::new())
     }
 
     #[test]
@@ -4266,14 +4242,7 @@ mod tests {
                 GgufValue::F32(0.25),
             ),
         ]);
-        let loader = GgufLoader {
-            metadata,
-            tensors,
-            k_strategy: crate::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        };
-        let model = Llama::from_loader(loader).unwrap();
+        let model = Llama::from_loader(GgufLoader::for_test(metadata, tensors)).unwrap();
         let attention = &model.blocks[0].self_attn;
         assert_eq!(attention.qk_norm_eps, 0.25);
 
@@ -4326,40 +4295,6 @@ mod tests {
             CpuTensor::from_data(vec![in_features, out_features], weights),
             None,
         )
-    }
-
-    fn test_attention_with_rope(
-        rope_cos: Arc<CpuTensor>,
-        rope_sin: Arc<CpuTensor>,
-        seed: usize,
-    ) -> LlamaAttention<CpuBackend> {
-        LlamaAttention::new_shared(
-            test_q8_linear(32, 32, seed),
-            test_q8_linear(16, 32, seed + 1),
-            test_q8_linear(16, 32, seed + 2),
-            test_q8_linear(32, 32, seed + 3),
-            rope_cos,
-            rope_sin,
-            2,
-            1,
-            16,
-            RopeLayout::AdjacentPair,
-            QkNormOrder::AfterRope,
-            None,
-            None,
-        )
-    }
-
-    #[test]
-    fn attention_layers_share_rope_tables() {
-        let (rope_cos, rope_sin) = crate::tensor::compute_rope_freqs(8, 16, 10_000.0, None);
-        let rope_cos = Arc::new(rope_cos);
-        let rope_sin = Arc::new(rope_sin);
-        let first = test_attention_with_rope(Arc::clone(&rope_cos), Arc::clone(&rope_sin), 1);
-        let second = test_attention_with_rope(Arc::clone(&rope_cos), Arc::clone(&rope_sin), 5);
-
-        assert!(Arc::ptr_eq(&first.rope_cos, &second.rope_cos));
-        assert!(Arc::ptr_eq(&first.rope_sin, &second.rope_sin));
     }
 
     fn test_llama_model() -> Llama<CpuBackend> {
@@ -5005,29 +4940,25 @@ mod tests {
     // v0.4 execution plan construction
     // -----------------------------------------------------------------------
 
+    /// Planned, hooks-disabled plan at capacity 8 without provenance hashes.
+    fn default_plan(model: &Llama<CpuBackend>) -> Arc<ExecutionPlan> {
+        model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap()
+    }
+
     #[test]
     fn execution_plan_is_deterministic_and_complete() {
         let model = test_llama_model_with_layers(2);
-        let plan_a = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                8,
-                None,
-                None,
-            )
-            .unwrap();
-        let plan_b = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                8,
-                None,
-                None,
-            )
-            .unwrap();
+        let plan_a = default_plan(&model);
+        let plan_b = default_plan(&model);
         assert_eq!(
             plan_a.plan_hash, plan_b.plan_hash,
             "plans must hash identically"
@@ -5103,29 +5034,11 @@ mod tests {
             .build()
             .unwrap();
         let (model, serial) = one_thread.install(move || {
-            let plan = model
-                .execution_plan(
-                    ExecutionMode::Planned,
-                    HookMode::Disabled,
-                    &[],
-                    8,
-                    None,
-                    None,
-                )
-                .unwrap();
+            let plan = default_plan(&model);
             (model, plan)
         });
         let (_model, parallel) = two_threads.install(move || {
-            let plan = model
-                .execution_plan(
-                    ExecutionMode::Planned,
-                    HookMode::Disabled,
-                    &[],
-                    8,
-                    None,
-                    None,
-                )
-                .unwrap();
+            let plan = default_plan(&model);
             (model, plan)
         });
         assert!(!Arc::ptr_eq(&serial, &parallel));
@@ -5138,16 +5051,7 @@ mod tests {
     #[test]
     fn execution_plan_resolves_kernels_and_shapes() {
         let model = test_llama_model();
-        let plan = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                8,
-                None,
-                None,
-            )
-            .unwrap();
+        let plan = default_plan(&model);
         // layer 0 op 1 is the q_proj matvec
         let q_w = match &plan.layers[0].ops[1] {
             PlannedOp::Matvec { weight, .. } => *weight,
@@ -5188,16 +5092,7 @@ mod tests {
                 fallback_reason: Some("Q2_K has no canonical native kernel".into()),
             },
         );
-        let plan = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                8,
-                None,
-                None,
-            )
-            .unwrap();
+        let plan = default_plan(&model);
         let tensor = plan
             .tensor_table
             .iter()
@@ -5221,16 +5116,7 @@ mod tests {
     #[test]
     fn execution_plan_validation_rejects_kernel_identity_tampering() {
         let model = test_llama_model();
-        let plan = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                8,
-                None,
-                None,
-            )
-            .unwrap();
+        let plan = default_plan(&model);
 
         let mut wrong_revision = (*plan).clone();
         wrong_revision.kernel_revision -= 1;
@@ -5314,20 +5200,127 @@ mod tests {
     #[test]
     fn execution_plan_serializes_to_json() {
         let model = test_llama_model_with_layers(2);
-        let plan = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                8,
-                None,
-                None,
-            )
-            .unwrap();
+        let plan = default_plan(&model);
         let json = serde_json::to_string_pretty(&*plan).unwrap();
         assert!(json.contains("\"architecture\": \"llama\""));
         assert!(json.contains("\"op\": \"matvec\""));
         assert!(json.contains("\"plan_hash\": \""));
+    }
+
+    fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Which entry point a greedy run uses for its multi-token prefill.
+    #[derive(Clone, Copy)]
+    enum Prefill {
+        /// The inherent `Llama::forward_with_cache`.
+        Inherent,
+        /// `ForwardModel::forward_last_logits_with_cache`.
+        Trait,
+    }
+
+    /// Prefill `[3, 1, 7]` in `mode`, then greedy-decode four tokens through
+    /// the trait path (ForwardModel) so the v0.4 cpu dispatch runs. Returns
+    /// the token stream and the last decode logits.
+    fn run_greedy(
+        model: &Llama<CpuBackend>,
+        mode: ExecutionMode,
+        prefill: Prefill,
+    ) -> (Vec<u32>, CpuTensor) {
+        let backend = CpuBackend;
+        model.set_execution_mode(mode);
+        let mut cache = model.create_cache(&backend, 64);
+        let prompt = [3u32, 1, 7];
+        match prefill {
+            Prefill::Inherent => {
+                model
+                    .forward_with_cache(&backend, &prompt, &mut cache, 0)
+                    .unwrap();
+            }
+            Prefill::Trait => {
+                ForwardModel::forward_last_logits_with_cache(
+                    model, &backend, &prompt, &mut cache, 0,
+                )
+                .unwrap();
+            }
+        }
+        let mut tokens = prompt.to_vec();
+        let mut last_logits = None;
+        for start_pos in prompt.len()..prompt.len() + 4 {
+            let last = *tokens.last().unwrap();
+            let logits = ForwardModel::forward_last_logits_with_cache(
+                model,
+                &backend,
+                &[last],
+                &mut cache,
+                start_pos,
+            )
+            .unwrap();
+            let best = crate::sampler::argmax_token(logits.data());
+            tokens.push(best as u32);
+            last_logits = Some(logits);
+        }
+        (tokens, last_logits.expect("decode produced logits"))
+    }
+
+    /// Prefill `[3, 1, 7]` in `mode`, then decode `token` at position 3.
+    fn plain_decode(model: &Llama<CpuBackend>, mode: ExecutionMode, token: u32) -> CpuTensor {
+        let backend = CpuBackend;
+        model.set_execution_mode(mode);
+        let mut cache = model.create_cache(&backend, 64);
+        ForwardModel::forward_last_logits_with_cache(model, &backend, &[3, 1, 7], &mut cache, 0)
+            .unwrap();
+        ForwardModel::forward_last_logits_with_cache(model, &backend, &[token], &mut cache, 3)
+            .unwrap()
+    }
+
+    /// Prefill `[3, 1, 7]` in `mode`, then decode token 5 at position 3
+    /// through the experiment path with `runner`.
+    fn decode_with_runner(
+        model: &Llama<CpuBackend>,
+        mode: ExecutionMode,
+        runner: &mut ExperimentRunner,
+    ) -> CpuTensor {
+        let backend = CpuBackend;
+        model.set_execution_mode(mode);
+        let mut cache = model.create_cache(&backend, 64);
+        ForwardModel::forward_last_logits_with_cache(model, &backend, &[3, 1, 7], &mut cache, 0)
+            .unwrap();
+        let model_context =
+            ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Decode,
+            3,
+            1,
+            TracingState::Disabled,
+        );
+        ExperimentalForwardModel::forward_last_logits_with_experiment(
+            model,
+            &backend,
+            &[5],
+            &mut cache,
+            3,
+            execution,
+            runner,
+        )
+        .unwrap()
+    }
+
+    /// `decode_with_runner` with a no-op recording experiment: the logits and
+    /// every hook record it fired.
+    fn decode_recording_hooks(
+        model: &Llama<CpuBackend>,
+        mode: ExecutionMode,
+    ) -> (CpuTensor, Vec<HookRecord>) {
+        let (experiment, records) = RecordingExperiment::new();
+        let logits = decode_with_runner(model, mode, &mut ExperimentRunner::new(experiment));
+        let hook_records = records.lock().unwrap().clone();
+        (logits, hook_records)
     }
 
     #[test]
@@ -5336,48 +5329,17 @@ mod tests {
         // Disable the Q8 workspace fast path so the comparison exercises the
         // generic (reference) path and the planned interpreter directly.
         model.fast_decode_inter_dim = None;
-        let backend = CpuBackend;
 
-        let run_greedy = |mode: ExecutionMode| -> (Vec<u32>, CpuTensor) {
-            model.set_execution_mode(mode);
-            let mut cache = model.create_cache(&backend, 64);
-            let prompt = [3u32, 1, 7];
-            model
-                .forward_with_cache(&backend, &prompt, &mut cache, 0)
-                .unwrap();
-            let mut tokens = prompt.to_vec();
-            let mut last_logits = None;
-            for start_pos in prompt.len()..prompt.len() + 4 {
-                let last = *tokens.last().unwrap();
-                // trait path (ForwardModel) so the v0.4 cpu dispatch runs
-                let logits = ForwardModel::forward_last_logits_with_cache(
-                    &model,
-                    &backend,
-                    &[last],
-                    &mut cache,
-                    start_pos,
-                )
-                .unwrap();
-                let best = crate::sampler::argmax_token(logits.data());
-                tokens.push(best as u32);
-                last_logits = Some(logits);
-            }
-            (tokens, last_logits.expect("decode produced logits"))
-        };
-
-        let (reference_tokens, reference_logits) = run_greedy(ExecutionMode::Reference);
-        let (planned_tokens, planned_logits) = run_greedy(ExecutionMode::Planned);
+        let (reference_tokens, reference_logits) =
+            run_greedy(&model, ExecutionMode::Reference, Prefill::Inherent);
+        let (planned_tokens, planned_logits) =
+            run_greedy(&model, ExecutionMode::Planned, Prefill::Inherent);
 
         assert_eq!(
             reference_tokens, planned_tokens,
             "greedy token sequences must be identical"
         );
-        let max_abs = reference_logits
-            .data()
-            .iter()
-            .zip(planned_logits.data().iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = max_abs_diff(reference_logits.data(), planned_logits.data());
         assert!(
             max_abs <= 1e-4,
             "planned logits diverge from reference: max_abs {max_abs}"
@@ -5807,55 +5769,13 @@ mod tests {
     fn planned_inactive_hooks_match_plain_planned() {
         let mut model = test_llama_model_with_layers(2);
         model.fast_decode_inter_dim = None;
-        let backend = CpuBackend;
 
         // plain planned decode (hooks fully disabled)
-        model.set_execution_mode(ExecutionMode::Planned);
-        let mut plain_cache = model.create_cache(&backend, 64);
-        let prompt = [3u32, 1, 7];
-        ForwardModel::forward_last_logits_with_cache(
-            &model,
-            &backend,
-            &prompt,
-            &mut plain_cache,
-            0,
-        )
-        .unwrap();
-        let plain = ForwardModel::forward_last_logits_with_cache(
-            &model,
-            &backend,
-            &[5],
-            &mut plain_cache,
-            3,
-        )
-        .unwrap();
+        let plain = plain_decode(&model, ExecutionMode::Planned, 5);
 
         // planned decode through the experiment path with a no-op (recording)
         // experiment: same kernels, same sites, nothing mutates values.
-        let mut hook_cache = model.create_cache(&backend, 64);
-        ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut hook_cache, 0)
-            .unwrap();
-        let (experiment, records) = RecordingExperiment::new();
-        let model_context =
-            ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
-        let execution = ExecutionContext::new(
-            model_context,
-            ExecutionPhase::Decode,
-            3,
-            1,
-            TracingState::Disabled,
-        );
-        let mut runner = ExperimentRunner::new(experiment);
-        let hooked = ExperimentalForwardModel::forward_last_logits_with_experiment(
-            &model,
-            &backend,
-            &[5],
-            &mut hook_cache,
-            3,
-            execution,
-            &mut runner,
-        )
-        .unwrap();
+        let (hooked, records) = decode_recording_hooks(&model, ExecutionMode::Planned);
 
         assert_eq!(
             plain.data(),
@@ -5863,7 +5783,7 @@ mod tests {
             "planned decode with inactive hooks must be bit-identical to hooks disabled"
         );
         assert!(
-            !records.lock().unwrap().is_empty(),
+            !records.is_empty(),
             "the hook system must actually have fired on the planned path"
         );
     }
@@ -5874,41 +5794,10 @@ mod tests {
     fn planned_hook_sites_match_reference() {
         let mut model = test_llama_model_with_layers(2);
         model.fast_decode_inter_dim = None;
-        let backend = CpuBackend;
 
-        let run_hooked = |mode: ExecutionMode| -> (CpuTensor, Vec<HookRecord>) {
-            model.set_execution_mode(mode);
-            let mut cache = model.create_cache(&backend, 64);
-            let prompt = [3u32, 1, 7];
-            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
-                .unwrap();
-            let (experiment, records) = RecordingExperiment::new();
-            let model_context =
-                ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
-            let execution = ExecutionContext::new(
-                model_context,
-                ExecutionPhase::Decode,
-                3,
-                1,
-                TracingState::Disabled,
-            );
-            let mut runner = ExperimentRunner::new(experiment);
-            let logits = ExperimentalForwardModel::forward_last_logits_with_experiment(
-                &model,
-                &backend,
-                &[5],
-                &mut cache,
-                3,
-                execution,
-                &mut runner,
-            )
-            .unwrap();
-            let hook_records = records.lock().unwrap().clone();
-            (logits, hook_records)
-        };
-
-        let (reference, reference_records) = run_hooked(ExecutionMode::Reference);
-        let (planned, planned_records) = run_hooked(ExecutionMode::Planned);
+        let (reference, reference_records) =
+            decode_recording_hooks(&model, ExecutionMode::Reference);
+        let (planned, planned_records) = decode_recording_hooks(&model, ExecutionMode::Planned);
 
         assert_eq!(
             reference_records.len(),
@@ -5923,12 +5812,7 @@ mod tests {
             );
             assert_eq!(expected.shape, actual.shape, "hook shape mismatch");
         }
-        let max_abs = reference
-            .data()
-            .iter()
-            .zip(planned.data().iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = max_abs_diff(reference.data(), planned.data());
         assert!(
             max_abs <= 1e-4,
             "hooked planned logits diverge from hooked reference: {max_abs}"
@@ -5942,70 +5826,24 @@ mod tests {
     fn planned_patch_intervention_matches_reference() {
         let mut model = test_llama_model_with_layers(2);
         model.fast_decode_inter_dim = None;
-        let backend = CpuBackend;
 
         let run_patched = |mode: ExecutionMode| -> CpuTensor {
-            model.set_execution_mode(mode);
-            let mut cache = model.create_cache(&backend, 64);
-            let prompt = [3u32, 1, 7];
-            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
-                .unwrap();
-            let model_context =
-                ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
-            let execution = ExecutionContext::new(
-                model_context,
-                ExecutionPhase::Decode,
-                3,
-                1,
-                TracingState::Disabled,
-            );
             let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(ZeroLayerOutputSpec::new(
                 0,
                 ZeroLayerOutputStage::Attention,
             )));
-            ExperimentalForwardModel::forward_last_logits_with_experiment(
-                &model,
-                &backend,
-                &[5],
-                &mut cache,
-                3,
-                execution,
-                &mut runner,
-            )
-            .unwrap()
+            decode_with_runner(&model, mode, &mut runner)
         };
 
         let reference = run_patched(ExecutionMode::Reference);
         let planned = run_patched(ExecutionMode::Planned);
-        let max_abs = reference
-            .data()
-            .iter()
-            .zip(planned.data().iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = max_abs_diff(reference.data(), planned.data());
         assert!(
             max_abs <= 1e-4,
             "patched planned logits diverge from patched reference: {max_abs}"
         );
         // the patch must actually have changed the planned output
-        let mut plain_cache = model.create_cache(&backend, 64);
-        let prompt = [3u32, 1, 7];
-        ForwardModel::forward_last_logits_with_cache(
-            &model,
-            &backend,
-            &prompt,
-            &mut plain_cache,
-            0,
-        )
-        .unwrap();
-        let plain = ForwardModel::forward_last_logits_with_cache(
-            &model,
-            &backend,
-            &[5],
-            &mut plain_cache,
-            3,
-        )
-        .unwrap();
+        let plain = plain_decode(&model, ExecutionMode::Planned, 5);
         assert_ne!(plain.data(), planned.data(), "the intervention must fire");
     }
 
@@ -6096,36 +5934,12 @@ mod tests {
         for (layer, block) in model.blocks.iter_mut().enumerate() {
             block.self_attn.o_proj = test_f32_linear(32, 32, 100 + layer);
         }
-        let backend = CpuBackend;
 
-        let run_greedy = |mode: ExecutionMode| -> (Vec<u32>, CpuTensor) {
-            model.set_execution_mode(mode);
-            let mut cache = model.create_cache(&backend, 64);
-            let prompt = [3u32, 1, 7];
-            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
-                .unwrap();
-            let mut tokens = prompt.to_vec();
-            let mut last_logits = None;
-            for start_pos in prompt.len()..prompt.len() + 4 {
-                let last = *tokens.last().unwrap();
-                let logits = ForwardModel::forward_last_logits_with_cache(
-                    &model,
-                    &backend,
-                    &[last],
-                    &mut cache,
-                    start_pos,
-                )
-                .unwrap();
-                let best = crate::sampler::argmax_token(logits.data());
-                tokens.push(best as u32);
-                last_logits = Some(logits);
-            }
-            (tokens, last_logits.expect("decode produced logits"))
-        };
-
-        let (reference_tokens, reference_logits) = run_greedy(ExecutionMode::Reference);
+        let (reference_tokens, reference_logits) =
+            run_greedy(&model, ExecutionMode::Reference, Prefill::Trait);
         crate::planned_decode::reset_fused_execution_counts();
-        let (fused_tokens, fused_logits) = run_greedy(ExecutionMode::PlannedFused);
+        let (fused_tokens, fused_logits) =
+            run_greedy(&model, ExecutionMode::PlannedFused, Prefill::Trait);
         let counts = crate::planned_decode::fused_execution_counts();
         assert!(
             counts.f1_rmsnorm_linear > 0,
@@ -6148,12 +5962,7 @@ mod tests {
             reference_tokens, fused_tokens,
             "fused greedy tokens must match the reference"
         );
-        let max_abs = reference_logits
-            .data()
-            .iter()
-            .zip(fused_logits.data().iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = max_abs_diff(reference_logits.data(), fused_logits.data());
         assert!(
             max_abs <= 1e-4,
             "fused logits diverge from reference: max_abs {max_abs}"
@@ -6164,33 +5973,13 @@ mod tests {
     fn planned_fused_defuses_f5_for_q8_assignment_kernel() {
         let mut model = test_llama_model_with_layers(2);
         model.fast_decode_inter_dim = None;
-        let backend = CpuBackend;
-        let run = |mode: ExecutionMode| {
-            model.set_execution_mode(mode);
-            let mut cache = model.create_cache(&backend, 64);
-            ForwardModel::forward_last_logits_with_cache(
-                &model,
-                &backend,
-                &[3u32, 1, 7],
-                &mut cache,
-                0,
-            )
-            .unwrap();
-            ForwardModel::forward_last_logits_with_cache(&model, &backend, &[7], &mut cache, 3)
-                .unwrap()
-        };
-        let reference = run(ExecutionMode::Reference);
+        let reference = plain_decode(&model, ExecutionMode::Reference, 7);
         crate::planned_decode::reset_fused_execution_counts();
-        let fused = run(ExecutionMode::PlannedFused);
+        let fused = plain_decode(&model, ExecutionMode::PlannedFused, 7);
         let counts = crate::planned_decode::fused_execution_counts();
         assert_eq!(counts.f5_output_proj_residual, 0, "{counts:?}");
         assert!(counts.f2_residual_rmsnorm > 0, "{counts:?}");
-        let max_abs = reference
-            .data()
-            .iter()
-            .zip(fused.data())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = max_abs_diff(reference.data(), fused.data());
         assert!(max_abs <= 1e-4, "Q8 defused logits diverged: {max_abs}");
 
         let plan = model
@@ -6219,43 +6008,12 @@ mod tests {
     fn planned_fused_defuses_after_attention_hook() {
         let mut model = test_llama_model_with_layers(2);
         model.fast_decode_inter_dim = None;
-        let backend = CpuBackend;
-
-        let run_hooked = |mode: ExecutionMode| -> (CpuTensor, Vec<HookRecord>) {
-            model.set_execution_mode(mode);
-            let mut cache = model.create_cache(&backend, 64);
-            let prompt = [3u32, 1, 7];
-            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
-                .unwrap();
-            let (experiment, records) = RecordingExperiment::new();
-            let model_context =
-                ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
-            let execution = ExecutionContext::new(
-                model_context,
-                ExecutionPhase::Decode,
-                3,
-                1,
-                TracingState::Disabled,
-            );
-            let mut runner = ExperimentRunner::new(experiment);
-            let logits = ExperimentalForwardModel::forward_last_logits_with_experiment(
-                &model,
-                &backend,
-                &[5],
-                &mut cache,
-                3,
-                execution,
-                &mut runner,
-            )
-            .unwrap();
-            let hook_records = records.lock().unwrap().clone();
-            (logits, hook_records)
-        };
 
         // the reference path fires every stage (unfused)
-        let (reference, reference_records) = run_hooked(ExecutionMode::Reference);
+        let (reference, reference_records) =
+            decode_recording_hooks(&model, ExecutionMode::Reference);
         crate::planned_decode::reset_fused_execution_counts();
-        let (fused, fused_records) = run_hooked(ExecutionMode::PlannedFused);
+        let (fused, fused_records) = decode_recording_hooks(&model, ExecutionMode::PlannedFused);
         let counts = crate::planned_decode::fused_execution_counts();
         assert!(
             counts.f2_residual_rmsnorm > 0,
@@ -6277,12 +6035,7 @@ mod tests {
             fused_records.len(),
             "defused fused path must fire the same hook sequence as reference"
         );
-        let max_abs = reference
-            .data()
-            .iter()
-            .zip(fused.data().iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = max_abs_diff(reference.data(), fused.data());
         assert!(
             max_abs <= 1e-4,
             "defused fused logits diverge from hooked reference: {max_abs}"

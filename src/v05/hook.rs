@@ -204,16 +204,6 @@ mod tests {
     }
 
     #[test]
-    fn ids_round_trip() {
-        for site in SemanticHookSite::ALL {
-            let id = site.to_string();
-            assert_eq!(SemanticHookSite::parse_id(&id).unwrap(), site);
-        }
-        assert!(SemanticHookSite::parse_id("after-layer").is_err());
-        assert!(SemanticHookSite::parse_id("residual-post-attention").is_err());
-    }
-
-    #[test]
     fn descriptors_are_stable() {
         let table = HookSiteDescriptor::all();
         assert_eq!(table.len(), 6);
@@ -232,6 +222,9 @@ mod tests {
             assert_eq!(descriptor.id.to_string(), expected);
             assert_eq!(SemanticHookSite::parse_id(expected).unwrap(), descriptor.id);
         }
+        // Stage ids and near-miss names are not semantic site ids.
+        assert!(SemanticHookSite::parse_id("after-layer").is_err());
+        assert!(SemanticHookSite::parse_id("residual-post-attention").is_err());
     }
 
     #[test]

@@ -48,37 +48,6 @@ fn fixture() -> Option<(PathBuf, PathBuf, PathBuf, PathBuf)> {
     }
 }
 
-/// Minimal 16-bit mono PCM WAV reader (bank clips are 16 kHz s16le).
-fn read_wav_mono(path: &std::path::Path) -> anyhow::Result<(Vec<f32>, u32)> {
-    let bytes = std::fs::read(path)?;
-    // chunk payload start = tag position + 4 (tag) + 4 (size field)
-    let find =
-        |tag: &[u8; 4]| -> Option<usize> { bytes.windows(4).position(|w| w == tag).map(|p| p + 8) };
-    let fmt_at = find(b"fmt ").ok_or_else(|| anyhow::anyhow!("no fmt chunk"))?;
-    let channels = u16::from_le_bytes([bytes[fmt_at + 2], bytes[fmt_at + 3]]) as usize;
-    let sr = u32::from_le_bytes([
-        bytes[fmt_at + 4],
-        bytes[fmt_at + 5],
-        bytes[fmt_at + 6],
-        bytes[fmt_at + 7],
-    ]);
-    let data_at = find(b"data").ok_or_else(|| anyhow::anyhow!("no data chunk"))?;
-    let pcm: Vec<f32> = bytes[data_at..]
-        .chunks_exact(2 * channels)
-        .map(|c| {
-            let s = i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0;
-            // bank is mono; if stereo ever appears, average the frame
-            if channels == 2 {
-                let s2 = i16::from_le_bytes([c[2], c[3]]) as f32 / 32768.0;
-                (s + s2) * 0.5
-            } else {
-                s
-            }
-        })
-        .collect();
-    Ok((pcm, sr))
-}
-
 #[test]
 fn arabic_s2s_vits_full_chain_bank_audio_to_speech() {
     use ember::tts::SpeechOut;
@@ -106,8 +75,10 @@ fn arabic_s2s_vits_full_chain_bank_audio_to_speech() {
     // user turn: real Arabic bank audio streamed through the validated path
     let wav = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("research/banks/arabic_speech_001/ar_eg_test_0000.wav");
-    let (pcm, sr) = read_wav_mono(&wav).expect("read bank clip");
-    assert_eq!(sr, 16_000, "bank clips are 16 kHz");
+    // bank clips are mono s16le PCM (scripts/build_arabic_speech_bank.py)
+    let clip = ember::multimodal::audio::decode_wav(&wav).expect("read bank clip");
+    let pcm = clip.samples;
+    assert_eq!(clip.sample_rate, 16_000, "bank clips are 16 kHz");
     session.begin_user_turn();
     session.open_streaming_audio(Default::default()).unwrap();
     // fill the stream first; the tower encode happens once at finalize

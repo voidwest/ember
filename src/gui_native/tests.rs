@@ -35,7 +35,7 @@ fn unreadable_store_is_never_written_back() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-fn form() -> FormValues {
+pub(super) fn form() -> FormValues {
     FormValues {
         model_path: "model.gguf".to_string(),
         prompt: "اختبار".to_string(),

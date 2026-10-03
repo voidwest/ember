@@ -160,7 +160,7 @@ pub(super) fn spawn_worker(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{form, parse_run_request, RunBundle};
+    use super::super::{parse_run_request, RunBundle};
     use super::{
         discard_run_bundles, handle_worker_msg, remove_bundle_dir, WorkerMsg, WorkerReply,
     };
@@ -170,22 +170,9 @@ mod tests {
     #[test]
     fn a_run_cancelled_before_it_starts_never_touches_the_model() {
         let mut session = crate::gui::GuiSession::new(KStrategy::Auto, false);
-        let request = form::FormValues {
-            model_path: "/nonexistent/never-loaded.gguf".into(),
-            prompt: "hello".into(),
-            max_tokens: "4".into(),
-            execution: "reference".into(),
-            site: "after-mlp".into(),
-            layer: "1".into(),
-            op: "scale".into(),
-            value: "0.5".into(),
-            source: "capture".into(),
-            source_layer: "0".into(),
-            token: "prompt-final".into(),
-            span: String::new(),
-        }
-        .build_run_request()
-        .unwrap();
+        let mut values = super::super::tests::form();
+        values.model_path = "/nonexistent/never-loaded.gguf".into();
+        let request = values.build_run_request().unwrap();
         let cfg = parse_run_request(&request).unwrap();
         let token = CancelToken::new();
         token.cancel();

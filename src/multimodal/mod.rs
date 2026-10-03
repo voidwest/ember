@@ -47,3 +47,14 @@ pub use request::{
 };
 pub use session::{GenerationControl, Role, SessionStats, TurnRecord, TurnState, VoiceSession};
 pub use video::{FrameSampling, SampledVideo};
+
+/// Runs a loader that must fail with a structured error rather than panic,
+/// returning that error's message.
+#[cfg(test)]
+pub(crate) fn expect_load_error<T>(load: impl FnOnce() -> anyhow::Result<T>) -> String {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(load)) {
+        Err(_) => panic!("malformed weights must not panic the loader"),
+        Ok(Ok(_)) => panic!("malformed weights unexpectedly loaded"),
+        Ok(Err(error)) => error.to_string(),
+    }
+}

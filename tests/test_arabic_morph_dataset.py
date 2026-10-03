@@ -1,7 +1,10 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
@@ -79,12 +82,8 @@ def test_normalization_preserves_not_applicable_features():
 
 
 def test_normalization_rejects_malformed_features():
-    try:
+    with pytest.raises(ValueError, match="features must be an object"):
         normalize_records([{"word": "باب", "lex": "بَاب_1", "features": "gender"}], "unit")
-    except ValueError as exc:
-        assert "features must be an object" in str(exc)
-    else:
-        raise AssertionError("malformed features should fail")
 
 
 def test_num_analyses_zero_is_not_ambiguous():
@@ -142,12 +141,9 @@ def test_choose_split_minimizes_projected_global_error():
 
 
 def test_filter_rejects_string_pos_allowlist():
-    try:
-        apply_filters(sample_records(), {"pos_allowlist": "NOUN"})
-    except ValueError as exc:
-        assert "pos_allowlist must be a list" in str(exc)
-    else:
-        raise AssertionError("string pos_allowlist should fail")
+    records = sample_records()
+    with pytest.raises(ValueError, match="pos_allowlist must be a list"):
+        apply_filters(records, {"pos_allowlist": "NOUN"})
 
 
 def test_pattern_specific_filters():
@@ -173,7 +169,8 @@ def test_leakage_report_ignores_unsplit_records():
     records = sample_records()
     train = records[0].with_split("train")
     unsplit = next(record for record in records if record.root == train.root and record.id != train.id)
-    report = leakage_report([train, unsplit], "root_heldout")
+    # A one-shot iterable is read once.
+    report = leakage_report(iter([train, unsplit]), "root_heldout")
     assert report["passed"]
     assert report["ignored_unsplit_records"] == 1
 
@@ -244,12 +241,8 @@ def test_split_rejects_non_finite_negative_and_incomplete_ratios():
         {"train": float("nan"), "dev": 1.0, "test": 1.0},
         {"train": 1.0, "dev": 0.0},
     ]:
-        try:
+        with pytest.raises(ValueError):
             split_records(records, "random", ratios=ratios)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"invalid ratios should fail: {ratios}")
 
 
 def test_zero_ratio_split_never_receives_records():
@@ -260,14 +253,6 @@ def test_zero_ratio_split_never_receives_records():
     )
     assert all(record.split != "test" for record in split)
     assert report["record_counts"]["test"] == 0
-
-
-def test_leakage_report_handles_one_shot_iterables():
-    records = sample_records()
-    train = records[0].with_split("train")
-    unsplit = next(record for record in records if record.id != train.id)
-    report = leakage_report(iter([train, unsplit]), "root_heldout")
-    assert report["ignored_unsplit_records"] == 1
 
 
 def test_canonical_null_string_fields_do_not_become_literal_none():
@@ -343,7 +328,7 @@ def test_package_module_entrypoint_runs_stats():
             str(ROOT / "data/arabic_morph_sample/out/canonical.jsonl"),
         ],
         cwd=ROOT,
-        env={"PYTHONPATH": str(ROOT / "src")},
+        env={**os.environ, "PYTHONPATH": str(ROOT / "python")},
         text=True,
         capture_output=True,
         check=False,

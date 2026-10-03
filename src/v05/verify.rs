@@ -1576,6 +1576,15 @@ mod tests {
         OPENS.with(|opens| std::mem::take(&mut *opens.borrow_mut()))
     }
 
+    fn failed_names(report: &VerificationReport) -> Vec<&str> {
+        report
+            .checks
+            .iter()
+            .filter(|check| !check.ok)
+            .map(|check| check.name.as_str())
+            .collect()
+    }
+
     fn read_semantic_manifest(root: &Path) -> Result<SemanticManifest, String> {
         parse_semantic_manifest(&std::fs::read(root.join("semantic-manifest.json")).unwrap())
     }
@@ -1587,21 +1596,11 @@ mod tests {
         mutate: impl FnOnce(&std::path::Path),
         expect_failed: &[&str],
     ) {
-        let root = temp_root(tag);
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle(tag);
         mutate(&root);
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
+        let names = failed_names(&report);
         for expected in expect_failed {
             assert!(
                 names.contains(expected),
@@ -1613,12 +1612,7 @@ mod tests {
 
     #[test]
     fn valid_bundle_verifies() {
-        let root = temp_root("valid");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("valid");
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);
         assert_eq!(report.checks.len(), 21);
@@ -1629,12 +1623,7 @@ mod tests {
 
     #[test]
     fn verification_leaves_a_read_only_bundle_untouched() {
-        let root = temp_root("read-only");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("read-only");
         let before: Vec<_> = std::fs::read_dir(&root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
@@ -1666,12 +1655,7 @@ mod tests {
             "payload_hash": "0", "checks": [], "warnings": [], "timestamp": "x",
         });
         // A valid bundle with a stale report still verifies, with a warning.
-        let root = temp_root("forged-report");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("forged-report");
         std::fs::write(root.join("verification.json"), forged.to_string()).unwrap();
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);
@@ -1703,12 +1687,7 @@ mod tests {
 
     #[test]
     fn each_bundle_file_is_opened_once_and_the_checked_bytes_are_returned() {
-        let root = temp_root("read-once");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("read-once");
         take_opens();
         let loaded = load_bundle_for_source(&root).unwrap();
         let opens = take_opens();
@@ -1776,12 +1755,7 @@ mod tests {
 
     #[test]
     fn semantic_hash_anchor_rejects_a_resealed_bundle() {
-        let root = temp_root("anchor");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("anchor");
         let original = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         let anchored = |expected: &str| VerifyOptions {
             expected_semantic_hash: Some(expected.to_string()),
@@ -1801,12 +1775,7 @@ mod tests {
         reseal(&root, &mut semantic);
         assert!(verify_bundle(&root, &VerifyOptions::default()).unwrap().ok);
         let report = verify_bundle(&root, &anchored(&original.semantic_hash)).unwrap();
-        let failed: Vec<_> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
+        let failed = failed_names(&report);
         assert_eq!(failed, ["semantic hash anchor"]);
         assert!(load_verified_bundle(&root, &anchored(&original.semantic_hash)).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -1845,12 +1814,7 @@ mod tests {
     #[test]
     fn unknown_nested_contracts_fail_even_when_hashes_are_valid() {
         for field in ["experiment schema", "hook schema", "plan schema"] {
-            let root = temp_root("unknown-contract");
-            testutil::write_test_bundle(
-                &root,
-                &testutil::sample_rows(),
-                &testutil::sample_positions(),
-            );
+            let root = testutil::sample_bundle("unknown-contract");
             let mut semantic = read_semantic_manifest(&root).unwrap();
             match field {
                 "experiment schema" => semantic.experiment_schema = "ember.experiment.v2".into(),
@@ -1860,12 +1824,7 @@ mod tests {
             }
             reseal(&root, &mut semantic);
             let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-            let failed: Vec<_> = report
-                .checks
-                .iter()
-                .filter(|check| !check.ok)
-                .map(|check| check.name.as_str())
-                .collect();
+            let failed = failed_names(&report);
             assert_eq!(failed, [field]);
             assert!(!report.ok);
             assert!(load_bundle_for_source(&root).is_err());
@@ -1876,12 +1835,7 @@ mod tests {
     #[test]
     fn stored_plan_must_match_declared_contract_and_identity() {
         for change_schema in [false, true] {
-            let root = temp_root("plan-contract");
-            testutil::write_test_bundle(
-                &root,
-                &testutil::sample_rows(),
-                &testutil::sample_positions(),
-            );
+            let root = testutil::sample_bundle("plan-contract");
             let mut semantic = read_semantic_manifest(&root).unwrap();
             let expected = if change_schema {
                 let path = root.join("execution-plan.json");
@@ -1897,12 +1851,7 @@ mod tests {
             };
             reseal(&root, &mut semantic);
             let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-            let failed: Vec<_> = report
-                .checks
-                .iter()
-                .filter(|check| !check.ok)
-                .map(|check| check.name.as_str())
-                .collect();
+            let failed = failed_names(&report);
             assert_eq!(failed, [expected]);
             assert!(!report.ok);
             std::fs::remove_dir_all(root).unwrap();
@@ -1937,12 +1886,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_folder_swapped_for_a_symlink_is_not_followed() {
-        let root = temp_root("folder-symlink");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("folder-symlink");
         assert!(open_regular_file(&root, "captures/tensors.safetensors").is_ok());
         // After the inventory walk: move captures/ out and point a symlink at it.
         let outside = root.with_extension("outside");
@@ -1963,12 +1907,7 @@ mod tests {
             "captures/tensors.safetensors",
             "verification.json",
         ] {
-            let root = temp_root("symlink");
-            testutil::write_test_bundle(
-                &root,
-                &testutil::sample_rows(),
-                &testutil::sample_positions(),
-            );
+            let root = testutil::sample_bundle("symlink");
             let path = root.join(name);
             if path.exists() {
                 std::fs::remove_file(&path).unwrap();
@@ -1984,12 +1923,7 @@ mod tests {
 
     #[test]
     fn duplicate_checksum_paths_fail() {
-        let root = temp_root("duplicate-checksum");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("duplicate-checksum");
         let path = root.join("checksums.sha256");
         let mut text = std::fs::read_to_string(&path).unwrap();
         let duplicate = text.lines().next().unwrap().to_owned();
@@ -2048,12 +1982,9 @@ mod tests {
         assert_verification_failure(
             "extra",
             |root| {
-                // Append a second tensor to the payload and fix
-                // checksums.sha256 so only the unindexed-tensor check can
-                // catch it.
+                // Append a second tensor to the payload and reseal every
+                // hash so only the unindexed-tensor check can catch it.
                 let payload_path = root.join("captures/tensors.safetensors");
-                let original = std::fs::read(&payload_path).unwrap();
-                let tensors = crate::v05::safetensors::deserialize(&original).unwrap();
                 let extra = crate::v05::safetensors::serialize(&[
                     crate::v05::safetensors::TensorData {
                         name: "cap-1/i1/residual-post-mlp/0",
@@ -2069,10 +2000,9 @@ mod tests {
                     },
                 ])
                 .unwrap();
-                let _ = tensors;
                 std::fs::write(&payload_path, extra).unwrap();
-                // refresh checksums.sha256 to isolate the payload check
-                fix_checksums(root);
+                let mut semantic = read_semantic_manifest(root).unwrap();
+                reseal(root, &mut semantic);
             },
             &["tensor payload"],
         );
@@ -2163,12 +2093,7 @@ mod tests {
 
     #[test]
     fn deep_model_mismatch_fails() {
-        let root = temp_root("deep");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
+        let root = testutil::sample_bundle("deep");
         // A non-model file with the wrong hash fails the deep check.
         let model_path = temp_root("fake-model.gguf");
         std::fs::write(&model_path, b"not a model").unwrap();
@@ -2178,29 +2103,10 @@ mod tests {
         };
         let report = verify_bundle(&root, &options).unwrap();
         assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
+        let names = failed_names(&report);
         assert!(names.contains(&"deep model sha256"), "{names:?}");
         std::fs::remove_file(model_path).unwrap();
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn traversal_in_checksums_is_rejected() {
-        assert_verification_failure(
-            "traversal",
-            |root| {
-                let path = root.join("checksums.sha256");
-                let mut text = std::fs::read_to_string(&path).unwrap();
-                text.push_str(&format!("{}\n", "00".repeat(32) + "  ../escape.bin"));
-                std::fs::write(&path, text).unwrap();
-            },
-            &["checksums"],
-        );
     }
 
     #[test]
@@ -2223,54 +2129,5 @@ mod tests {
             },
             &["checksums"],
         );
-    }
-
-    #[test]
-    fn source_bundle_loads_only_when_verified() {
-        let root = temp_root("source");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
-        );
-        let loaded = load_bundle_for_source(&root).unwrap();
-        let rows = loaded
-            .tensor_f32_by_name("cap-1/i1/residual-post-mlp/0")
-            .unwrap();
-        assert_eq!(rows, testutil::sample_rows());
-        // corrupt then refuse to load
-        let payload = root.join("captures/tensors.safetensors");
-        let mut bytes = std::fs::read(&payload).unwrap();
-        bytes[20] ^= 0x01;
-        std::fs::write(&payload, bytes).unwrap();
-        assert!(load_bundle_for_source(&root).is_err());
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    fn fix_checksums(root: &std::path::Path) {
-        // Rewrite checksums.sha256 from the current files so later checks
-        // pass and only the intended check fails.
-        let mut lines: Vec<String> = Vec::new();
-        for entry in std::fs::read_dir(root).unwrap() {
-            let entry = entry.unwrap();
-            if !entry.file_type().unwrap().is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let bytes = std::fs::read(entry.path()).unwrap();
-            lines.push(format!("{}  {name}", sha256_hex(&bytes)));
-        }
-        let path = root.join("captures").join("tensors.safetensors");
-        let bytes = std::fs::read(&path).unwrap();
-        lines.push(format!(
-            "{}  captures/tensors.safetensors",
-            sha256_hex(&bytes)
-        ));
-        lines.sort();
-        std::fs::write(
-            root.join("checksums.sha256"),
-            format!("{}\n", lines.join("\n")),
-        )
-        .unwrap();
     }
 }

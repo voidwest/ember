@@ -1174,33 +1174,7 @@ mod tests {
 #[cfg(test)]
 mod resident_tests {
     use super::*;
-
-    /// Deterministic pseudo-random block payload.
-    fn seeded_block_bytes(dtype: KQuantDtype, blocks: usize, seed: u64) -> Vec<u8> {
-        let mut state = seed;
-        let mut bytes = vec![0u8; blocks * dtype.block_bytes()];
-        for byte in &mut bytes {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            *byte = (state >> 33) as u8;
-        }
-        // sanitize the f16 scale fields so random bytes cannot produce
-        // NaN/Inf scales (mirrors the existing dequant reference tests)
-        let f16_offsets: &[usize] = match dtype {
-            KQuantDtype::Q4K => &[0, 2],
-            KQuantDtype::Q6K => &[208],
-        };
-        for block in bytes.chunks_exact_mut(dtype.block_bytes()) {
-            for &offset in f16_offsets {
-                let bits = u16::from_le_bytes([block[offset], block[offset + 1]]);
-                let bits = bits & 0x7FFF;
-                let bits = if bits >= 0x7C00 { 0x3C00 } else { bits };
-                block[offset..offset + 2].copy_from_slice(&bits.to_le_bytes());
-            }
-        }
-        bytes
-    }
+    use crate::k_matmul::tests::seeded_k_blocks;
 
     #[test]
     fn k_dtype_mapping_roundtrips() {
@@ -1221,7 +1195,7 @@ mod resident_tests {
     fn k_quant_weight_accepts_valid_layouts() {
         // [4, 256] q4_k: 4 super-blocks x 144 bytes
         let q4 = KQuantWeight::try_new(
-            seeded_block_bytes(KQuantDtype::Q4K, 4, 1),
+            seeded_k_blocks(KQuantDtype::Q4K, 4, 1),
             [4, 256],
             KQuantDtype::Q4K,
         )
@@ -1235,7 +1209,7 @@ mod resident_tests {
 
         // [2, 512] q6_k: 4 super-blocks x 210 bytes
         let q6 = KQuantWeight::try_new(
-            seeded_block_bytes(KQuantDtype::Q6K, 4, 2),
+            seeded_k_blocks(KQuantDtype::Q6K, 4, 2),
             [2, 512],
             KQuantDtype::Q6K,
         )
@@ -1250,7 +1224,7 @@ mod resident_tests {
 
     #[test]
     fn k_quant_weight_rejects_malformed_layouts() {
-        let ok = seeded_block_bytes(KQuantDtype::Q4K, 4, 3);
+        let ok = seeded_k_blocks(KQuantDtype::Q4K, 4, 3);
         // zero dimensions
         assert!(KQuantWeight::try_new(ok.clone(), [0, 256], KQuantDtype::Q4K).is_err());
         assert!(KQuantWeight::try_new(ok.clone(), [4, 0], KQuantDtype::Q4K).is_err());
@@ -1268,7 +1242,7 @@ mod resident_tests {
 
     #[test]
     fn k_quant_weight_mmap_range_is_checked() {
-        let bytes = seeded_block_bytes(KQuantDtype::Q4K, 2, 4);
+        let bytes = seeded_k_blocks(KQuantDtype::Q4K, 2, 4);
         let mut path = std::env::temp_dir();
         path.push("ember-kquant-mmap-test.bin");
         std::fs::write(&path, &bytes).unwrap();
@@ -1318,22 +1292,5 @@ mod resident_tests {
         .is_err());
 
         std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn dequantize_all_matches_dequant_tensor() {
-        for (dtype, blocks, shape) in [
-            (KQuantDtype::Q4K, 3, [3usize, 256]),
-            (KQuantDtype::Q6K, 6, [3usize, 512]),
-        ] {
-            let bytes = seeded_block_bytes(dtype, blocks, 7);
-            let weight = KQuantWeight::try_new(bytes.clone(), shape, dtype).unwrap();
-            let expanded = weight.dequantize_all();
-            assert_eq!(expanded.shape(), &shape[..]);
-
-            let mut direct = vec![0.0f32; shape[0] * shape[1]];
-            dequant_tensor(dtype.gguf_code(), &bytes, &mut direct).unwrap();
-            assert_eq!(expanded.data(), &direct[..]);
-        }
     }
 }

@@ -7,72 +7,32 @@ use ember::inspect::{inspect_path, FileKind};
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Minimal valid GGUF v3: one metadata key and one f32 tensor. Mirrors
-/// `tests/integration.rs::build_single_tensor_gguf` (test helpers are
-/// file-local there, so the small builder is duplicated deliberately).
+#[path = "common/gguf.rs"]
+mod gguf;
+use gguf::*;
+
+/// Minimal valid GGUF v3: one metadata key and one 2x4 f32 tensor.
 fn build_minimal_gguf() -> Vec<u8> {
-    let mut data = Vec::with_capacity(8 * 4);
-    for _ in 0..8 {
-        data.extend_from_slice(&1.0f32.to_le_bytes());
-    }
-
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x46554747u32.to_le_bytes());
-    buf.extend_from_slice(&3u32.to_le_bytes());
-    buf.extend_from_slice(&1u64.to_le_bytes());
-    buf.extend_from_slice(&1u64.to_le_bytes());
-
-    let key = b"general.name";
-    buf.extend_from_slice(&(key.len() as u64).to_le_bytes());
-    buf.extend_from_slice(key);
-    buf.extend_from_slice(&8u32.to_le_bytes());
-    let val = b"test";
-    buf.extend_from_slice(&(val.len() as u64).to_le_bytes());
-    buf.extend_from_slice(val);
-
-    let tname = b"test.weight";
-    buf.extend_from_slice(&(tname.len() as u64).to_le_bytes());
-    buf.extend_from_slice(tname);
-    buf.extend_from_slice(&2u32.to_le_bytes());
-    buf.extend_from_slice(&2u64.to_le_bytes());
-    buf.extend_from_slice(&4u64.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes());
-    buf.extend_from_slice(&0u64.to_le_bytes());
-
-    let current_pos = buf.len() as u64;
-    let alignment = 32u64;
-    let data_start = (current_pos + alignment - 1) & !(alignment - 1);
-    let padding = (data_start - current_pos) as usize;
-    buf.resize(buf.len() + padding, 0);
-    buf.extend_from_slice(&data);
-    buf
+    build_gguf(
+        &[TensorSpec {
+            name: "test.weight".into(),
+            dims: vec![2, 4],
+            data: vec![1.0; 8],
+        }],
+        &[kv_string("general.name", "test")],
+    )
 }
 
 /// Valid GGUF v3 with `count` one-element f32 tensors and no metadata.
 fn build_gguf_with_tensors(count: usize) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x46554747u32.to_le_bytes());
-    buf.extend_from_slice(&3u32.to_le_bytes());
-    buf.extend_from_slice(&(count as u64).to_le_bytes());
-    buf.extend_from_slice(&0u64.to_le_bytes());
-    for index in 0..count {
-        let name = format!("t{index:03}.weight");
-        buf.extend_from_slice(&(name.len() as u64).to_le_bytes());
-        buf.extend_from_slice(name.as_bytes());
-        buf.extend_from_slice(&1u32.to_le_bytes());
-        buf.extend_from_slice(&1u64.to_le_bytes());
-        buf.extend_from_slice(&0u32.to_le_bytes());
-        // 32-byte aligned offsets relative to the tensor-data start.
-        buf.extend_from_slice(&((index as u64) * 32).to_le_bytes());
-    }
-    let data_start = buf.len().div_ceil(32) * 32;
-    buf.resize(data_start, 0);
-    for _ in 0..count {
-        let mut slot = [0u8; 32];
-        slot[..4].copy_from_slice(&1.0f32.to_le_bytes());
-        buf.extend_from_slice(&slot);
-    }
-    buf
+    let tensors: Vec<TensorSpec> = (0..count)
+        .map(|index| TensorSpec {
+            name: format!("t{index:03}.weight"),
+            dims: vec![1],
+            data: vec![1.0],
+        })
+        .collect();
+    build_gguf(&tensors, &[])
 }
 
 fn temp_path(name: &str) -> PathBuf {
@@ -158,200 +118,6 @@ fn diff_report_shape_without_externals() {
     assert!(report.externals.is_empty());
     assert!(report.agreement.all_agree);
     std::fs::remove_file(&path).unwrap();
-}
-
-// ---------------------------------------------------------------------------
-// tiny llama builder — a positive `inspect_plan` path needs a constructible
-// model. Mirrors `tests/embedding_parity.rs` (helpers are file-local there).
-// ---------------------------------------------------------------------------
-
-const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF"
-const GGUF_VERSION: u32 = 3;
-const ALIGNMENT: u64 = 32;
-const T_UINT32: u32 = 4;
-const T_FLOAT32: u32 = 6;
-const T_STRING: u32 = 8;
-const DTYPE_F32: u32 = 0;
-
-struct TensorSpec {
-    name: String,
-    dims: Vec<u64>,
-    data: Vec<f32>,
-}
-
-struct Kv {
-    key: &'static str,
-    ty: u32,
-    value: Vec<u8>,
-}
-
-fn kv_string(key: &'static str, value: &str) -> Kv {
-    let mut v = Vec::new();
-    v.extend((value.len() as u64).to_le_bytes());
-    v.extend(value.as_bytes());
-    Kv {
-        key,
-        ty: T_STRING,
-        value: v,
-    }
-}
-
-fn kv_u32(key: &'static str, value: u32) -> Kv {
-    Kv {
-        key,
-        ty: T_UINT32,
-        value: value.to_le_bytes().to_vec(),
-    }
-}
-
-fn kv_f32(key: &'static str, value: f32) -> Kv {
-    Kv {
-        key,
-        ty: T_FLOAT32,
-        value: value.to_le_bytes().to_vec(),
-    }
-}
-
-fn write_string(out: &mut Vec<u8>, s: &str) {
-    out.extend((s.len() as u64).to_le_bytes());
-    out.extend(s.as_bytes());
-}
-
-fn build_gguf(tensors: &[TensorSpec], kvs: &[Kv]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend(GGUF_MAGIC.to_le_bytes());
-    out.extend(GGUF_VERSION.to_le_bytes());
-    out.extend((tensors.len() as u64).to_le_bytes());
-    out.extend((kvs.len() as u64).to_le_bytes());
-    for kv in kvs {
-        write_string(&mut out, kv.key);
-        out.extend(kv.ty.to_le_bytes());
-        out.extend(&kv.value);
-    }
-
-    let mut offset = 0u64;
-    let mut infos = Vec::new();
-    for t in tensors {
-        infos.push((t, offset));
-        let size = (t.data.len() * 4) as u64;
-        offset += size.div_ceil(ALIGNMENT) * ALIGNMENT;
-    }
-    for (t, tensor_offset) in &infos {
-        write_string(&mut out, &t.name);
-        out.extend((t.dims.len() as u32).to_le_bytes());
-        for d in &t.dims {
-            out.extend(d.to_le_bytes());
-        }
-        out.extend(DTYPE_F32.to_le_bytes());
-        out.extend(tensor_offset.to_le_bytes());
-    }
-
-    let data_start = out.len() as u64;
-    let pad = (ALIGNMENT - (data_start % ALIGNMENT)) % ALIGNMENT;
-    out.extend(std::iter::repeat_n(0u8, pad as usize));
-    for t in tensors {
-        let mut bytes = Vec::with_capacity(t.data.len() * 4);
-        for v in &t.data {
-            bytes.extend(v.to_le_bytes());
-        }
-        bytes.resize(
-            bytes.len().div_ceil(ALIGNMENT as usize) * ALIGNMENT as usize,
-            0,
-        );
-        out.extend(bytes);
-    }
-    out
-}
-
-/// Deterministic LCG so the test model is reproducible.
-struct Rng(u64);
-impl Rng {
-    fn new(seed: u64) -> Self {
-        Self(seed)
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        self.0
-    }
-    fn f32(&mut self) -> f32 {
-        ((self.next_u64() >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
-    }
-}
-
-fn fill(rng: &mut Rng, rows: usize, cols: usize) -> Vec<f32> {
-    (0..rows * cols).map(|_| rng.f32()).collect()
-}
-
-/// Tiny llama GGUF: embed=16, heads=4, kv_heads=2, layers=2, vocab=64,
-/// intermediate=48, max_seq=64.
-fn tiny_llama_gguf() -> Vec<u8> {
-    let embed = 16usize;
-    let vocab = 64usize;
-    let layers = 2usize;
-    let interm = 48usize;
-    let mut rng = Rng::new(0x5EED_CAFE);
-    let mut tensors = Vec::new();
-
-    tensors.push(TensorSpec {
-        name: "token_embd.weight".into(),
-        dims: vec![embed as u64, vocab as u64],
-        data: fill(&mut rng, vocab, embed),
-    });
-    let kv_dim = 2 * (embed / 4);
-    for l in 0..layers {
-        let b = format!("blk.{l}.");
-        for (name, in_f, out_f) in [
-            ("attn_q.weight", embed, embed),
-            ("attn_k.weight", embed, kv_dim),
-            ("attn_v.weight", embed, kv_dim),
-            ("attn_output.weight", embed, embed),
-            ("ffn_gate.weight", embed, interm),
-            ("ffn_up.weight", embed, interm),
-            ("ffn_down.weight", interm, embed),
-        ] {
-            tensors.push(TensorSpec {
-                name: format!("{b}{name}"),
-                dims: vec![in_f as u64, out_f as u64],
-                data: fill(&mut rng, out_f, in_f),
-            });
-        }
-        tensors.push(TensorSpec {
-            name: format!("{b}attn_norm.weight"),
-            dims: vec![embed as u64],
-            data: fill(&mut rng, 1, embed),
-        });
-        tensors.push(TensorSpec {
-            name: format!("{b}ffn_norm.weight"),
-            dims: vec![embed as u64],
-            data: fill(&mut rng, 1, embed),
-        });
-    }
-    tensors.push(TensorSpec {
-        name: "output_norm.weight".into(),
-        dims: vec![embed as u64],
-        data: fill(&mut rng, 1, embed),
-    });
-    tensors.push(TensorSpec {
-        name: "output.weight".into(),
-        dims: vec![embed as u64, vocab as u64],
-        data: fill(&mut rng, vocab, embed),
-    });
-
-    let kvs = vec![
-        kv_string("general.architecture", "llama"),
-        kv_u32("llama.block_count", layers as u32),
-        kv_u32("llama.attention.head_count", 4),
-        kv_u32("llama.attention.head_count_kv", 2),
-        kv_u32("llama.embedding_length", embed as u32),
-        kv_u32("llama.context_length", 64),
-        kv_f32("llama.rope.freq_base", 10_000.0),
-        kv_f32("llama.attention.layer_norm_rms_epsilon", 1e-5),
-        kv_u32("llama.vocab_size", vocab as u32),
-    ];
-    build_gguf(&tensors, &kvs)
 }
 
 #[test]
