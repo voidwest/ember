@@ -69,6 +69,9 @@ pub(super) struct RunRow {
     pub(super) can_open: bool,
     /// The record kept its configuration, so Reuse works.
     pub(super) can_reuse: bool,
+    /// Divergence by layer, for the row's sparkline; `None` when the record
+    /// kept no result.
+    pub(super) spark: Option<Vec<f32>>,
 }
 
 impl From<&RunRecord> for RunRow {
@@ -86,6 +89,13 @@ impl From<&RunRecord> for RunRow {
             pinned: run.pinned,
             can_open: run.result.is_some() && run.config.is_some(),
             can_reuse: run.config.is_some(),
+            spark: run.result.as_ref().map(|result| {
+                result
+                    .layers
+                    .iter()
+                    .map(|layer| layer.relative_l2.unwrap_or(0.0) as f32)
+                    .collect()
+            }),
         }
     }
 }
@@ -250,12 +260,12 @@ impl TableDelegate for RunsDelegate {
             1 => Column::new(run_col::MODEL, "Model").width(px(224.0)),
             2 => Column::new(run_col::INTERVENTION, "Intervention").width(px(228.0)),
             3 => Column::new(run_col::TOKENS, "Tokens").width(px(88.0)),
-            4 => Column::new(run_col::RESULT, "Result").width(px(96.0)),
+            4 => Column::new(run_col::RESULT, "Result").width(px(156.0)),
             5 => Column::new(run_col::DURATION, "Duration").width(px(96.0)),
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
             // Wide enough for Select + Open + Pin + Reuse + Star + Delete,
             // the fullest lane a row can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(520.0)),
+            _ => Column::new(run_col::ACTIONS, "").width(px(480.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -479,6 +489,33 @@ impl TableDelegate for RunsDelegate {
             colors.text_muted
         };
         let _ = cx;
+        // The result reads as a word and, beside it, the run's divergence by
+        // layer: which runs did something is visible down the column.
+        if col_ix == 4 {
+            let spark = self.row(row_ix).and_then(|run| {
+                let ink: Hsla = if run.outputs_equal {
+                    colors.text_faint.into()
+                } else {
+                    colors.accent.into()
+                };
+                run.spark
+                    .as_deref()
+                    .and_then(|values| super::spark::sparkline(values, ink, 48.0, 16.0))
+            });
+            return div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(Space::SM))
+                .child(
+                    div()
+                        .w(px(84.0))
+                        .flex_none()
+                        .child(mono(text, Type::META, tint)),
+                )
+                .children(spark)
+                .into_any_element();
+        }
         mono(text, Type::META, tint).into_any_element()
     }
 

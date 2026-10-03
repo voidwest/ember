@@ -350,6 +350,26 @@ impl Console {
                 ))
         });
         let chart_series = self.sweep_series();
+        let svg = super::chart::layers_svg(
+            &chart_series,
+            None,
+            None,
+            super::chart::SvgLabels {
+                title: "Effect of the change at each layer",
+                subtitle: &sample_values
+                    .map(|values| {
+                        change_summary(values)
+                            .split(" \u{00b7} layer")
+                            .next()
+                            .unwrap_or("")
+                            .to_string()
+                    })
+                    .unwrap_or_default(),
+                x_axis: "Layer changed",
+                y_axis: "Peak relative L2 difference",
+            },
+            colors,
+        );
         div()
             .flex()
             .flex_col()
@@ -372,10 +392,18 @@ impl Console {
                             .child(label("Sweep across layers", Type::SUBSECTION, colors.text))
                             .child(div().flex_1())
                             .child(text_button(
+                                "sweep-svg",
+                                "Save SVG",
+                                cx.listener(move |console, _: &ClickEvent, _window, cx| {
+                                    console.save_svg("ember-sweep.svg", svg.clone(), cx);
+                                }),
+                            ))
+                            .child(text_button(
                                 "sweep-csv",
                                 "Copy CSV",
-                                cx.listener(move |_console, _: &ClickEvent, _window, cx| {
+                                cx.listener(move |console, _: &ClickEvent, _window, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(csv.clone()));
+                                    console.show_toast("Copied the sweep as CSV", cx);
                                 }),
                             )),
                     )
