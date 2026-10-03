@@ -260,12 +260,12 @@ impl TableDelegate for RunsDelegate {
             1 => Column::new(run_col::MODEL, "Model").width(px(224.0)),
             2 => Column::new(run_col::INTERVENTION, "Intervention").width(px(228.0)),
             3 => Column::new(run_col::TOKENS, "Tokens").width(px(88.0)),
-            4 => Column::new(run_col::RESULT, "Result").width(px(176.0)),
+            4 => Column::new(run_col::RESULT, "Result").width(px(156.0)),
             5 => Column::new(run_col::DURATION, "Duration").width(px(96.0)),
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
             // Wide enough for Select + Open + Pin + Reuse + Star + Delete,
             // the fullest lane a row can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(430.0)),
+            _ => Column::new(run_col::ACTIONS, "").width(px(480.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -500,7 +500,7 @@ impl TableDelegate for RunsDelegate {
                 };
                 run.spark
                     .as_deref()
-                    .and_then(|values| super::spark::sparkline(values, ink, 56.0, 16.0))
+                    .and_then(|values| super::spark::sparkline(values, ink, 48.0, 16.0))
             });
             return div()
                 .flex()
