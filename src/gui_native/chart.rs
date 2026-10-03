@@ -439,61 +439,6 @@ pub(super) fn layer_divergence_chart_with(
         )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{metric_label, nice_max};
-
-    #[test]
-    fn the_svg_export_is_a_complete_drawing() {
-        let metrics: Vec<crate::gui::LayerMetric> = (0..4)
-            .map(|layer| crate::gui::LayerMetric {
-                layer,
-                relative_l2_difference: Some(layer as f64 * 0.1),
-                cosine_distance: None,
-                maximum_absolute_difference: None,
-                exact: false,
-            })
-            .collect();
-        let svg = super::layers_svg(
-            &metrics,
-            None,
-            Some(2),
-            super::SvgLabels {
-                title: "A & B",
-                subtitle: "<sub>",
-                x_axis: "Transformer layer",
-                y_axis: "relative L2",
-            },
-            &crate::gui_native::theme::dark(),
-        );
-        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
-        if let Some(path) = std::env::var_os("EMBER_SVG_DUMP") {
-            std::fs::write(path, &svg).unwrap();
-        }
-        assert!(
-            svg.contains("A &amp; B") && svg.contains("&lt;sub&gt;"),
-            "labels are escaped"
-        );
-        assert!(svg.contains("intervention · L2"));
-        assert_eq!(svg.matches("<circle").count(), 4);
-    }
-
-    #[test]
-    fn chart_range_handles_zero_and_non_finite_series() {
-        assert_eq!(nice_max(0.0), 0.001);
-        assert_eq!(nice_max(f64::NAN), 0.001);
-        assert_eq!(nice_max(0.018), 0.02);
-        assert_eq!(nice_max(1.2), 2.0);
-    }
-
-    #[test]
-    fn chart_readouts_keep_small_values_visible() {
-        assert_eq!(metric_label(0.0), "0");
-        assert!(metric_label(0.000_012).contains('e'));
-        assert_eq!(metric_label(0.183), "0.183");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // SVG export
 //
@@ -669,4 +614,59 @@ pub(super) fn layers_svg(
     }
     out.push_str("</svg>");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{metric_label, nice_max};
+
+    #[test]
+    fn the_svg_export_is_a_complete_drawing() {
+        let metrics: Vec<crate::gui::LayerMetric> = (0..4)
+            .map(|layer| crate::gui::LayerMetric {
+                layer,
+                relative_l2_difference: Some(layer as f64 * 0.1),
+                cosine_distance: None,
+                maximum_absolute_difference: None,
+                exact: false,
+            })
+            .collect();
+        let svg = super::layers_svg(
+            &metrics,
+            None,
+            Some(2),
+            super::SvgLabels {
+                title: "A & B",
+                subtitle: "<sub>",
+                x_axis: "Transformer layer",
+                y_axis: "relative L2",
+            },
+            &crate::gui_native::theme::dark(),
+        );
+        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
+        if let Some(path) = std::env::var_os("EMBER_SVG_DUMP") {
+            std::fs::write(path, &svg).unwrap();
+        }
+        assert!(
+            svg.contains("A &amp; B") && svg.contains("&lt;sub&gt;"),
+            "labels are escaped"
+        );
+        assert!(svg.contains("intervention · L2"));
+        assert_eq!(svg.matches("<circle").count(), 4);
+    }
+
+    #[test]
+    fn chart_range_handles_zero_and_non_finite_series() {
+        assert_eq!(nice_max(0.0), 0.001);
+        assert_eq!(nice_max(f64::NAN), 0.001);
+        assert_eq!(nice_max(0.018), 0.02);
+        assert_eq!(nice_max(1.2), 2.0);
+    }
+
+    #[test]
+    fn chart_readouts_keep_small_values_visible() {
+        assert_eq!(metric_label(0.0), "0");
+        assert!(metric_label(0.000_012).contains('e'));
+        assert_eq!(metric_label(0.183), "0.183");
+    }
 }
