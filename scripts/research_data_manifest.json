@@ -6,11 +6,11 @@
   ],
   "threshold_bytes": 262144,
   "summary": {
-    "files": 47,
-    "bytes": 66250905,
-    "distinct_blobs": 33,
-    "distinct_bytes": 54675670,
-    "duplicate_bytes": 11575235
+    "files": 44,
+    "bytes": 64415657,
+    "distinct_blobs": 31,
+    "distinct_bytes": 53102646,
+    "duplicate_bytes": 11313011
   },
   "asset": {
     "name": "ember-research-data-<version>.tar",
@@ -273,24 +273,6 @@
       "referenced_by": []
     },
     {
-      "path": "data/test_10_activations.npy",
-      "bytes": 1310800,
-      "sha256": "025f5670bbc9caa1673d6b8840d2c24ce8ecdf29cf8b3ce5faa7388c67db843c",
-      "referenced_by": []
-    },
-    {
-      "path": "data/test_activations.npy",
-      "bytes": 262224,
-      "sha256": "fa832ed8d27e933a5f5c202a4ea8a1a673eac65eb1a04aa66619fc3d76f92a25",
-      "referenced_by": []
-    },
-    {
-      "path": "data/test_check_activations.npy",
-      "bytes": 262224,
-      "sha256": "fa832ed8d27e933a5f5c202a4ea8a1a673eac65eb1a04aa66619fc3d76f92a25",
-      "referenced_by": []
-    },
-    {
       "path": "research/embersec/comparative/results/diff_fuzz/log_construction-2000-11.jsonl",
       "bytes": 806816,
       "sha256": "00788f92cfdf0554601bb6718c3f0d217e3b3fe864e9d435d163fa1b980874bb",
@@ -371,14 +353,6 @@
         "data/arabic_morph_sample/out_imbalanced/sft.jsonl",
         "data/arabic_morph_sample/out_imbalanced_strict/sft.jsonl",
         "data/arabic_morph_sample/out_split_strategies_strict/root_heldout/sft.jsonl"
-      ]
-    },
-    {
-      "sha256": "fa832ed8d27e933a5f5c202a4ea8a1a673eac65eb1a04aa66619fc3d76f92a25",
-      "bytes": 262224,
-      "paths": [
-        "data/test_activations.npy",
-        "data/test_check_activations.npy"
       ]
     }
   ]

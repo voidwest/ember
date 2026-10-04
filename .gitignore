@@ -156,6 +156,14 @@ docs/screenshots/console-shell/
 # material too. Already-tracked captures stay tracked; force-add a new one
 # (git add -f) when it is meant to ship.
 /artifacts/gui/*/
+/artifacts/ui-redesign/
+/docs/screenshots/*.png
+/docs/screenshots/site-pages/
+# 2x PNG fallbacks rendered by gen_all.py; the pages use the SVGs.
+/docs/ember/road-to-ember-1.0/figures/*.png
+/artifacts/crossover_sweep/crossover_plot.png
+/data/test_*_stimuli.json
+/data/test_stimuli_subset.json
 
 # Local working notes for the current UI pass; not documentation.
 /nextsteps.md

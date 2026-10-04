@@ -22,11 +22,11 @@
 | `src/main.rs` | Registers and dispatches the nested `kv` command. |
 | `src/llama.rs` | Completes the execution-plan cache key with capacity/model/tokenizer inputs; adds plan-cache and exact replay tests. No existing cache APIs were removed. |
 | `src/plan.rs` | Documents KV stride units as scalar elements and corrects the test helper's byte-like stride values. The `v04-plan/1` serialized field set is unchanged. |
-| `KV_ARCHITECTURE_AUDIT.md` | Detailed ownership/layout/cursor/RoPE/execution/provenance audit. |
-| `KV_FIRST_CLASS_PLAN.md` | Incremental design, gates, stop conditions, and deferred work. |
+| `docs/audits/KV_ARCHITECTURE_AUDIT.md` | Detailed ownership/layout/cursor/RoPE/execution/provenance audit. |
+| `docs/audits/KV_FIRST_CLASS_PLAN.md` | Incremental design, gates, stop conditions, and deferred work. |
 | `docs/kv-snapshots.md` | User/schema/security/reproducibility documentation. |
 | `docs/kv-transfer-research.md` | Conservative design note for future arXiv:2608.03893-like research. |
-| `CODE_CHANGES_KV_SNAPSHOT.md` | This change and validation record. |
+| `docs/audits/CODE_CHANGES_KV_SNAPSHOT.md` | This change and validation record. |
 | `scripts/validate_kv_replay_matrix.py` | Runs the independent-process real-GGUF matrix, exact f32-bit comparisons, input/inventory checks, phase/process timing, and safe evidence publication. |
 | `artifacts/benchmark-kv-v1/2026-08-08/` | Compact manifest, exact commands, and mechanically derived 12-cell matrix summary. Large/sensitive raw data stays under ignored `runs/`. |
 

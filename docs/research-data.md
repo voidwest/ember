@@ -7,13 +7,13 @@ save, so a maintainer can decide.
 ## What is tracked today
 
 Research datasets and frozen experiment logs live in git under `data/` and
-`research/`: 71.7 MiB of tracked files. Most of that is a few dozen large
+`research/`: 69.7 MiB of tracked files. Most of that is a few dozen large
 files. With a 256 KiB threshold,
 [`scripts/research_data_manifest.json`](../scripts/research_data_manifest.json)
-lists **47 files, 63.2 MiB**, each with its path, byte count and SHA-256.
-They hold only **33 distinct blobs (52.1 MiB)**: **11.0 MiB are
+lists **44 files, 61.4 MiB**, each with its path, byte count and SHA-256.
+They hold only **31 distinct blobs (50.6 MiB)**: **10.8 MiB are
 byte-identical copies**. No code or test names any of these paths (the
-manifest's `referenced_by` is empty for all 47), so they are research
+manifest's `referenced_by` is empty for all 44), so they are research
 records rather than build or test inputs.
 
 Regenerate the manifest and the report with:
@@ -42,7 +42,7 @@ Largest directories (files at or above the threshold):
 
 ## Byte-identical copies
 
-Nine groups; storing each blob once saves 11.0 MiB:
+Eight groups; storing each blob once saves 10.8 MiB:
 
 | copies × size | saves | paths |
 |---|---:|---|
@@ -54,7 +54,6 @@ Nine groups; storing each blob once saves 11.0 MiB:
 | 2 × 677 KiB | 677 KiB | `data/arabic_morph_real/out_disambig_padt_split_strategies_strict/root_heldout/sft.jsonl`, `data/arabic_morph_real/out_disambig_padt_strict/sft.jsonl` |
 | 2 × 561 KiB | 561 KiB | `data/arabic_morph_real/out_disambig_padt_split_strategies_strict/root_heldout/canonical.jsonl`, `data/arabic_morph_real/out_disambig_padt_strict/canonical.jsonl` |
 | 2 × 492 KiB | 492 KiB | `data/arabic_morph_real/camel_disambig_msa_padt_{500,smoke}.jsonl` |
-| 2 × 256 KiB | 256 KiB | `data/test_activations.npy`, `data/test_check_activations.npy` |
 
 The split-strategy copies are expected (several strategies produce the same
 SFT split); they are still separate files in git.
@@ -69,7 +68,7 @@ SFT split); they are still separate files in git.
    ```
 
    It re-hashes every file against the manifest first and prints the
-   tarball's SHA-256. Current size: 52.1 MiB, well under the 2 GiB release
+   tarball's SHA-256. Current size: 50.6 MiB, well under the 2 GiB release
    asset limit.
 2. **Move to a release asset (manual maintainer action).** Upload the
    tarball to a GitHub release (for example `research-data-v1`), then set
@@ -90,9 +89,9 @@ SFT split); they are still separate files in git.
 
 ## What it saves, and what it does not
 
-- **Checkout:** 63.2 MiB fewer tracked bytes in every working tree (88% of
+- **Checkout:** 61.4 MiB fewer tracked bytes in every working tree (88% of
   `data/` + `research/`).
-- **Distribution:** the asset is 52.1 MiB, since duplicates are stored once.
+- **Distribution:** the asset is 50.6 MiB, since duplicates are stored once.
 - **Clone size: nothing, by itself.** Git history keeps every blob ever
   committed, so a clone still downloads them. Shrinking clones needs a
   history rewrite (filter-repo or LFS migration), which is out of scope and
