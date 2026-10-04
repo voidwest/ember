@@ -86,34 +86,6 @@ pub trait ForwardModel<B: Backend> {
         )
     }
 
-    /// Prefill a token sequence at the current cache cursor.
-    ///
-    /// This is the causal prefill entry point: `start_pos` is taken from the
-    /// cache cursor, so a fresh cache starts at position 0 and subsequent
-    /// turns continue contiguously.
-    fn prefill_tokens_with_cache(
-        &self,
-        backend: &B,
-        token_ids: &[u32],
-        cache: &mut crate::kv_cache::KVCache,
-    ) -> Result<B::Tensor, B::Error> {
-        self.forward_with_cache(backend, token_ids, cache, cache.cursor())
-    }
-
-    /// Prefill a precomputed embedding sequence at the current cache cursor.
-    ///
-    /// The embeddings enter the exact same internal prefill path as
-    /// [`Self::prefill_tokens_with_cache`]; positions are contiguous from the
-    /// cursor and attention is causal.
-    fn prefill_embeddings_with_cache(
-        &self,
-        backend: &B,
-        embeddings: &B::Tensor,
-        cache: &mut crate::kv_cache::KVCache,
-    ) -> Result<B::Tensor, B::Error> {
-        self.forward_embeddings_with_cache(backend, embeddings, cache, cache.cursor())
-    }
-
     /// Greedy (argmax) next-token inference: returns the top token id and
     /// its logit. Defaults to the full-logits path plus an in-place argmax;
     /// models with a fused fast path (e.g. LLaMA's Q8_0 workspace decode)
@@ -736,17 +708,13 @@ impl Linear<CpuBackend> {
         }
     }
 
-    /// Build the decode-optimized layout for sufficiently wide Q8_0 layers.
+    /// Build the decode-optimized layout for sufficiently wide Q8_0 layers,
+    /// consulting an optional on-disk packed-layout cache: a validated
+    /// `entry_name` replaces the repack, otherwise the freshly packed layout
+    /// is recorded for the next run.
     ///
     /// Keeping this opt-in avoids duplicating every projection in memory. In
     /// practice only the LM head is wide enough to benefit.
-    pub fn prepare_interleaved(&mut self, min_out_features: usize) {
-        self.prepare_interleaved_cached(min_out_features, None, "");
-    }
-
-    /// As [`Self::prepare_interleaved`], consulting an optional on-disk
-    /// packed-layout cache: a validated `entry_name` replaces the repack,
-    /// otherwise the freshly packed layout is recorded for the next run.
     pub fn prepare_interleaved_cached(
         &mut self,
         min_out_features: usize,

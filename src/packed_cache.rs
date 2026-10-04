@@ -49,9 +49,6 @@ const MAGIC: &[u8; 8] = b"EMBERPK1";
 /// Format revision: 1 stored VNNI tiles only; 2 adds the interleaved lm-head
 /// layout (entries carry a kind and an optional second byte range).
 const VERSION: u32 = 2;
-/// Layout ids of the packed representations (`quant.rs`).
-pub const LAYOUT_VNNI_TILE16: &str = "q8-vnni-tile16-v1";
-pub const LAYOUT_INTERLEAVED_4ROW: &str = "q8-interleaved-4row-v1";
 /// Header format tag (both layouts share one file).
 const FORMAT_TAG: &str = "ember-packed-q8-v2";
 /// Bytes reserved between the fixed prefix and the payload for the header.

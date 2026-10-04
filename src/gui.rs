@@ -1269,7 +1269,7 @@ fn run_config_from(
 }
 
 /// The v0.4 hook stage ids, taken from Ember's own hook definitions
-/// (`SemanticHookSite::stage_id`), used by the page's hook selector.
+/// (`SemanticHookSite::stage_id`), used by both consoles' hook selectors.
 pub(crate) fn hook_stages() -> Vec<&'static str> {
     SemanticHookSite::ALL
         .iter()

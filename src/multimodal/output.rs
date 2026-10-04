@@ -54,22 +54,6 @@ pub struct ModelCapabilities {
     pub full_duplex: bool,
 }
 
-impl ModelCapabilities {
-    pub const TEXT_ONLY: Self = Self {
-        input_text: true,
-        input_image: false,
-        input_audio: false,
-        input_video: false,
-        output_text: true,
-        output_audio: false,
-        multi_image: false,
-        streaming_audio_input: false,
-        long_form_audio: false,
-        streaming_audio_output: false,
-        full_duplex: false,
-    };
-}
-
 impl crate::smolvlm::SmolVlm {
     pub fn capabilities(&self) -> ModelCapabilities {
         ModelCapabilities {

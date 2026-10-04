@@ -856,7 +856,6 @@ impl WavTokenizerDecoder {
         let resnets: [ResnetBlock; 4] = resnets
             .try_into()
             .map_err(|_| anyhow::anyhow!("pos_net must contain four resblocks"))?;
-        let _ = &resnets;
         Ok(Self {
             config,
             codebook,
@@ -1175,13 +1174,6 @@ impl WavTokenizerDecoder {
         let (xr, _xi) = self.fft.dft(&fr, &fi, 1.0);
         let scale = 1.0 / n as f64;
         (0..n).map(|t| xr[t] * scale).collect()
-    }
-
-    pub fn output_len_for_tokens(&self, tokens: usize) -> usize {
-        let win = self.config.n_fft;
-        let pad = (win - self.config.hop_length) / 2;
-        let total = (tokens - 1) * self.config.hop_length + win;
-        total.saturating_sub(2 * pad)
     }
 }
 

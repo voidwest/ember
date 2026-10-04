@@ -20,9 +20,7 @@
 //!    stay pending until [`AudioStream::finish`].
 //!
 //! The global Whisper normalization (`max − 8` floor, `(x+4)/4`) spans all
-//! usable frames by construction, so normalized features exist at finish;
-//! [`AudioStream::provisional_mel`] exposes unstable partial features for
-//! UIs, explicitly not for inference.
+//! usable frames by construction, so normalized features exist at finish.
 //!
 //! The Whisper-family *encoder* has no recurrent state; what gets
 //! re-encoded when is an above-front-end scheduling decision. This module
@@ -305,19 +303,12 @@ impl MelStream {
             .cloned()
             .fold(f64::NEG_INFINITY, f64::max);
         let floor = max_log - 8.0;
-        let mut data = vec![0.0f32; usable * n_mels];
-        for t in 0..usable {
-            for j in 0..n_mels {
-                let v = ((self.columns[t * n_mels + j].max(floor) + 4.0) / 4.0) as f32;
-                data[j * usable + t] = v;
-            }
-        }
-        Ok((CpuTensor::from_data(vec![n_mels, usable], data), floor))
+        Ok((self.normalized_window(0, usable, floor), floor))
     }
 
     /// Normalized mel for frames `[start, start+len)` under an explicit
     /// floor (`max_log − 8`): the exact per-element arithmetic of
-    /// [`Self::finish`], applied to immutable raw columns. Encoder
+    /// [`Self::finish_with_floor`], applied to immutable raw columns. Encoder
     /// scheduling above this module uses this to (re)build windows from a
     /// floor it names, so finish-time validation can prove which cached
     /// encodes remain bit-valid.
@@ -344,27 +335,6 @@ impl MelStream {
     /// `running_max_log() − 8.0`; see [`AudioStream::running_floor`].
     pub(crate) fn running_max_log(&self) -> f64 {
         self.running_max_log
-    }
-
-    /// Unstable partial features over finalized frames using the running
-    /// max as floor. Later audio can raise the max and rescale history;
-    /// for display, not inference.
-    pub fn provisional(&self) -> CpuTensor {
-        let n_mels = crate::multimodal::audio::N_MELS;
-        let n = self.finalized_frames();
-        let floor = if n > 0 {
-            self.running_max_log - 8.0
-        } else {
-            0.0
-        };
-        let mut data = vec![0.0f32; n * n_mels];
-        for t in 0..n {
-            for j in 0..n_mels {
-                let v = ((self.columns[t * n_mels + j].max(floor) + 4.0) / 4.0) as f32;
-                data[j * n + t] = v;
-            }
-        }
-        CpuTensor::from_data(vec![n_mels, n], data)
     }
 }
 
@@ -452,7 +422,6 @@ pub struct AudioStream {
     mel: MelStream,
     input_samples: usize,
     samples_16k: usize,
-    finalized_resampler_samples: usize,
     finished: bool,
 }
 
@@ -473,13 +442,8 @@ impl AudioStream {
             mel: MelStream::new(),
             input_samples: 0,
             samples_16k: 0,
-            finalized_resampler_samples: 0,
             finished: false,
         })
-    }
-
-    pub fn config(&self) -> &AudioStreamConfig {
-        &self.config
     }
 
     /// Push mono f32 PCM at the configured rate. Returns progress with the
@@ -491,7 +455,6 @@ impl AudioStream {
             Some(r) => r.push(samples),
             None => samples.to_vec(),
         };
-        self.finalized_resampler_samples += fresh.len();
         self.samples_16k += fresh.len();
         self.mel.push(&fresh);
         Ok(self.progress())
@@ -520,17 +483,6 @@ impl AudioStream {
             samples_16k: self.samples_16k,
             input_seconds: self.input_samples as f64 / f64::from(self.config.sample_rate),
         })
-    }
-
-    /// Unstable partial mel over finalized frames (display only; mirrors the
-    /// mel stream's private provisional view).
-    pub fn provisional_mel(&self) -> Option<CpuTensor> {
-        let m = self.mel.provisional();
-        if m.shape()[1] == 0 {
-            None
-        } else {
-            Some(m)
-        }
     }
 
     // -----------------------------------------------------------------
@@ -796,21 +748,6 @@ mod tests {
         let mut stream = AudioStream::open(AudioStreamConfig::default()).unwrap();
         stream.push_pcm(&sig).unwrap();
         assert!(stream.finish().is_err(), "streamed must reject short input");
-    }
-
-    #[test]
-    fn provisional_features_exist_before_finish() {
-        let sig = signal(48_000, 55); // 3 s
-        let mut stream = AudioStream::open(AudioStreamConfig::default()).unwrap();
-        let mut saw_provisional = false;
-        for (i, chunk) in sig.chunks(3200).enumerate() {
-            stream.push_pcm(chunk).unwrap();
-            if i >= 4 {
-                assert!(stream.provisional_mel().is_some());
-                saw_provisional = true;
-            }
-        }
-        assert!(saw_provisional);
     }
 }
 

@@ -562,7 +562,7 @@ fn quantization_summary(plan: &crate::plan::ExecutionPlan) -> String {
     parts.join(",")
 }
 
-fn pretty_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+pub(crate) fn pretty_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     let mut value = serde_json::to_value(value)
         .map_err(|error| format!("JSON serialization failed: {error}"))?;
     // GUI dependencies can enable serde_json/preserve_order. Scientific

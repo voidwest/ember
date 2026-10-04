@@ -233,7 +233,7 @@ impl PlanBuilder {
         }
         let mut cursor = 0usize;
         for region in &mut self.regions {
-            cursor = align_up(cursor, region.alignment);
+            cursor = cursor.next_multiple_of(region.alignment);
             region.offset = cursor;
             cursor = cursor
                 .checked_add(region.size)
@@ -242,14 +242,13 @@ impl PlanBuilder {
     }
 
     fn finish(self) -> (Vec<TensorRecord>, ScratchPlan, DispatchPlan) {
-        let total_bytes = align_up(
-            self.regions
-                .iter()
-                .map(|r| r.offset + r.size)
-                .max()
-                .unwrap_or(0),
-            PLAN_REGION_ALIGN,
-        );
+        let total_bytes = self
+            .regions
+            .iter()
+            .map(|r| r.offset + r.size)
+            .max()
+            .unwrap_or(0)
+            .next_multiple_of(PLAN_REGION_ALIGN);
         let scratch = ScratchPlan {
             total_bytes,
             alignment: PLAN_REGION_ALIGN,
@@ -277,10 +276,6 @@ impl PlanBuilder {
         };
         (self.tensor_table, scratch, dispatch)
     }
-}
-
-fn align_up(value: usize, alignment: usize) -> usize {
-    value.div_ceil(alignment) * alignment
 }
 
 impl Llama<CpuBackend> {

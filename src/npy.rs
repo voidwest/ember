@@ -1,8 +1,7 @@
 use anyhow::Context;
 use std::fs;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
 
 /// Maximum `.npy` payload accepted by the path and in-memory readers.
 ///
@@ -10,8 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// need larger activation matrices should use a bounded/chunked reader rather
 /// than handing an untrusted path to `read_npy_2d`.
 pub const MAX_NPY_BYTES: usize = 256 * 1024 * 1024;
-
-static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
     write_npy_shape(path, data, shape)
@@ -35,7 +32,7 @@ fn write_npy_shape(path: &str, data: &[f32], shape: &[usize]) -> anyhow::Result<
     Ok(())
 }
 
-fn write_npy_header(w: &mut impl Write, shape: &[usize]) -> anyhow::Result<()> {
+pub(crate) fn write_npy_header(w: &mut impl Write, shape: &[usize]) -> anyhow::Result<()> {
     let shape_text = if shape.len() == 1 {
         format!("({},)", shape[0])
     } else {
@@ -70,7 +67,7 @@ fn write_npy_header(w: &mut impl Write, shape: &[usize]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn write_f32_slice(w: &mut impl Write, data: &[f32]) -> anyhow::Result<()> {
+pub(crate) fn write_f32_slice(w: &mut impl Write, data: &[f32]) -> anyhow::Result<()> {
     const FLOATS_PER_CHUNK: usize = 1024;
     let mut bytes = [0u8; FLOATS_PER_CHUNK * std::mem::size_of::<f32>()];
     for values in data.chunks(FLOATS_PER_CHUNK) {
@@ -312,7 +309,13 @@ impl NpyStreamWriter {
             .try_fold(1usize, |count, dim| count.checked_mul(*dim))
             .context("npy stream shape product overflow")?;
         let final_path = PathBuf::from(path);
-        let (file, temporary_path) = create_temporary_output(&final_path)?;
+        let (temporary_path, file) = crate::atomic_file::create_sibling_temp(&final_path)
+            .with_context(|| {
+                format!(
+                    "failed to create temporary npy next to '{}'",
+                    final_path.display()
+                )
+            })?;
         let mut writer = BufWriter::new(file);
         if let Err(error) = write_npy_header(&mut writer, shape) {
             drop(writer);
@@ -407,44 +410,6 @@ impl Drop for NpyStreamWriter {
             let _ = fs::remove_file(&self.temporary_path);
         }
     }
-}
-
-fn create_temporary_output(final_path: &Path) -> anyhow::Result<(fs::File, PathBuf)> {
-    let filename = final_path
-        .file_name()
-        .context("npy output path must include a filename")?
-        .to_string_lossy();
-    let parent = final_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    for _ in 0..128 {
-        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temporary_path = parent.join(format!(
-            ".{filename}.ember-tmp-{}-{sequence}",
-            std::process::id()
-        ));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)
-        {
-            Ok(file) => return Ok((file, temporary_path)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "failed to create temporary npy next to '{}'",
-                        final_path.display()
-                    )
-                });
-            }
-        }
-    }
-    anyhow::bail!(
-        "could not allocate a unique temporary npy next to '{}'",
-        final_path.display()
-    )
 }
 
 #[cfg(test)]

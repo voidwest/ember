@@ -154,15 +154,6 @@ pub fn record(
 // public data types
 // ---------------------------------------------------------------------------
 
-/// Granularity level for trace events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum TraceLevel {
-    /// Top-level operations only (embed, per-layer blocks, final norm, lm_head).
-    Coarse,
-    /// Per-operation within each layer (attention sub-ops, MLP sub-ops).
-    Fine,
-}
-
 /// Category of a traced operation.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -921,17 +912,6 @@ impl TraceReport {
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
-
-    /// Return events sorted by layer then duration (descending within layer).
-    pub fn sorted_events(&self) -> Vec<&OpTrace> {
-        let mut events: Vec<&OpTrace> = self.events.iter().collect();
-        events.sort_by(|a, b| {
-            a.layer
-                .cmp(&b.layer)
-                .then_with(|| b.duration_ns.cmp(&a.duration_ns))
-        });
-        events
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1054,13 +1034,6 @@ mod value_tests {
                 .collect::<Vec<_>>(),
             vec![1_000, 1_000, 500],
             "per-event recorded durations preserved"
-        );
-
-        // sorted by (layer, name): layers 3, 3, 5
-        let sorted = report.sorted_events();
-        assert_eq!(
-            sorted.iter().map(|e| e.layer).collect::<Vec<_>>(),
-            vec![3, 3, 5]
         );
 
         // summary renders the header and per-layer data

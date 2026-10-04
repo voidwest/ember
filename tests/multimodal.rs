@@ -2,7 +2,7 @@
 
 use ember::backend::CpuBackend;
 use ember::model::Linear;
-use ember::multimodal::assembler::{EmbeddingAssembler, ImageFeatures, SmolVlmAssembler};
+use ember::multimodal::assembler::{ImageFeatures, SmolVlmAssembler};
 use ember::multimodal::image::{decode_rgb, preprocess, resize, ImagePreprocessConfig, Resample};
 use ember::multimodal::vision::{bidirectional_attention, PixelShuffleConnector};
 use ember::tensor::CpuTensor;

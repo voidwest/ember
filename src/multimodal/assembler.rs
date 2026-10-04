@@ -9,8 +9,8 @@
 //! positions — exactly the reference pipeline (HuggingFace `Idefics3Processor`
 //! + `Idefics3ForConditionalGeneration.inputs_merger`).
 
-use crate::backend::{Backend, CpuBackend};
-use crate::llama::LlamaEmbedding;
+use crate::backend::CpuBackend;
+use crate::llama::{llama_embed_tokens, LlamaEmbedding};
 use crate::tensor::CpuTensor;
 use crate::tokenizer::EmberTokenizer;
 use anyhow::{anyhow, ensure, Result};
@@ -25,26 +25,6 @@ pub struct AssembledSequence {
     /// `[seq_len, llm_width]` merged embeddings: text lookup rows with the
     /// vision features scattered over `<image>` positions, in order.
     pub embeddings: CpuTensor,
-}
-
-/// A model-specific embedding assembler.
-pub trait EmbeddingAssembler {
-    /// Assemble one multimodal request into an [`AssembledSequence`].
-    ///
-    /// `text` is the user prompt; every `<image>` placeholder in it is bound
-    /// to the corresponding entry of `images` **in order of appearance**.
-    /// Each entry's `features` are `[n_tokens_i, llm_width]` from the vision
-    /// encoder + connector for that image alone (its own tiles followed by
-    /// its global tile), and `tile_grid` is that image's processed layout
-    /// `(rows, cols)` (0,0 = no splitting).
-    fn assemble(
-        &self,
-        backend: &CpuBackend,
-        tokenizer: &EmberTokenizer,
-        text: &str,
-        images: &[ImageFeatures],
-        embed_table: &LlamaEmbedding<CpuBackend>,
-    ) -> Result<AssembledSequence>;
 }
 
 /// One image's encoder output plus the geometry the expansion needs.
@@ -104,23 +84,7 @@ pub(crate) fn embed_and_scatter(
         LlamaEmbedding::Q8_0(w) => w.in_features(),
         LlamaEmbedding::KQuant(w) => w.in_features(),
     };
-    let mut embeddings = backend.zeroes(&[input_ids.len(), embed_dim])?;
-    for (row, &token) in input_ids.iter().enumerate() {
-        match embed_table {
-            LlamaEmbedding::F32(table) => {
-                backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
-            }
-            LlamaEmbedding::Half(table) => {
-                backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
-            }
-            LlamaEmbedding::Q8_0(table) => {
-                backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;
-            }
-            LlamaEmbedding::KQuant(table) => {
-                backend.assign_row_from_k(&mut embeddings, row, table, token as usize)?;
-            }
-        }
-    }
+    let mut embeddings = llama_embed_tokens(backend, embed_table, &input_ids, embed_dim)?;
     let total = input_ids.iter().filter(|&&t| t == target_id).count();
     ensure!(
         total == features.shape()[0],
@@ -216,8 +180,16 @@ struct SmolVlmTokenIds {
     image: u32,
 }
 
-impl EmbeddingAssembler for SmolVlmAssembler {
-    fn assemble(
+impl SmolVlmAssembler {
+    /// Assemble one multimodal request into an [`AssembledSequence`].
+    ///
+    /// `text` is the user prompt; every `<image>` placeholder in it is bound
+    /// to the corresponding entry of `images` **in order of appearance**.
+    /// Each entry's `features` are `[n_tokens_i, llm_width]` from the vision
+    /// encoder + connector for that image alone (its own tiles followed by
+    /// its global tile), and `tile_grid` is that image's processed layout
+    /// `(rows, cols)` (0,0 = no splitting).
+    pub fn assemble(
         &self,
         backend: &CpuBackend,
         tokenizer: &EmberTokenizer,
@@ -259,23 +231,7 @@ impl EmbeddingAssembler for SmolVlmAssembler {
             LlamaEmbedding::Q8_0(w) => w.in_features(),
             LlamaEmbedding::KQuant(w) => w.in_features(),
         };
-        let mut embeddings = backend.zeroes(&[input_ids.len(), embed_dim])?;
-        for (row, &token) in input_ids.iter().enumerate() {
-            match embed_table {
-                LlamaEmbedding::F32(table) => {
-                    backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
-                }
-                LlamaEmbedding::Half(table) => {
-                    backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
-                }
-                LlamaEmbedding::Q8_0(table) => {
-                    backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;
-                }
-                LlamaEmbedding::KQuant(table) => {
-                    backend.assign_row_from_k(&mut embeddings, row, table, token as usize)?;
-                }
-            }
-        }
+        let mut embeddings = llama_embed_tokens(backend, embed_table, &input_ids, embed_dim)?;
 
         // 4. scatter vision features over <image> positions, in order.
         //    Feature rows are consumed image by image: expansion order is
@@ -322,29 +278,5 @@ impl EmbeddingAssembler for SmolVlmAssembler {
             input_ids,
             embeddings,
         })
-    }
-}
-
-impl SmolVlmAssembler {
-    /// Convenience wrapper for the single-image case.
-    pub fn assemble_single(
-        &self,
-        backend: &CpuBackend,
-        tokenizer: &EmberTokenizer,
-        text: &str,
-        image_features: &CpuTensor,
-        tile_grid: (usize, usize),
-        embed_table: &LlamaEmbedding<CpuBackend>,
-    ) -> Result<AssembledSequence> {
-        self.assemble(
-            backend,
-            tokenizer,
-            text,
-            &[ImageFeatures {
-                features: image_features.clone(),
-                tile_grid,
-            }],
-            embed_table,
-        )
     }
 }

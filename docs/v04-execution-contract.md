@@ -200,7 +200,7 @@ carried forward unchanged. Per-stage tensor facts for the planned path:
   and representation are unchanged in v0.4.
 - Scratch: plan-owned arena regions (section 10) with deterministic
   offsets; regions with non-overlapping lifetimes may share storage only
-  when proven by the planner (documented in the arena report).
+  when proven by the planner (recorded in each region's `shared_with`).
 
 ## 6. Frozen fusion set
 
@@ -376,10 +376,16 @@ carry `FusedOp { kind: F1..F5, components: [op ids], eliminated: [tensor ids] }`
 resident_bytes, mmap: bool }`: derived from the v0.3 inventory; stable
 `id` is the plan's `TensorRef`.
 
-`ScratchPlan` = `{ total_bytes, alignment, regions: [ { name, offset,
-size, alignment, first_op, last_op, shared_with? } ], arena_report }`.
-Regions share storage only when the planner proves disjoint lifetimes;
-the arena report lists every overlap and its proof.
+`ScratchPlan` = `{ total_bytes, alignment, seq_capacity, regions: [ { name,
+offset, size, alignment, first_op, last_op, shared_with? } ],
+tensor_regions }`.
+Regions share storage only when the planner proves disjoint lifetimes.
+Amendment (2026-10-04): the separate `arena_report` was never serialized and
+has been removed; it only summarized the regions list. The current planner
+shares no storage: each region gets its own aligned offset, laid out
+back-to-back, and `shared_with` is always `null` (reserved). At run time
+`DecodeArena` hands out only non-overlapping slices and rejects a request that
+names the same region offset twice (`tests/property.rs` covers this).
 
 `HookSitePlan` = `{ mode: Disabled|Observe|Intervene, active: [stage ids],
 sites: [ { stage, tensor id or "fused-eliminated", layer?,

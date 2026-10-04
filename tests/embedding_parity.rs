@@ -178,18 +178,6 @@ fn token_and_embedding_prefill_are_identical() {
 
     assert_logits_eq(&logits_tok, &logits_emb, "prefill logits");
     assert_cache_eq(&cache_tok, &cache_emb, "prefill KV cache");
-
-    // trait-level entry points agree as well
-    let mut cache_tok2 = model.create_cache(&backend, 64);
-    let logits_tok2 = model
-        .prefill_tokens_with_cache(&backend, &tokens, &mut cache_tok2)
-        .unwrap();
-    let mut cache_emb2 = model.create_cache(&backend, 64);
-    let logits_emb2 = model
-        .prefill_embeddings_with_cache(&backend, &embeddings, &mut cache_emb2)
-        .unwrap();
-    assert_logits_eq(&logits_tok2, &logits_emb2, "prefill_* entry points");
-    assert_logits_eq(&logits_tok, &logits_tok2, "trait == inherent token path");
 }
 
 #[test]

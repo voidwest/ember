@@ -70,11 +70,6 @@ impl VitsConfig {
     fn head_dim(&self) -> usize {
         self.hidden_size / self.num_heads
     }
-    /// DDSConv kernel size (duration_predictor_kernel_size = 3 for MMS).
-    #[allow(dead_code)]
-    fn dp_kernel(&self) -> usize {
-        3
-    }
 }
 
 /// Dense projection stored [in, out] row-major with bias.
@@ -773,57 +768,12 @@ impl EncoderLayer {
         window: usize,
         slope: f32,
     ) -> Vec<f32> {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static CALL: AtomicUsize = AtomicUsize::new(0);
-        let call_id = CALL.fetch_add(1, Ordering::Relaxed);
         let q = self.q.apply(x, t);
         let kk = self.k.apply(x, t);
         let vv = self.v.apply(x, t);
-        if std::env::var("EMBER_VITS_DBG_QKV").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap_or_default());
-            std::fs::create_dir_all(&dir).ok();
-            let dump = |name: &str, data: &[f32]| {
-                let mut header = Vec::new();
-                header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-                let descr = format!(
-                    "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                    data.len()
-                );
-                header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-                header.extend_from_slice(descr.as_bytes());
-                header.push(b'\n');
-                let mut bytes = header;
-                for v2 in data {
-                    bytes.extend_from_slice(&v2.to_le_bytes());
-                }
-                let _ = std::fs::write(dir.join(name), &bytes);
-            };
-            dump(&format!("dbg_q{call_id}.npy"), &q);
-            dump(&format!("dbg_k{call_id}.npy"), &kk);
-            dump(&format!("dbg_v{call_id}.npy"), &vv);
-        }
 
         let rel_k = rel_slice(&self.rel_k, window, hd, t);
         let rel_v = rel_slice(&self.rel_v, window, hd, t);
-        if call_id == 0 && std::env::var("EMBER_VITS_DBG_QKV").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap_or_default());
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                rel_k.len()
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v2 in &rel_k {
-                bytes.extend_from_slice(&v2.to_le_bytes());
-            }
-            let _ = std::fs::write(dir.join("dbg_rkslice0.npy"), &bytes);
-        }
 
         // scores[h, q, k] = (q·k)*scale + q·rel_k[slice_row(k-q)]
         // (the pad/slice/relative->absolute pipeline reduces exactly to the
@@ -870,43 +820,7 @@ impl EncoderLayer {
             });
         }
 
-        if call_id == 0 && std::env::var("EMBER_VITS_DBG_QKV").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap_or_default());
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                scores.len()
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v2 in &scores {
-                bytes.extend_from_slice(&v2.to_le_bytes());
-            }
-            let _ = std::fs::write(dir.join("dbg_scores0.npy"), &bytes);
-        }
         softmax_rows(&mut scores, heads * t, t);
-        if call_id == 0 && std::env::var("EMBER_VITS_DBG_QKV").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap_or_default());
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                scores.len()
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v2 in &scores {
-                bytes.extend_from_slice(&v2.to_le_bytes());
-            }
-            let _ = std::fs::write(dir.join("dbg_probs0.npy"), &bytes);
-        }
 
         // values + relative value bias:
         // out[q,d] += sum_k probs[q,k] · rel_v[k-q+W, d]
@@ -944,25 +858,6 @@ impl EncoderLayer {
                 }
             }
         }
-        if std::env::var("EMBER_VITS_DBG_MERGED").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap_or_default());
-            std::fs::create_dir_all(&dir).ok();
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                t * heads * hd
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v in &merged {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-            let _ = std::fs::write(dir.join(format!("dbg_merged{call_id}.npy")), &bytes);
-        }
         self.o.apply(&merged, t)
     }
 }
@@ -978,10 +873,6 @@ impl DdsConv {
     fn forward(&self, x: &[f32], c: usize, t: usize, ln_eps: f32) -> Vec<f32> {
         let kernel = 3usize; // duration_predictor_kernel_size
         let mut cur = x.to_vec();
-        let dbg = std::env::var("EMBER_VITS_DBG_SDP").is_ok()
-            && std::env::var("EMBER_VITS_DBG_DDS").is_ok();
-        let mut dw_dbg: Vec<Vec<f32>> = Vec::new();
-        let mut pw_dbg: Vec<Vec<f32>> = Vec::new();
         for j in 0..self.pointwise.len() {
             // reference: dilation = kernel_size ** i (= 3^i), not 2^i
             let dil = kernel.pow(j as u32);
@@ -995,38 +886,8 @@ impl DdsConv {
             layer_norm(&mut pw, tt, c, &self.ln2[j].0, &self.ln2[j].1, ln_eps);
             gelu_in_place(&mut pw);
             let pw_ct = rows_to_ct(&pw, c, tt);
-            if dbg {
-                pw_dbg.push(pw_ct.clone());
-                dw_dbg.push(cur.clone());
-            }
             for (cv, pv) in cur.iter_mut().zip(pw_ct.iter()) {
                 *cv += pv;
-            }
-        }
-        if dbg {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_SDP").unwrap_or_default());
-            let dump = |name: &str, data: &[f32]| {
-                let mut header = Vec::new();
-                header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-                let descr = format!(
-                    "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                    data.len()
-                );
-                header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-                header.extend_from_slice(descr.as_bytes());
-                header.push(b'\n');
-                let mut bytes = header;
-                for v2 in data {
-                    bytes.extend_from_slice(&v2.to_le_bytes());
-                }
-                let _ = std::fs::write(dir.join(name), &bytes);
-            };
-            for (j, d) in dw_dbg.iter().enumerate() {
-                dump(&format!("dbg_dds_in{j}.npy"), d);
-            }
-            for (j, p) in pw_dbg.iter().enumerate() {
-                dump(&format!("dbg_dds_pw{j}.npy"), p);
             }
         }
         cur
@@ -1058,9 +919,6 @@ fn spline_reverse(
     let constant = ((1.0 - MIN_DERIV).exp() - 1.0).ln();
 
     let mut out = Vec::with_capacity(inputs.len());
-    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let calls = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _ = calls;
     for (i, &x0) in inputs.iter().enumerate() {
         let x = x0 as f64;
         if !(-tail_bound as f64..=tail_bound as f64).contains(&x) {
@@ -1148,11 +1006,6 @@ fn spline_reverse(
         let root = (2.0 * c_) / (-b_ - discriminant.sqrt());
 
         let y = root * w_bin + cw0;
-        if std::env::var("EMBER_VITS_DBG_SPLINE").is_ok() && calls < 6 {
-            eprintln!(
-                "SPLINEC x={x:.6} idx={bin_idx} y={y:.8} cw0={cw0:.7} wb={w_bin:.7} ch0={ch0:.7} hb={h_bin:.7} delta={delta:.7} d0={d0:.7} d1={d1:.7}",
-            );
-        }
         out.push(y as f32);
     }
     out
@@ -1190,61 +1043,12 @@ impl ConvFlow {
         }
         let dds_out = self.dds.forward(&pre, cfg.hidden_size, s, cfg.ln_eps);
         let proj = conv1d_dense(
-            &CpuTensor::from_data(vec![cfg.hidden_size, s], dds_out.clone()),
+            &CpuTensor::from_data(vec![cfg.hidden_size, s], dds_out),
             &self.conv_proj,
             0,
         );
-        if std::env::var("EMBER_VITS_DBG_SDP").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_SDP").unwrap_or_default());
-            let dump = |name: &str, data: &[f32]| {
-                let mut header = Vec::new();
-                header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-                let descr = format!(
-                    "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                    data.len()
-                );
-                header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-                header.extend_from_slice(descr.as_bytes());
-                header.push(b'\n');
-                let mut bytes = header;
-                for v2 in data {
-                    bytes.extend_from_slice(&v2.to_le_bytes());
-                }
-                let _ = std::fs::write(dir.join(name), &bytes);
-            };
-            dump("cf_pre.npy", &pre);
-            dump("cf_dds.npy", &dds_out);
-        }
 
         let bins = cfg.dp_bins;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static CF_CALL: AtomicUsize = AtomicUsize::new(0);
-        let cf_id = CF_CALL.fetch_add(1, Ordering::Relaxed);
-        if std::env::var("EMBER_VITS_DBG_SDP").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_SDP").unwrap_or_default());
-            let step = format!("{cf_id}");
-            let dump = |name: &str, data: &[f32]| {
-                let mut header = Vec::new();
-                header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-                let descr = format!(
-                    "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                    data.len()
-                );
-                header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-                header.extend_from_slice(descr.as_bytes());
-                header.push(b'\n');
-                let mut bytes = header;
-                for v2 in data {
-                    bytes.extend_from_slice(&v2.to_le_bytes());
-                }
-                let _ = std::fs::write(dir.join(format!("{name}_{step}.npy")), &bytes);
-            };
-            dump("cf_pre", &pre);
-            dump("cf_dds", &dds_out);
-            dump("cf_proj", proj.data());
-        }
 
         let params_per_t = bins * 3 - 1;
         let mut out_second = second.to_vec();
@@ -1316,24 +1120,6 @@ impl Sdp {
             0,
         );
         let g_cond = proj.data().to_vec(); // [c, t]
-        if std::env::var("EMBER_VITS_DBG_SDP").is_ok() {
-            let dir =
-                std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_SDP").unwrap_or_default());
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                g_cond.len()
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v2 in &g_cond {
-                bytes.extend_from_slice(&v2.to_le_bytes());
-            }
-            let _ = std::fs::write(std::path::Path::new(&dir).join("g_cond.npy"), &bytes);
-        }
 
         // latents = randn * noise_scale_duration = 0 (deterministic contract)
         let mut latents = vec![0.0f32; 2 * t]; // [2, t]
@@ -1342,32 +1128,8 @@ impl Sdp {
         order.pop(); // drop CF1 (index 1) — flows[:-2]
         order.push(0); // + Affine — [flows[-1]]
 
-        let dbg_dir = std::env::var("EMBER_VITS_DBG_SDP").ok();
-        if let Some(dir) = &dbg_dir {
-            std::fs::create_dir_all(dir).ok();
-        }
-        for (step_i, flow_idx) in order.iter().enumerate() {
+        for flow_idx in order.iter() {
             latents = flip_channels(&latents, 2, t);
-            if let Some(dir) = &dbg_dir {
-                let mut header = Vec::new();
-                header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-                let descr = format!(
-                    "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                    latents.len()
-                );
-                header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-                header.extend_from_slice(descr.as_bytes());
-                header.push(b'\n');
-                // NOTE: dump PRE-flow (post-flip) state
-                let mut bytes = header;
-                for v2 in &latents {
-                    bytes.extend_from_slice(&v2.to_le_bytes());
-                }
-                let _ = std::fs::write(
-                    std::path::Path::new(dir).join(format!("pre_{step_i}.npy")),
-                    &bytes,
-                );
-            }
             if *flow_idx == 0 {
                 // ElementwiseAffine stores per-channel [C=2, 1] vectors.
                 let (translate, log_scale) = self.affine.as_ref().expect("affine");
@@ -1380,25 +1142,6 @@ impl Sdp {
             } else {
                 let cf = &self.conv_flows[flow_idx - 1];
                 latents = cf.forward_reverse(&latents, Some(&g_cond), t, cfg);
-            }
-            if let Some(dir) = &dbg_dir {
-                let mut header = Vec::new();
-                header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-                let descr = format!(
-                    "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                    latents.len()
-                );
-                header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-                header.extend_from_slice(descr.as_bytes());
-                header.push(b'\n');
-                let mut bytes = header;
-                for v2 in &latents {
-                    bytes.extend_from_slice(&v2.to_le_bytes());
-                }
-                let _ = std::fs::write(
-                    std::path::Path::new(dir).join(format!("after_{step_i}.npy")),
-                    &bytes,
-                );
             }
         }
         // first half channel is log-duration
@@ -1838,53 +1581,10 @@ impl MmsVits {
                 emb[r * h + d] = v * scale;
             }
         }
-        fn dbg_dump(name: &str, data: &[f32]) {
-            if std::env::var("EMBER_VITS_DBG_DIR").ok().is_none() {
-                return;
-            }
-            let dir = std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap());
-            std::fs::create_dir_all(&dir).ok();
-            use std::io::Write;
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                data.len()
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v in data {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-            let _ = std::fs::File::create(dir.join(format!("{name}.npy")))
-                .and_then(|mut f| f.write_all(&bytes));
-        }
-        dbg_dump("dbg_input", &emb);
-        if std::env::var("EMBER_VITS_DBG_REL").is_ok() {
-            let rk = &self.layers[0].rel_k;
-            let mut header = Vec::new();
-            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y', 1u8, 0u8]);
-            let descr = format!(
-                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
-                rk.len()
-            );
-            header.extend_from_slice(&((descr.len() + 1) as u16).to_le_bytes());
-            header.extend_from_slice(descr.as_bytes());
-            header.push(b'\n');
-            let mut bytes = header;
-            for v in rk {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-            let dir = std::path::PathBuf::from(std::env::var("EMBER_VITS_DBG_DIR").unwrap());
-            std::fs::create_dir_all(&dir).ok();
-            let _ = std::fs::write(dir.join("dbg_relk0.npy"), &bytes);
-        }
 
         // encoder layers
         let mut x = emb.clone();
-        for (layer_i, layer) in self.layers.iter().enumerate() {
+        for layer in self.layers.iter() {
             let attn = layer.attention(
                 &x,
                 t,
@@ -1893,13 +1593,11 @@ impl MmsVits {
                 cfg.window_size,
                 (cfg.head_dim() as f32).sqrt().recip(),
             );
-            dbg_dump(&format!("dbg_att{layer_i}"), &attn);
             let mut normed = x.clone();
             for (nv, av) in normed.iter_mut().zip(attn.iter()) {
                 *nv += av;
             }
             layer_norm(&mut normed, t, h, &layer.ln1_w, &layer.ln1_b, cfg.ln_eps);
-            dbg_dump(&format!("dbg_ln1_{layer_i}"), &normed);
 
             // FFN: channel-major through convs
             let ct = rows_to_ct(&normed, h, t);
@@ -1911,7 +1609,7 @@ impl MmsVits {
             let mut f1d = f1.data().to_vec();
             relu_in_place(&mut f1d);
             let f2 = conv1d_dense(
-                &f1d_view(f1d, cfg.ffn_dim, f1.shape()[1]),
+                &CpuTensor::from_data(vec![cfg.ffn_dim, f1.shape()[1]], f1d),
                 &layer.ffn2,
                 (cfg.ffn_kernel_size - 1) / 2,
             );
@@ -1922,13 +1620,12 @@ impl MmsVits {
             }
             layer_norm(&mut resid, t, h, &layer.ln2_w, &layer.ln2_b, cfg.ln_eps);
             x = resid;
-            dbg_dump(&format!("dbg_after_layer{layer_i}"), &x);
         }
         timings.prefill_ms = t_all.elapsed().as_secs_f64() * 1e3 - timings.prompt_ms;
 
         // project to means/logvars (conv k1 == linear per position)
         let stats_ct = conv1d_dense(
-            &CpuTensor::from_data(vec![h, t], ct_of(&x, h, t)),
+            &CpuTensor::from_data(vec![h, t], rows_to_ct(&x, h, t)),
             &self.project,
             0,
         );
@@ -1944,7 +1641,7 @@ impl MmsVits {
         }
 
         // SDP reverse (noise_scale_duration = 0)
-        let x_ct = ct_of(&x, h, t);
+        let x_ct = rows_to_ct(&x, h, t);
         let log_duration = self.sdp.log_duration_reverse(&x_ct, h, t, cfg);
         timings.generate_ms =
             t_all.elapsed().as_secs_f64() * 1e3 - timings.prompt_ms - timings.prefill_ms;
@@ -2119,13 +1816,4 @@ pub(crate) fn dump_npy(dir: &std::path::Path, name: &str, data: &[f32]) {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     let _ = std::fs::write(dir.join(format!("{name}.npy")), bytes);
-}
-
-fn f1d_view(data: Vec<f32>, c: usize, t: usize) -> CpuTensor {
-    CpuTensor::from_data(vec![c, t], data)
-}
-
-/// Borrowing view helper: copy row-major [T,C] into channel-major [C,T].
-fn ct_of(rows: &[f32], c: usize, t: usize) -> Vec<f32> {
-    rows_to_ct(rows, c, t)
 }

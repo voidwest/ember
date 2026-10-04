@@ -144,17 +144,6 @@ impl InterventionOperation {
             InterventionOperation::AblateProjection => "ablate-projection",
         }
     }
-
-    /// Whether this operation needs the pre-intervention snapshot.
-    pub const fn uses_snapshot(self) -> bool {
-        matches!(
-            self,
-            InterventionOperation::RestoreOriginal
-                | InterventionOperation::Scale { .. }
-                | InterventionOperation::Interpolate { .. }
-                | InterventionOperation::AddDelta
-        )
-    }
 }
 
 /// Intervention sources (contract section 5).

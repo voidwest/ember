@@ -9,6 +9,7 @@
 //!    the codec turns them into PCM, written as a WAV file. Streams
 //!    `OutputEvent::AudioChunk`s while decoding (Track F).
 
+use crate::cli_support::write_f32_bin;
 use crate::Args;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
@@ -223,11 +224,7 @@ pub(crate) fn run_tts_command(command: &TtsCommand, _args: &Args) -> Result<()> 
             ("codes", as_f32(&tts.extract_codes(&ids))),
             ("waveform", pcm.clone()),
         ] {
-            let mut bytes = Vec::with_capacity(data.len() * 4);
-            for v in &data {
-                bytes.extend(v.to_le_bytes());
-            }
-            std::fs::write(dir.join(format!("{name}.bin")), &bytes)?;
+            write_f32_bin(dir, name, &data)?;
         }
         println!("ladder dumps written to {}", dir.display());
     }
@@ -274,51 +271,31 @@ fn codec_selftest(
         let wall_ms = t0.elapsed().as_secs_f64() * 1e3;
 
         let code_f32: Vec<f32> = codes.iter().map(|&c| c as f32).collect();
-        write_bin(&dir, &format!("codes_{n}"), &code_f32, vec![codes.len()])?;
+        write_f32_bin(&dir, &format!("codes_{n}"), &code_f32)?;
         if let Some(t) = &trace.features {
-            write_bin(
-                &dir,
-                &format!("0_features_{n}"),
-                t.data(),
-                t.shape().to_vec(),
-            )?;
+            write_f32_bin(&dir, &format!("0_features_{n}"), t.data())?;
         }
         if let Some(t) = &trace.embed {
-            write_bin(&dir, &format!("1_embed_{n}"), t.data(), t.shape().to_vec())?;
+            write_f32_bin(&dir, &format!("1_embed_{n}"), t.data())?;
         }
         if let Some(t) = &trace.pos_net {
-            write_bin(&dir, &format!("2_posnet_{n}"), t.data(), t.shape().to_vec())?;
+            write_f32_bin(&dir, &format!("2_posnet_{n}"), t.data())?;
         }
         if let Some(t) = &trace.adanorm {
-            write_bin(
-                &dir,
-                &format!("3_adanorm_{n}"),
-                t.data(),
-                t.shape().to_vec(),
-            )?;
+            write_f32_bin(&dir, &format!("3_adanorm_{n}"), t.data())?;
         }
         for (i, t) in &trace.convnext_blocks {
-            write_bin(
-                &dir,
-                &format!("4_convnext_{i}_{n}"),
-                t.data(),
-                t.shape().to_vec(),
-            )?;
+            write_f32_bin(&dir, &format!("4_convnext_{i}_{n}"), t.data())?;
         }
         if let Some(t) = &trace.backbone_final {
-            write_bin(
-                &dir,
-                &format!("5_backbone_final_{n}"),
-                t.data(),
-                t.shape().to_vec(),
-            )?;
+            write_f32_bin(&dir, &format!("5_backbone_final_{n}"), t.data())?;
         }
         if let (Some(m), Some(p)) = (&trace.mag, &trace.phase) {
-            write_bin(&dir, &format!("6_mag_{n}"), m.data(), m.shape().to_vec())?;
-            write_bin(&dir, &format!("6_phase_{n}"), p.data(), p.shape().to_vec())?;
+            write_f32_bin(&dir, &format!("6_mag_{n}"), m.data())?;
+            write_f32_bin(&dir, &format!("6_phase_{n}"), p.data())?;
         }
         // waveform + wav file
-        write_bin(&dir, &format!("7_waveform_{n}"), &pcm, vec![pcm.len()])?;
+        write_f32_bin(&dir, &format!("7_waveform_{n}"), &pcm)?;
         let sr = decoder.config.sample_rate;
         let wav_path = dir.join(format!("out_{n}.wav"));
         write_wav(&wav_path, &pcm, sr)?;
@@ -367,15 +344,6 @@ fn write_wav(path: &std::path::Path, pcm: &[f32], sample_rate: u32) -> Result<()
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     std::fs::write(path, &bytes)?;
-    Ok(())
-}
-
-fn write_bin(dir: &Path, name: &str, data: &[f32], _shape: Vec<usize>) -> Result<()> {
-    let mut bytes = Vec::with_capacity(data.len() * 4);
-    for v in data {
-        bytes.extend(v.to_le_bytes());
-    }
-    std::fs::write(dir.join(format!("{name}.bin")), &bytes)?;
     Ok(())
 }
 

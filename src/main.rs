@@ -26,8 +26,6 @@ mod cli_audio;
 mod cli_commands;
 mod cli_evidence;
 mod cli_generation;
-mod cli_handoff;
-mod cli_intervene;
 mod cli_kv;
 mod cli_manifest;
 mod cli_multimodal;
@@ -372,18 +370,6 @@ pub(crate) enum Commands {
 
     /// batch greedy generation / next-token logprob scoring (one resident model)
     ScoreBatch(cli_score_batch::ScoreBatchCommand),
-
-    /// one-shot latent handoff injection pilot: prefill assembled
-    /// [virtual; prompt] embeddings, greedy-decode, write evidence envelope
-    HandoffInject(cli_handoff::HandoffInjectCommand),
-
-    /// forced-choice log-prob scoring with an optional centered-residual
-    /// span patch (Phase C diagnostics; additive hook only)
-    InterveneScore(cli_intervene::InterveneScoreCommand),
-
-    /// collect per-layer span-mean states over prompts (Phase E direction
-    /// estimation; uncached forwards, no generation)
-    CollectSpans(cli_intervene::CollectSpansCommand),
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
@@ -868,17 +854,6 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
             Commands::ScoreBatch(command) => {
                 cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
             }
-            Commands::HandoffInject(command) => {
-                cli_handoff::run_handoff_inject_command(command, k_strategy, args.k_allow_fallback)
-            }
-            Commands::InterveneScore(command) => cli_intervene::run_intervene_score_command(
-                command,
-                k_strategy,
-                args.k_allow_fallback,
-            ),
-            Commands::CollectSpans(command) => {
-                cli_intervene::run_collect_spans_command(command, k_strategy, args.k_allow_fallback)
-            }
             Commands::Agent(command) => cli_agent::run_agent_command(command),
             Commands::Trace(command) => cli_agent::run_trace_command(command),
             Commands::Manifest(command) => cli_manifest::run_manifest_command(command),
@@ -1051,15 +1026,7 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    TensorDumpConfig {
-                        prompt: &args.prompt,
-                        output_path: path,
-                        max_seq_len: args.max_seq_len,
-                        model_path: &args.model,
-                        arch: &args.arch,
-                        tokenizer_path,
-                        run_metadata: &run_metadata,
-                    },
+                    tensor_dump_config(&args, path, tokenizer_path, &run_metadata),
                 )?;
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
@@ -1114,15 +1081,7 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    TensorDumpConfig {
-                        prompt: &args.prompt,
-                        output_path: path,
-                        max_seq_len: args.max_seq_len,
-                        model_path: &args.model,
-                        arch: &args.arch,
-                        tokenizer_path,
-                        run_metadata: &run_metadata,
-                    },
+                    tensor_dump_config(&args, path, tokenizer_path, &run_metadata),
                 )?;
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
@@ -1210,30 +1169,14 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    TensorDumpConfig {
-                        prompt: &args.prompt,
-                        output_path: path,
-                        max_seq_len: args.max_seq_len,
-                        model_path: &args.model,
-                        arch: &args.arch,
-                        tokenizer_path,
-                        run_metadata: &run_metadata,
-                    },
+                    tensor_dump_config(&args, path, tokenizer_path, &run_metadata),
                 )?;
             } else if let Some(path) = &args.dump_layers {
                 dump_layers_gemma4(
                     &backend,
                     &model,
                     &tokenizer,
-                    TensorDumpConfig {
-                        prompt: &args.prompt,
-                        output_path: path,
-                        max_seq_len: args.max_seq_len,
-                        model_path: &args.model,
-                        arch: &args.arch,
-                        tokenizer_path,
-                        run_metadata: &run_metadata,
-                    },
+                    tensor_dump_config(&args, path, tokenizer_path, &run_metadata),
                 )?;
             } else if args.probe {
                 run_probe_jobs(
@@ -1286,6 +1229,24 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// The `--dump-logits` / `--dump-layers` configuration for `output_path`.
+fn tensor_dump_config<'a>(
+    args: &'a Args,
+    output_path: &'a str,
+    tokenizer_path: &'a str,
+    run_metadata: &'a RunMetadata,
+) -> TensorDumpConfig<'a> {
+    TensorDumpConfig {
+        prompt: &args.prompt,
+        output_path,
+        max_seq_len: args.max_seq_len,
+        model_path: &args.model,
+        arch: &args.arch,
+        tokenizer_path,
+        run_metadata,
+    }
 }
 
 /// Build the v0.2 capture sink from `--capture-activations`, if requested.

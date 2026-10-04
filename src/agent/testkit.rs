@@ -9,7 +9,6 @@
 //! The script also simulates failure modes honestly:
 //! - mid-turn cancellation (`cancel_after_tokens`) exercises the engine
 //!   transaction contract from the loop's side;
-//! - `fail_with` produces a generation error;
 //! - every committed message is recorded verbatim so tests can assert
 //!   exactly what the protocol reinjected into the conversation.
 
@@ -25,8 +24,6 @@ pub struct ScriptedTurn {
     pub output: String,
     /// Simulate cooperative cancellation after N observed tokens.
     pub cancel_after_tokens: Option<usize>,
-    /// Simulate an infrastructure generation failure.
-    pub fail_with: Option<String>,
 }
 
 impl ScriptedTurn {
@@ -34,21 +31,12 @@ impl ScriptedTurn {
         Self {
             output: output.into(),
             cancel_after_tokens: None,
-            fail_with: None,
         }
     }
 
     pub fn cancel_after(mut self, tokens: usize) -> Self {
         self.cancel_after_tokens = Some(tokens);
         self
-    }
-
-    pub fn failing(message: impl Into<String>) -> Self {
-        Self {
-            output: String::new(),
-            cancel_after_tokens: None,
-            fail_with: Some(message.into()),
-        }
     }
 }
 
@@ -62,7 +50,6 @@ pub struct ScriptedModel {
     // observations (tests assert on these)
     pub committed_messages: Vec<(String, String)>,
     pub generate_calls: usize,
-    pub saw_cancellation_probe: bool,
 }
 
 impl ScriptedModel {
@@ -84,16 +71,7 @@ impl ScriptedModel {
             cursor: 0,
             committed_messages: Vec::new(),
             generate_calls: 0,
-            saw_cancellation_probe: false,
         }
-    }
-
-    /// Convenience: alternate tool-call JSON / final-text script.
-    pub fn call_then_answer(call_json: &str, final_text: &str) -> Self {
-        Self::new(vec![
-            ScriptedTurn::output(call_json),
-            ScriptedTurn::output(final_text),
-        ])
     }
 
     fn fake_span(&mut self, rendered: &str) -> (usize, usize) {
@@ -139,17 +117,12 @@ impl ChatModelEngine for ScriptedModel {
         let turn_index = self.turn_taken;
         self.turn_taken += 1;
 
-        if let Some(message) = script.fail_with {
-            return Err(anyhow::anyhow!("scripted generation failure: {message}"));
-        }
-
         if let Some(after) = script.cancel_after_tokens {
             // emit `after` pseudo tokens, then observe cancellation
             for i in 0..after {
                 on_token(1000 + i as u32, "x");
             }
             if control.is_cancelled() || after == 0 {
-                self.saw_cancellation_probe = true;
                 // transaction contract: nothing committed, caller rolls back
                 return Ok(GeneratedTurn {
                     text: String::new(),
@@ -170,7 +143,6 @@ impl ChatModelEngine for ScriptedModel {
             let piece: String = chunk.iter().copied().collect();
             on_token((turn_index as u32) * 100 + i as u32, &piece);
             if control.is_cancelled() {
-                self.saw_cancellation_probe = true;
                 return Ok(GeneratedTurn {
                     text: String::new(),
                     committed_ids: Vec::new(),

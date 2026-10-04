@@ -279,20 +279,11 @@ impl<'e> AgentSession<'e> {
         &self.ledger
     }
 
-    /// Take the run's trace recorder out (tests / post-run inspection).
-    pub fn take_trace(&mut self) -> Option<TraceRecorder> {
-        self.trace.take()
-    }
-
     /// Read-only view of the current trace events (memory sink).
     pub fn trace_events(&self) -> Vec<serde_json::Value> {
         self.trace
             .as_ref()
             .map_or(Vec::new(), |t| t.events().to_vec())
-    }
-
-    pub fn registry(&self) -> &ToolRegistry {
-        &self.registry
     }
 
     fn tr(&mut self) -> &mut TraceRecorder {

@@ -1,6 +1,7 @@
 //! `ember audio`: audio-conditioned generation and validation dumps for
 //! the first voice-capable model (Ultravox v0.5, llama-3.2-1b).
 
+use crate::cli_support::{greedy_step_logits, write_bin, write_f32_bin};
 use crate::Args;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
@@ -313,9 +314,6 @@ fn dump_validation_artifacts(
     prompt: &str,
     dir: &std::path::Path,
 ) -> Result<()> {
-    use ember::model::ForwardModel;
-    use ember::sampler::argmax_token;
-
     std::fs::create_dir_all(dir)?;
     let mut shapes: Vec<(String, Vec<usize>)> = Vec::new();
 
@@ -393,46 +391,16 @@ fn dump_validation_artifacts(
     // greedy generation with per-step logits
     let (generated, text, timings) =
         model.generate_with_audio(backend, tokenizer, prompt, &audios, command.max_tokens)?;
-    {
-        let vocab = model.llm.vocab_size(backend);
-        let mut step_logits: Vec<f32> = Vec::new();
-        let mut cache =
-            model
-                .llm
-                .create_request_cache(backend, assembled.input_ids.len(), command.max_tokens);
-        let eos_ids = tokenizer.eos_token_ids();
-        let start_pos = assembled.input_ids.len();
-        let mut logits = model.llm.forward_last_logits_embeddings_with_cache(
-            backend,
-            &assembled.embeddings,
-            &mut cache,
-            0,
-        )?;
-        for step in 0..command.max_tokens {
-            let data = backend.data(&logits);
-            step_logits.extend_from_slice(&data[..vocab]);
-            let best = argmax_token(data);
-            let best = u32::try_from(best)?;
-            if eos_ids.contains(&best) {
-                break;
-            }
-            if step + 1 < command.max_tokens {
-                logits = model.llm.forward_last_logits_with_cache(
-                    backend,
-                    &[best],
-                    &mut cache,
-                    start_pos + step,
-                )?;
-            }
-        }
-        let mut bytes = Vec::with_capacity(step_logits.len() * 4);
-        for v in &step_logits {
-            bytes.extend(v.to_le_bytes());
-        }
-        std::fs::write(dir.join("step_logits.bin"), &bytes)?;
-        let n_steps = step_logits.len() / vocab;
-        shapes.push(("step_logits".into(), vec![n_steps, vocab]));
-    }
+    let (step_logits, vocab) = greedy_step_logits(
+        &model.llm,
+        backend,
+        &tokenizer.eos_token_ids(),
+        &assembled.embeddings,
+        assembled.input_ids.len(),
+        command.max_tokens,
+    )?;
+    write_f32_bin(dir, "step_logits", &step_logits)?;
+    shapes.push(("step_logits".into(), vec![step_logits.len() / vocab, vocab]));
 
     let manifest = serde_json::json!({
         "model": command.model,
@@ -463,19 +431,4 @@ fn dump_validation_artifacts(
 fn tensor_from_vec(data: Vec<f32>) -> ember::tensor::CpuTensor {
     let n = data.len();
     ember::tensor::CpuTensor::from_data(vec![n], data)
-}
-
-fn write_bin(
-    dir: &std::path::Path,
-    name: &str,
-    tensor: &ember::tensor::CpuTensor,
-    shapes: &mut Vec<(String, Vec<usize>)>,
-) -> Result<()> {
-    let mut bytes = Vec::with_capacity(tensor.len() * 4);
-    for v in tensor.data() {
-        bytes.extend(v.to_le_bytes());
-    }
-    std::fs::write(dir.join(format!("{name}.bin")), &bytes)?;
-    shapes.push((name.to_string(), tensor.shape().to_vec()));
-    Ok(())
 }

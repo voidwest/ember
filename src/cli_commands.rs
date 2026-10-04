@@ -1033,7 +1033,7 @@ pub(crate) fn ensure_sequence_fits(
     Ok(requested)
 }
 
-fn validate_logits_tensor<B: Backend>(
+pub(crate) fn validate_logits_tensor<B: Backend>(
     backend: &B,
     logits: &B::Tensor,
     expected_rows: usize,
@@ -1052,7 +1052,7 @@ fn validate_logits_tensor<B: Backend>(
     validate_logits_values(backend.data(logits), expected_len, require_finite)
 }
 
-fn validate_logits_values(
+pub(crate) fn validate_logits_values(
     values: &[f32],
     expected_len: usize,
     require_finite: bool,

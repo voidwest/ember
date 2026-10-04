@@ -33,18 +33,6 @@ pub enum ActivationStage {
     AfterLogits,
 }
 
-impl ActivationStage {
-    /// All supported stages, in hook order.
-    pub const ALL: [ActivationStage; 6] = [
-        ActivationStage::BeforeLayer,
-        ActivationStage::AfterAttention,
-        ActivationStage::AfterMlp,
-        ActivationStage::AfterLayer,
-        ActivationStage::BeforeLogits,
-        ActivationStage::AfterLogits,
-    ];
-}
-
 impl fmt::Display for ActivationStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {

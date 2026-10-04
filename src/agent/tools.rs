@@ -107,10 +107,6 @@ impl LookupFixtureTool {
                 .collect(),
         }
     }
-
-    pub fn from_map(map: BTreeMap<String, String>) -> Self {
-        Self { fixtures: map }
-    }
 }
 
 impl Tool for LookupFixtureTool {
@@ -295,12 +291,6 @@ impl Tool for EchoTool {
 pub struct SlowTool {
     /// Sleep slice per checkpoint (deadline/cancel granularity).
     pub slice_ms: u64,
-}
-
-impl Default for SlowTool {
-    fn default() -> Self {
-        Self { slice_ms: 25 }
-    }
 }
 
 impl SlowTool {

@@ -19,12 +19,60 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
-- Provenance: bundles, probe and handoff artifacts, backend metadata and the
+- Provenance: bundles, probe artifacts, backend metadata and the
   console now record the commit the binary was built from. They used to ask
   `git` in the working directory, so the same binary recorded a different
   `ember_commit`, and a different semantic hash, depending on where it ran.
   Benchmark and support records keep the working-tree commit next to the
   build commit on purpose.
+- Removed: the undocumented pilot subcommands `handoff-inject`,
+  `intervene-score` and `collect-spans`, and the experimental
+  `ember::residual_patch` module that only they used.
+- Removed unused experimental Rust API (no callers outside the crate's own
+  tests and benches, which now use the replacements in parentheses):
+  - kernels: `simd::silu_into` (`simd::silu_mul_into`),
+    `simd::rms_norm_residual_into` (`rms_norm_into`, then add the residual), the
+    `workspace::Workspace::*_slice` accessors, `quant_fault::BitFault`,
+    `QuantizedWeightInterleaved::from_packed_parts` and
+    `QuantizedWeightVnni::from_packed_bytes` (no public replacement; the
+    packed cache maps its layouts directly), `HalfDtype::ggml_code`,
+    `packed_cache::{LAYOUT_VNNI_TILE16, LAYOUT_INTERLEAVED_4ROW}`.
+  - models: the `model_backend::ModelBackend` trait (its methods are now
+    inherent on `NativeModelBackend`), `Linear::prepare_interleaved`
+    (`prepare_interleaved_cached`), `SmolVlm::with_feature_cache` (set
+    `feature_cache`), `ForwardModel::{prefill_tokens_with_cache,
+    prefill_embeddings_with_cache}` (`forward_*_with_cache` at
+    `cache.cursor()`), `kv_transfer::KvKeySpace`.
+  - research layer: `v05::bundle::{payload_checksums, BundleWriter::add_json,
+    BundleWriter::root}`, `InterventionOperation::uses_snapshot`,
+    `v05::safetensors::PayloadEntry`, `RawExperimentSpec::from_toml_path`
+    (`from_toml_str`), `SemanticHookSite::parse_id` (serde),
+    `ActivationStage::ALL`, `ExperimentRunner::{has_experiment, has_capture}`,
+    `trace::TraceLevel`, `TraceReport::sorted_events`.
+  - multimodal and voice: `multimodal::session::{VoiceLoop,
+    VoiceTurnOutcome}` (`converse::VoiceConversation`),
+    `VoiceSession::has_pending_turn`, `SmolVlmVision::encode_masked`,
+    `VisionTransformer::encode_with_patch_masks`,
+    `AudioStream::{provisional_mel, config}`,
+    `AudioEncoderConfig::out_frames`, `AudioModel::encode_and_project`, the
+    `EmbeddingAssembler` trait (`SmolVlmAssembler::assemble` is inherent),
+    `SmolVlmAssembler::assemble_single`, `cache::media_id_of_tensor`
+    (`MediaId::from_tensor`), `MediaId::from_tensors`,
+    `VideoFrames::{width, height}`, `ModelCapabilities::TEXT_ONLY`,
+    `VoiceConversation::take_events` (`pump`),
+    `WavTokenizerDecoder::output_len_for_tokens`; in `duplex`,
+    `PlaybackWriter::underruns_observed`,
+    `CaptureConsumer::{underruns, clears, metrics_handle}` and
+    `PlaybackReader::dropped_samples` (always 0), `PlaybackReader::pulls`,
+    the `DuplexController::metrics` field and
+    `DuplexController::{utterance_sample_rate, detector_has_speech}`.
+  - agent: `AgentSession::{take_trace, registry}`,
+    `TraceRecorder::{run_id, elapsed_ms}`, `agent::trace::content_digest`
+    (`ids::short_hash`), `testkit::ScriptedModel::{call_then_answer,
+    saw_cancellation_probe}`, `ScriptedTurn::{failing, fail_with}`,
+    `LookupFixtureTool::from_map` (`new`), `impl Default for SlowTool`.
+  - process: `SupervisedCommand::{with_current_dir, with_env}` and their
+    fields, `CapturedStream::text_lossy` (`tail_lossy(usize::MAX)`).
 - Docs: the semantic hash binds the execution plan, which records the kernel
   tier, CPU features, thread count and compiler. The bundle and
   reproducibility docs no longer claim it is host-independent; across hosts,

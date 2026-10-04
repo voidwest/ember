@@ -18,17 +18,6 @@ use crate::quant::{quantize_q8_0_into, QuantizedWeight};
 use crate::quant_k::KQuantWeight;
 use crate::simd::matmul_q8_0_decode;
 
-/// One single-bit fault at a byte offset inside one block of a weight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BitFault {
-    /// Block index (Q4_K: 144 B/block, Q6_K: 210 B/block, Q8_0: 34 B/block).
-    pub block: usize,
-    /// Byte offset within the block.
-    pub byte: usize,
-    /// Bit index 0..7 within the byte.
-    pub bit: u8,
-}
-
 /// Impact of a faulted weight on one decode pass, relative to pristine.
 #[derive(Debug, Clone, Copy)]
 pub struct FaultImpact {

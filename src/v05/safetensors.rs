@@ -7,7 +7,6 @@
 //! Serialization is deterministic (BTreeMap key order); deserialization
 //! validates every offset, size, and alignment before any slice is taken.
 
-use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// Tensor dtypes supported by the v0.5 bundle format.
@@ -347,14 +346,6 @@ pub fn f32_to_f16_bytes(values: &[f32]) -> Vec<u8> {
         .iter()
         .flat_map(|&value| half::f16::from_f32(value).to_le_bytes())
         .collect()
-}
-
-/// A serializable tensor entry for the capture index.
-#[derive(Debug, Clone, Serialize)]
-pub struct PayloadEntry<'a> {
-    pub name: &'a str,
-    pub shape: &'a [usize],
-    pub dtype: &'static str,
 }
 
 #[cfg(test)]

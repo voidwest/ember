@@ -37,7 +37,6 @@ use crate::multimodal::request::MediaId;
 use crate::multimodal::stream::{AudioStream, AudioStreamConfig, StreamProgress, StreamedAudio};
 use crate::tensor::CpuTensor;
 use crate::tokenizer::EmberTokenizer;
-use crate::tts::outetts::OuteTts;
 use crate::ultravox::{AudioFeatures, StreamingSchedule, Ultravox, AUDIO_PLACEHOLDER};
 use anyhow::{ensure, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -246,24 +245,12 @@ fn lookup_embeddings_for(model: &Ultravox, backend: &CpuBackend, ids: &[u32]) ->
         crate::llama::LlamaEmbedding::Q8_0(w) => w.in_features(),
         crate::llama::LlamaEmbedding::KQuant(w) => w.in_features(),
     };
-    let mut embeddings = backend.zeroes(&[ids.len(), dim])?;
-    for (row, &token) in ids.iter().enumerate() {
-        match &model.llm.embed_tokens {
-            crate::llama::LlamaEmbedding::F32(table) => {
-                backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
-            }
-            crate::llama::LlamaEmbedding::Half(table) => {
-                backend.assign_row_from_half(&mut embeddings, row, table, token as usize)?;
-            }
-            crate::llama::LlamaEmbedding::Q8_0(table) => {
-                backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;
-            }
-            crate::llama::LlamaEmbedding::KQuant(table) => {
-                backend.assign_row_from_k(&mut embeddings, row, table, token as usize)?;
-            }
-        }
-    }
-    Ok(embeddings)
+    Ok(crate::llama::llama_embed_tokens(
+        backend,
+        &model.llm.embed_tokens,
+        ids,
+        dim,
+    )?)
 }
 
 /// PCM content identity: length + rate + every sample value.
@@ -547,11 +534,6 @@ impl<'m> VoiceSession<'m> {
             audio: PendingAudio::None,
             text: String::new(),
         });
-    }
-
-    /// True when a turn is staged but not yet committed.
-    pub fn has_pending_turn(&self) -> bool {
-        self.pending.is_some()
     }
 
     /// Stage the text prompt of the pending turn. Use [`AUDIO_PLACEHOLDER`]
@@ -964,102 +946,6 @@ fn pcm_media_id_from_len(input_samples: usize, input_rate: u32, features: &CpuTe
         v.to_bits().hash(&mut h);
     }
     MediaId(h.finish())
-}
-
-/// Voice-turn glue between a [`VoiceSession`] and an [`OuteTts`]
-/// synthesizer: the interactive half of Phase 4 session 2.
-///
-/// Turn policy (kept simple and explicit — see report):
-/// - barge-in DURING generation cancels it: the KV cursor rolls back to the
-///   pre-generation boundary and NO assistant text is committed;
-/// - once generation completes naturally, the reply is committed; speech is
-///   then streamed chunk-wise through `speak`, where a barge-in stops the
-///   REMAINING audio but keeps the committed text (the LLM already finished;
-///   the codec is stateless so there is no decoder state to roll back);
-/// - new user audio may be staged as soon as `respond` returns.
-pub struct VoiceLoop<'a> {
-    pub session: &'a mut VoiceSession<'a>,
-    pub tts: &'a OuteTts,
-    /// Codec tokens decoded per streamed PCM chunk.
-    pub chunk_tokens: usize,
-}
-
-/// Result of one voice turn.
-pub struct VoiceTurnOutcome {
-    /// True when barge-in/cancellation fired during GENERATION (no reply).
-    pub cancelled_during_generation: bool,
-    /// True when playback stopped early (reply stays committed).
-    pub interrupted_playback: bool,
-    /// Samples actually handed to `speak`.
-    pub spoken_samples: usize,
-    /// Committed reply text (empty when cancelled during generation).
-    pub reply_text: String,
-}
-
-impl<'a> VoiceLoop<'a> {
-    pub fn new(session: &'a mut VoiceSession<'a>, tts: &'a OuteTts) -> Self {
-        Self {
-            session,
-            tts,
-            chunk_tokens: 16,
-        }
-    }
-
-    pub fn respond<FSpeak, FBarge>(
-        &mut self,
-        control: &GenerationControl,
-        max_reply_tokens: usize,
-        speak: FSpeak,
-        barge_in: FBarge,
-    ) -> Result<VoiceTurnOutcome>
-    where
-        // Copy probes: callable from several checkpoint closures at once
-        // probes are Fn (Copy state, e.g. Cell/AtomicBool counters), so they
-        // can be shared across several checkpoint closures
-        FSpeak: Fn(&[f32], bool) -> bool + Copy,
-        FBarge: Fn() -> bool + Copy,
-    {
-        // -- phase 1: generate the reply (barge-in => cancel + rollback) --
-        let (text, was_cancelled) =
-            self.session
-                .generate_reply(control, max_reply_tokens, |_| {}, &barge_in)?;
-        if was_cancelled {
-            return Ok(VoiceTurnOutcome {
-                cancelled_during_generation: true,
-                interrupted_playback: false,
-                spoken_samples: 0,
-                reply_text: String::new(),
-            });
-        }
-
-        // -- phase 2: stream speech for the committed reply --
-        let backend = self.session.backend_ref();
-        let spoken_samples = std::cell::Cell::new(0usize);
-        let interrupted_flag = std::cell::Cell::new(false);
-        self.tts.synthesize_streaming(
-            backend,
-            &text,
-            max_reply_tokens.max(256),
-            self.chunk_tokens,
-            |chunk_meta: crate::tts::outetts::AudioChunkMeta| {
-                if barge_in() {
-                    interrupted_flag.set(true); // playback stops, text committed
-                    return false;
-                }
-                spoken_samples.set(spoken_samples.get() + chunk_meta.pcm.len());
-                speak(&chunk_meta.pcm, chunk_meta.final_chunk);
-                true
-            },
-            |_token| barge_in(),
-        )?;
-
-        Ok(VoiceTurnOutcome {
-            cancelled_during_generation: false,
-            interrupted_playback: interrupted_flag.get(),
-            spoken_samples: spoken_samples.get(),
-            reply_text: text,
-        })
-    }
 }
 
 #[cfg(test)]

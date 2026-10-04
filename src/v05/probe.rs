@@ -483,9 +483,7 @@ impl ProbeReport {
     }
 
     pub fn to_json_bytes(&self) -> Result<Vec<u8>, String> {
-        let mut value = serde_json::to_value(self).map_err(|error| error.to_string())?;
-        crate::plan::sort_value_keys(&mut value);
-        let mut bytes = serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?;
+        let mut bytes = crate::v05::run::pretty_json(self)?;
         bytes.push(b'\n');
         Ok(bytes)
     }

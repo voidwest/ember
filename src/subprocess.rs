@@ -53,37 +53,19 @@ pub struct SupervisedCommand {
     pub program: PathBuf,
     /// Arguments passed verbatim (no shell, no joining, no quoting).
     pub argv: Vec<String>,
-    /// Working directory for the child, if any.
-    pub current_dir: Option<PathBuf>,
     /// Hard deadline for the whole execution (spawn to reap).
     pub timeout: Duration,
-    /// Extra environment for the child. The parent environment is otherwise
-    /// inherited unchanged.
-    pub env_extra: Vec<(String, String)>,
 }
 
 impl SupervisedCommand {
-    /// Build a command with a timeout; argv empty, no cwd override, no extras.
+    /// Build a command with a timeout. The child inherits the parent's working
+    /// directory and environment.
     pub fn new(program: impl Into<PathBuf>, argv: Vec<String>, timeout: Duration) -> Self {
         Self {
             program: program.into(),
             argv,
-            current_dir: None,
             timeout,
-            env_extra: Vec::new(),
         }
-    }
-
-    /// Override the child's working directory.
-    pub fn with_current_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.current_dir = Some(dir.into());
-        self
-    }
-
-    /// Add one child-only environment variable.
-    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env_extra.push((key.into(), value.into()));
-        self
     }
 }
 
@@ -133,12 +115,6 @@ impl CapturedStream {
                 truncated: true,
             }
         }
-    }
-
-    /// Lossy text view for diagnostics. External bytes are never trusted as
-    /// structured data; decode them lossily and only for display.
-    pub fn text_lossy(&self) -> String {
-        String::from_utf8_lossy(&self.bytes).into_owned()
     }
 
     /// Last up-to-`n` bytes as lossy text (stderr tails for reports).
@@ -263,12 +239,6 @@ pub fn run_supervised(command: &SupervisedCommand) -> Result<SupervisedResult, H
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(dir) = &command.current_dir {
-        child_cmd.current_dir(dir);
-    }
-    for (key, value) in &command.env_extra {
-        child_cmd.env(key, value);
-    }
     let mut child = child_cmd
         .spawn()
         .map_err(|error| classify_spawn_error(&command.program, error))?;
@@ -441,7 +411,7 @@ mod tests {
         let result = run_supervised(&command).unwrap();
         assert_eq!(result.termination, Termination::ExitCode(3));
         assert!(!result.killed_by_harness);
-        assert!(result.stderr.text_lossy().contains("boom"));
+        assert!(result.stderr.tail_lossy(usize::MAX).contains("boom"));
     }
 
     /// Stdout bytes round-trip exactly.
@@ -453,7 +423,10 @@ mod tests {
         let command = cmd("cmd", &["/c", "echo hello-stdout"], Duration::from_secs(10));
         let result = run_supervised(&command).unwrap();
         assert_eq!(result.termination, Termination::Success);
-        assert!(result.stdout.text_lossy().contains("hello-stdout"));
+        assert!(result
+            .stdout
+            .tail_lossy(usize::MAX)
+            .contains("hello-stdout"));
     }
 
     /// argv with spaces and metacharacters must reach the child intact —
@@ -469,7 +442,7 @@ mod tests {
         assert_eq!(result.termination, Termination::Success);
         // If a shell had interpreted argv, `;`, `|`, `$()` or backticks
         // would have split or vanished the payload.
-        assert!(result.stdout.text_lossy().contains(payload));
+        assert!(result.stdout.tail_lossy(usize::MAX).contains(payload));
     }
 
     /// A hung child is killed, reaped (no zombie), and reported as Timeout.
@@ -513,7 +486,7 @@ mod tests {
         assert!(result.stdout.total_bytes > MAX_CAPTURE_BYTES_PER_STREAM as u64);
         assert!(result.stdout.truncated);
         assert!(result.stdout.bytes.len() <= TRUNCATED_HEAD_BYTES + TRUNCATED_TAIL_BYTES + 1);
-        assert!(result.stdout.text_lossy().contains("FLOOD"));
+        assert!(result.stdout.tail_lossy(usize::MAX).contains("FLOOD"));
     }
 
     /// Sequential runs do not leak state (fds, threads, zombies).

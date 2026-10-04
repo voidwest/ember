@@ -67,23 +67,6 @@ impl SemanticHookSite {
             SemanticHookSite::FinalNormOutput | SemanticHookSite::Logits
         )
     }
-
-    /// Parse a kebab-case public identifier.
-    pub fn parse_id(id: &str) -> Result<SemanticHookSite, String> {
-        match id {
-            "residual-pre-attention" => Ok(SemanticHookSite::ResidualPreAttention),
-            "attention-output" => Ok(SemanticHookSite::AttentionOutput),
-            "mlp-output" => Ok(SemanticHookSite::MlpOutput),
-            "residual-post-mlp" => Ok(SemanticHookSite::ResidualPostMlp),
-            "final-norm-output" => Ok(SemanticHookSite::FinalNormOutput),
-            "logits" => Ok(SemanticHookSite::Logits),
-            other => Err(format!(
-                "unknown semantic hook site '{other}' (expected one of: \
-                 residual-pre-attention, attention-output, mlp-output, \
-                 residual-post-mlp, final-norm-output, logits)"
-            )),
-        }
-    }
 }
 
 impl fmt::Display for SemanticHookSite {
@@ -220,11 +203,16 @@ mod tests {
             assert_eq!(descriptor.rank, 2);
             assert_eq!(descriptor.feature_axis, 0);
             assert_eq!(descriptor.id.to_string(), expected);
-            assert_eq!(SemanticHookSite::parse_id(expected).unwrap(), descriptor.id);
+            assert_eq!(
+                serde_json::from_value::<SemanticHookSite>(expected.into()).unwrap(),
+                descriptor.id
+            );
         }
         // Stage ids and near-miss names are not semantic site ids.
-        assert!(SemanticHookSite::parse_id("after-layer").is_err());
-        assert!(SemanticHookSite::parse_id("residual-post-attention").is_err());
+        assert!(serde_json::from_value::<SemanticHookSite>("after-layer".into()).is_err());
+        assert!(
+            serde_json::from_value::<SemanticHookSite>("residual-post-attention".into()).is_err()
+        );
     }
 
     #[test]

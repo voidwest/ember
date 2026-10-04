@@ -436,19 +436,17 @@ pub fn diagnose_continuation(
         .find(|step| !step.top1_agreement)
         .map(|step| step.predicted_continuation_index);
 
-    let reference_greedy_token_ids = greedy_rollout(
+    let reference_greedy_token_ids = greedy_rollout_with_cache(
         model,
         backend,
-        reference,
-        target,
+        reference.import_cache(target)?,
         initial_token_id,
         max_tokens,
     )?;
-    let candidate_greedy_token_ids = greedy_rollout_candidate(
+    let candidate_greedy_token_ids = greedy_rollout_with_cache(
         model,
         backend,
-        candidate,
-        target,
+        candidate.import_cache(target)?,
         initial_token_id,
         max_tokens,
     )?;
@@ -573,30 +571,6 @@ fn captured_step(
         .context("cannot allocate captured logits")?;
     logits_values.extend_from_slice(logits.data());
     Ok((attention, logits_values))
-}
-
-fn greedy_rollout(
-    model: &Llama<CpuBackend>,
-    backend: &CpuBackend,
-    snapshot: &KvSnapshot,
-    target: &KvCompatibilityTarget,
-    initial_token: u32,
-    max_tokens: usize,
-) -> anyhow::Result<Vec<u32>> {
-    let cache = snapshot.import_cache(target)?;
-    greedy_rollout_with_cache(model, backend, cache, initial_token, max_tokens)
-}
-
-fn greedy_rollout_candidate(
-    model: &Llama<CpuBackend>,
-    backend: &CpuBackend,
-    candidate: KvContinuationCandidate<'_>,
-    target: &KvCompatibilityTarget,
-    initial_token: u32,
-    max_tokens: usize,
-) -> anyhow::Result<Vec<u32>> {
-    let cache = candidate.import_cache(target)?;
-    greedy_rollout_with_cache(model, backend, cache, initial_token, max_tokens)
 }
 
 fn greedy_rollout_with_cache(

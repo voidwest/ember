@@ -298,19 +298,6 @@ impl CaptureConsumer {
     pub fn accepted_snapshot(&self) -> u64 {
         self.accepted.load(Ordering::Relaxed)
     }
-
-    pub fn underruns(&self) -> u64 {
-        self.metrics.underruns.load(Ordering::Relaxed)
-    }
-
-    pub fn clears(&self) -> u64 {
-        self.metrics.clears.load(Ordering::Relaxed)
-    }
-
-    /// Shared telemetry handle (also covers the paired playback ring).
-    pub fn metrics_handle(&self) -> std::sync::Arc<RingMetrics> {
-        self.metrics.clone()
-    }
 }
 
 /// Create a playback path: runtime writer and realtime reader (device
@@ -373,10 +360,6 @@ impl PlaybackWriter {
     pub fn request_clear(&self) {
         self.clear_requested.store(true, Ordering::Release);
     }
-
-    pub fn underruns_observed(&self) -> u64 {
-        self.metrics.underruns.load(Ordering::Relaxed)
-    }
 }
 
 /// Realtime side of playback. Lives on the audio callback thread.
@@ -388,11 +371,6 @@ pub struct PlaybackReader {
 }
 
 impl PlaybackReader {
-    /// Callback invocations (diagnostic for live-device bring-up).
-    pub fn pulls(&self) -> u64 {
-        self.metrics.pulls.load(Ordering::Relaxed)
-    }
-
     /// Copy up to `out.len()` samples into `out`, zero-filling any shortfall
     /// (counted as an underrun). Honors a pending barge-in clear first.
     pub fn pull(&mut self, out: &mut [f32]) {
@@ -435,10 +413,6 @@ impl PlaybackReader {
     pub fn clears(&self) -> u64 {
         self.metrics.clears.load(Ordering::Relaxed)
     }
-
-    pub fn dropped_samples(&self) -> u64 {
-        self.metrics.dropped_samples.load(Ordering::Relaxed)
-    }
 }
 
 #[cfg(feature = "audio")]
@@ -474,7 +448,6 @@ pub struct DuplexController {
     utterance_rate: u32,
     /// Absolute device-sample offset where the utterance began.
     utterance_start_offset: u64,
-    pub metrics: std::sync::Arc<RingMetrics>,
 }
 
 impl DuplexController {
@@ -496,7 +469,6 @@ impl DuplexController {
         playback: PlaybackWriter,
         detector: Box<dyn TurnDetector>,
     ) -> Self {
-        let metrics = capture.metrics_handle();
         Self {
             capture,
             playback,
@@ -508,7 +480,6 @@ impl DuplexController {
             utterance: Vec::new(),
             utterance_rate: 16_000,
             utterance_start_offset: 0,
-            metrics,
         }
     }
 
@@ -561,7 +532,7 @@ impl DuplexController {
         // end loses neither transition.
         let slice = (rate as usize / 100).max(16);
         let mut events: Vec<TurnEvent> = Vec::new();
-        for piece in chunk.samples.chunks(slice.max(16)) {
+        for piece in chunk.samples.chunks(slice) {
             if let Some(e) = self.detector.feed(&AudioChunk {
                 samples: piece.to_vec(),
                 sample_rate: rate,
@@ -571,7 +542,6 @@ impl DuplexController {
                 self.apply_event_state(Some(e));
             }
         }
-        let _ = rate;
         // Collect everything belonging to the open utterance. The condition
         // must include "a transition happened in THIS chunk": a chunk that
         // contains a full utterance (onset + endpoint) ends with
@@ -581,11 +551,6 @@ impl DuplexController {
             self.utterance.extend_from_slice(&chunk.samples);
         }
         events
-    }
-
-    /// Device sample rate utterances are collected at (constructor arg).
-    pub fn utterance_sample_rate(&self) -> u32 {
-        self.utterance_rate
     }
 
     /// Mirror detector transitions into controller state; fires barge-in.
@@ -635,11 +600,6 @@ impl DuplexController {
         event
     }
 
-    /// Whether the detector currently reports an open speech turn.
-    pub fn detector_has_speech(&self) -> bool {
-        self.speaking_state
-    }
-
     /// Samples discarded by the capture overrun policy so far.
     pub fn dropped_samples(&self) -> u64 {
         self.capture.dropped_samples()
@@ -647,10 +607,6 @@ impl DuplexController {
 
     /// Total samples accepted by the capture stream so far (liveness).
     pub fn captured_total(&self) -> u64 {
-        self.captured_counter()
-    }
-
-    fn captured_counter(&self) -> u64 {
         self.capture.accepted_snapshot()
     }
 

@@ -1,7 +1,9 @@
 //! Generation, demo, and experiment execution paths.
 //! Split out of `main.rs` (2026-08-01) to keep the CLI dispatcher thin.
 
-use crate::cli_commands::{effective_context_limit, ensure_sequence_fits};
+use crate::cli_commands::{
+    effective_context_limit, ensure_sequence_fits, validate_logits_tensor, validate_logits_values,
+};
 use crate::cli_probe::{has_next_decode_evaluation, TensorDumpConfig};
 use crate::cli_support::{
     sidecar_path, token_audit_json, validate_token_ids_for_model, write_json_file,
@@ -21,10 +23,7 @@ use ember::npy::write_npy_2d;
 use ember::sampler::{argmax_token, sample_token};
 use ember::trace;
 use rand::SeedableRng;
-use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// v0.5 seeded-sampling RNG: StdRng when a seed is given (deterministic),
@@ -64,8 +63,6 @@ impl rand::RngCore for SeededRng {
     }
 }
 
-static RAW_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
 struct TraceCleanup;
 
 impl Drop for TraceCleanup {
@@ -75,35 +72,6 @@ impl Drop for TraceCleanup {
         }
         trace::set_values_level(trace::TraceValuesLevel::None);
     }
-}
-
-fn validate_last_logits<B: Backend>(
-    backend: &B,
-    logits: &B::Tensor,
-    expected_vocab_size: usize,
-) -> anyhow::Result<()> {
-    let shape = backend.shape(logits);
-    if shape != [1, expected_vocab_size] {
-        anyhow::bail!("expected last logits shape [1, {expected_vocab_size}], got {shape:?}");
-    }
-    validate_last_logits_values(backend.data(logits), expected_vocab_size)
-}
-
-fn validate_last_logits_values(logits: &[f32], expected_vocab_size: usize) -> anyhow::Result<()> {
-    if logits.len() != expected_vocab_size {
-        anyhow::bail!(
-            "last-logits payload has {} values, expected {expected_vocab_size}",
-            logits.len()
-        );
-    }
-    if let Some((index, value)) = logits
-        .iter()
-        .enumerate()
-        .find(|(_, value)| !value.is_finite())
-    {
-        anyhow::bail!("last logits contain non-finite value {value} at vocabulary index {index}");
-    }
-    Ok(())
 }
 
 /// True when the caller asked for cancellation and the token has fired.
@@ -1058,7 +1026,7 @@ impl<'m> SteppedGeneration<'m> {
                 stepped_prefill(&mut execution, backend, model, &all_tokens, &mut cache)?
             }
         };
-        validate_last_logits(backend, &logits, vocab_size)?;
+        validate_logits_tensor(backend, &logits, 1, vocab_size, true)?;
         let logits = backend.data(&logits).to_vec();
         let mut generation = Self {
             runner,
@@ -1153,7 +1121,7 @@ impl<'m> SteppedGeneration<'m> {
             start_pos,
             ExecutionPhase::Decode,
         )?;
-        validate_last_logits(backend, &logits, self.vocab_size)?;
+        validate_logits_tensor(backend, &logits, 1, self.vocab_size, true)?;
         self.logits.copy_from_slice(backend.data(&logits));
         Ok(())
     }
@@ -1266,7 +1234,7 @@ pub(crate) fn decode_together(
                 )?;
                 drop((sequences, experiments));
                 for generation in &live {
-                    validate_last_logits_values(&generation.logits, generation.vocab_size)?;
+                    validate_logits_values(&generation.logits, generation.vocab_size, true)?;
                 }
             }
         }
@@ -1485,7 +1453,7 @@ where
         0,
         ExecutionPhase::Prefill,
     )?;
-    validate_last_logits(backend, &logits, model_vocab_size)?;
+    validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
     if trace_ops {
         prefill_trace = trace::disable_tracing();
@@ -1581,7 +1549,7 @@ where
                 ExecutionPhase::Decode,
                 &mut logits,
             )?;
-            validate_last_logits(backend, &logits, model_vocab_size)?;
+            validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
             decode_evaluations += 1;
             if trace_ops && let Some(report) = trace::disable_tracing() {
                 decode_traces.push(report);
@@ -1676,15 +1644,16 @@ where
     Ok(output)
 }
 
-pub(crate) fn dump_last_logits<B: Backend>(
+/// Tokenize and audit a dump prompt and check it against the model. Returns
+/// `(token_ids, offsets, model_vocab_size, context_limit)`.
+fn prepare_dump_prompt<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
-    config: TensorDumpConfig<'_>,
-) -> anyhow::Result<()>
-where
-    B::Error: Send + Sync + 'static,
-{
+    config: &TensorDumpConfig<'_>,
+    dumped: &str,
+    audit_context: &str,
+) -> anyhow::Result<(Vec<u32>, ember::tokenizer::TokenOffsets, usize, usize)> {
     let token_ids = tokenizer
         .encode(config.prompt)
         .context("failed to tokenize prompt")?;
@@ -1695,18 +1664,38 @@ where
         anyhow::bail!("token audit failed: encode and encode_with_offsets emitted different ids");
     }
     if token_ids.is_empty() {
-        anyhow::bail!("cannot dump logits for an empty prompt");
+        anyhow::bail!("cannot dump {dumped} for an empty prompt");
     }
     let model_vocab_size = model.vocab_size(backend);
     tokenizer.validate_model_vocab(model_vocab_size)?;
-    validate_token_ids_for_model(&token_ids, model_vocab_size, "logit-dump prompt")?;
+    validate_token_ids_for_model(&token_ids, model_vocab_size, audit_context)?;
     let context_limit = config
         .max_seq_len
         .unwrap_or_else(|| model.max_seq_len(backend));
     ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
+    Ok((token_ids, offsets, model_vocab_size, context_limit))
+}
+
+pub(crate) fn dump_last_logits<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    config: TensorDumpConfig<'_>,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let (token_ids, offsets, model_vocab_size, context_limit) = prepare_dump_prompt(
+        backend,
+        model,
+        tokenizer,
+        &config,
+        "logits",
+        "logit-dump prompt",
+    )?;
     let mut cache = model.create_cache(backend, token_ids.len());
     let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
-    validate_last_logits(backend, &logits, model_vocab_size)?;
+    validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
     let shape = backend.shape(&logits);
     write_npy_2d(
         config.output_path,
@@ -1772,25 +1761,14 @@ pub(crate) fn dump_layers_gemma4<B: Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
-    let token_ids = tokenizer
-        .encode(config.prompt)
-        .context("failed to tokenize prompt")?;
-    let (offset_ids, offsets) = tokenizer
-        .encode_with_offsets(config.prompt)
-        .context("failed to tokenize prompt with offsets")?;
-    if offset_ids != token_ids {
-        anyhow::bail!("token audit failed: encode and encode_with_offsets emitted different ids");
-    }
-    if token_ids.is_empty() {
-        anyhow::bail!("cannot dump layers for an empty prompt");
-    }
-    let model_vocab_size = model.vocab_size(backend);
-    tokenizer.validate_model_vocab(model_vocab_size)?;
-    validate_token_ids_for_model(&token_ids, model_vocab_size, "layer-dump prompt")?;
-    let context_limit = config
-        .max_seq_len
-        .unwrap_or_else(|| model.max_seq_len(backend));
-    ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
+    let (token_ids, offsets, model_vocab_size, context_limit) = prepare_dump_prompt(
+        backend,
+        model,
+        tokenizer,
+        &config,
+        "layers",
+        "layer-dump prompt",
+    )?;
     let mut cache = model.create_cache(backend, token_ids.len());
     let (layer_states, logits) =
         model.forward_last_logits_with_layer_dump(backend, &token_ids, &mut cache, 0)?;
@@ -1819,7 +1797,7 @@ where
             );
         }
     }
-    validate_last_logits(backend, &logits, model_vocab_size)?;
+    validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
     let flat = layer_states.into_iter().flatten().collect::<Vec<_>>();
     let expected_values = n_layers
         .checked_mul(embed_dim)
@@ -1830,7 +1808,9 @@ where
             flat.len()
         );
     }
-    write_raw_f32_le_atomic(config.output_path, &flat)?;
+    let bytes: Vec<u8> = flat.iter().flat_map(|value| value.to_le_bytes()).collect();
+    ember::atomic_file::atomic_write(config.output_path, &bytes)
+        .with_context(|| format!("failed to write raw output '{}'", config.output_path))?;
 
     let metadata_path = sidecar_path(config.output_path, "_metadata.json")?;
     let metadata = serde_json::json!({
@@ -1869,72 +1849,6 @@ where
     );
     eprintln!("saved layer-dump metadata to {metadata_path}");
     Ok(())
-}
-
-fn write_raw_f32_le_atomic(path: &str, values: &[f32]) -> anyhow::Result<()> {
-    let final_path = Path::new(path);
-    let filename = final_path
-        .file_name()
-        .context("raw output path must include a filename")?
-        .to_string_lossy();
-    let parent = final_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let (temporary_path, file) = (0..128)
-        .find_map(|_| {
-            let sequence = RAW_DUMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let temporary_path = parent.join(format!(
-                ".{filename}.ember-tmp-{}-{sequence}",
-                std::process::id()
-            ));
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary_path)
-            {
-                Ok(file) => Some(Ok((temporary_path, file))),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
-                Err(error) => Some(Err(error)),
-            }
-        })
-        .transpose()
-        .with_context(|| format!("failed to create staged raw output next to {path}"))?
-        .context("could not allocate a unique staged raw output path")?;
-    let mut cleanup = RemoveFileOnDrop(Some(temporary_path.clone()));
-    let mut writer = io::BufWriter::new(file);
-    let mut bytes = [0u8; 1024 * std::mem::size_of::<f32>()];
-    for chunk in values.chunks(1024) {
-        for (slot, value) in bytes
-            .chunks_exact_mut(std::mem::size_of::<f32>())
-            .zip(chunk)
-        {
-            slot.copy_from_slice(&value.to_le_bytes());
-        }
-        writer.write_all(&bytes[..std::mem::size_of_val(chunk)])?;
-    }
-    writer.flush()?;
-    writer.get_ref().sync_all()?;
-    drop(writer);
-    fs::rename(&temporary_path, final_path).with_context(|| {
-        format!(
-            "failed to publish raw output '{}' from '{}'",
-            final_path.display(),
-            temporary_path.display()
-        )
-    })?;
-    cleanup.0 = None;
-    Ok(())
-}
-
-struct RemoveFileOnDrop(Option<PathBuf>);
-
-impl Drop for RemoveFileOnDrop {
-    fn drop(&mut self) {
-        if let Some(path) = &self.0 {
-            let _ = fs::remove_file(path);
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -277,7 +277,6 @@ pub(super) fn seed_store() -> AppStore {
 pub(super) fn seed_comparison() -> (RunOutput, RunOutput, ExperimentComparison) {
     let shared = "The city of Madinah is one of the oldest continuously inhabited places in the world, known for the Prophet's Mosque.";
     let diverged = "The city of Madinah is among the oldest inhabited places in the world, famed for the Prophet's Mosque and its courtyards.";
-    let arabic = "\u{0627}\u{0643}\u{062a}\u{0628}\u{060c}\u{0627}\u{0644}\u{0645}\u{062f}\u{064a}\u{0646}\u{0629} \u{0627}\u{062d}\u{062f} \u{0623}\u{0642}\u{062f}\u{0645}\u{0627}\u{0641}\u{0627}\u{064a} \u{0641}\u{064a} \u{0627}\u{0644}\u{0639}\u{0627}\u{0644}\u{0645}.";
     let make = |text: String, tokens: usize, wall_ms: f64| RunOutput {
         text,
         generated_token_ids: vec![1; tokens],
@@ -307,17 +306,7 @@ pub(super) fn seed_comparison() -> (RunOutput, RunOutput, ExperimentComparison) 
         },
         layer_token_grid: None,
     };
-    let _ = arabic;
     (baseline, intervention, comparison)
-}
-
-// Without the gui-tests feature there is no render harness to feed, and the
-// only call site is behind the same cfg, so this stub exists purely to keep the
-// non-test build compiling.
-#[cfg(not(feature = "gui-tests"))]
-#[expect(dead_code, reason = "only the gui-tests build calls the real one")]
-fn seed_comparison() -> (RunOutput, RunOutput, ExperimentComparison) {
-    unimplemented!("render fixture is only available under gui-tests")
 }
 
 /// Run a batch of interventions on one loaded model and report which change

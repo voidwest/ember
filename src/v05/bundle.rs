@@ -70,30 +70,9 @@ impl BundleWriter {
         self.files.insert(relative.to_string(), bytes);
     }
 
-    /// Serialize `value` as canonical JSON into the bundle.
-    pub fn add_json<T: serde::Serialize>(
-        &mut self,
-        relative: &str,
-        value: &T,
-    ) -> Result<(), String> {
-        let value: serde_json::Value =
-            serde_json::from_slice(&crate::v05::manifest::canonical_json(value)?)
-                .map_err(|error| format!("internal JSON round trip failed: {error}"))?;
-        let pretty = serde_json::to_vec_pretty(&value)
-            .map_err(|error| format!("internal JSON pretty print failed: {error}"))?;
-        self.add(relative, pretty);
-        Ok(())
-    }
-
-    /// The final destination.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     /// Publish the bundle: write staging, checksums, manifest, rename.
     ///
-    /// `semantic_manifest` must already carry its `payloads` checksums
-    /// (call `finish_semantic_manifest` first).
+    /// `semantic_manifest` must already carry its `payloads` checksums.
     pub fn finalize(
         self,
         semantic_manifest: SemanticManifest,
@@ -397,15 +376,6 @@ pub(crate) fn validate_relative_path(relative: &str) -> Result<&str, String> {
         }
     }
     Ok(relative)
-}
-
-/// Compute the deterministic payload checksum map for a finished bundle
-/// (used by the runner before finalize).
-pub fn payload_checksums(files: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, String> {
-    files
-        .iter()
-        .map(|(relative, bytes)| (relative.clone(), sha256_hex(bytes)))
-        .collect()
 }
 
 #[cfg(test)]

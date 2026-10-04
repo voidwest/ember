@@ -7,6 +7,7 @@
 //! through the same API an application would use
 //! (`SmolVlmVideo::generate_with_parts` over `ContentPart`s).
 
+use crate::cli_support::write_bin;
 use crate::Args;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
@@ -71,33 +72,7 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
     let tokenizer = EmberTokenizer::from_file(&command.tokenizer)
         .with_context(|| format!("failed to load tokenizer {}", command.tokenizer))?;
 
-    // load decoded frames from the directory
-    let mut names: Vec<_> = std::fs::read_dir(&command.frames_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "png").unwrap_or(false))
-        .collect();
-    names.sort();
-    anyhow::ensure!(!names.is_empty(), "no PNG frames in {}", command.frames_dir);
-    anyhow::ensure!(
-        names.len() <= MAX_VIDEO_FRAMES,
-        "{} frames exceed the {MAX_VIDEO_FRAMES}-frame admission limit",
-        names.len()
-    );
-    let mut frames = Vec::with_capacity(names.len());
-    for p in &names {
-        frames.push(ember::multimodal::image::decode_rgb(p)?);
-    }
-    let n = frames.len();
-    let timestamps_ms: Vec<f64> = (0..n)
-        .map(|i| i as f64 * 1000.0 / command.source_fps)
-        .collect();
-    let video = VideoInput::Frames(VideoFrames {
-        frames,
-        timestamps_ms,
-        source_fps: Some(command.source_fps),
-        source_duration_s: Some(n as f64 / command.source_fps),
-    });
+    let video = load_video(command)?;
 
     let sampling = match command.sampling.as_str() {
         "uniform" => FrameSampling::Uniform {
@@ -149,6 +124,37 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
     Ok(())
 }
 
+/// Decode the numbered PNGs in `--frames-dir` (sorted by name), timestamped
+/// at `--source-fps`.
+fn load_video(command: &VideoCommand) -> Result<VideoInput> {
+    let mut names: Vec<_> = std::fs::read_dir(&command.frames_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "png").unwrap_or(false))
+        .collect();
+    names.sort();
+    anyhow::ensure!(!names.is_empty(), "no PNG frames in {}", command.frames_dir);
+    anyhow::ensure!(
+        names.len() <= MAX_VIDEO_FRAMES,
+        "{} frames exceed the {MAX_VIDEO_FRAMES}-frame admission limit",
+        names.len()
+    );
+    let mut frames = Vec::with_capacity(names.len());
+    for p in &names {
+        frames.push(ember::multimodal::image::decode_rgb(p)?);
+    }
+    let n = frames.len();
+    let timestamps_ms: Vec<f64> = (0..n)
+        .map(|i| i as f64 * 1000.0 / command.source_fps)
+        .collect();
+    Ok(VideoInput::Frames(VideoFrames {
+        frames,
+        timestamps_ms,
+        source_fps: Some(command.source_fps),
+        source_duration_s: Some(n as f64 / command.source_fps),
+    }))
+}
+
 /// Progressive-validation dumps matching scripts/ref_smolvlm2_video.py.
 fn dump_validation_artifacts(
     model: &SmolVlmVideo,
@@ -161,25 +167,7 @@ fn dump_validation_artifacts(
     let mut shapes: Vec<(String, Vec<usize>)> = Vec::new();
 
     // rebuild through build_inputs_parts for the trace
-    let mut names: Vec<_> = std::fs::read_dir(&command.frames_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "png").unwrap_or(false))
-        .collect();
-    names.sort();
-    let mut frames = Vec::with_capacity(names.len());
-    for p in &names {
-        frames.push(ember::multimodal::image::decode_rgb(p)?);
-    }
-    let n = frames.len();
-    let video = VideoInput::Frames(VideoFrames {
-        frames,
-        timestamps_ms: (0..n)
-            .map(|i| i as f64 * 1000.0 / command.source_fps)
-            .collect(),
-        source_fps: Some(command.source_fps),
-        source_duration_s: Some(n as f64 / command.source_fps),
-    });
+    let video = load_video(command)?;
     let parts = vec![
         ContentPart::Text(command.prompt.clone()),
         ContentPart::Video(video),
@@ -236,20 +224,5 @@ fn dump_validation_artifacts(
         serde_json::to_string_pretty(&manifest)?,
     )?;
     println!("validation artifacts written to {}", dir.display());
-    Ok(())
-}
-
-fn write_bin(
-    dir: &Path,
-    name: &str,
-    tensor: &CpuTensor,
-    shapes: &mut Vec<(String, Vec<usize>)>,
-) -> Result<()> {
-    let mut bytes = Vec::with_capacity(tensor.len() * 4);
-    for v in tensor.data() {
-        bytes.extend(v.to_le_bytes());
-    }
-    std::fs::write(dir.join(format!("{name}.bin")), &bytes)?;
-    shapes.push((name.to_string(), tensor.shape().to_vec()));
     Ok(())
 }

@@ -2573,74 +2573,6 @@ fn apply_v_rms_norm<B: Backend>(
     backend.load_from_cpu(data, &[seq_len, width])
 }
 
-/// Parameters for the full (non-cached) prefill attention path.
-///
-/// Kept behind `cfg(test)` after the v0.5 cleanup: `full_attention` is the
-/// semantic reference for gemma-4 prefill and is exercised by the inline
-/// tests below, but no production path calls it (production uses the cached
-/// `forward_with_cache` path). Port to a feature flag if a debug CLI needs
-/// it again.
-#[cfg(test)]
-struct Gemma4FullAttentionSpec {
-    n_heads: usize,
-    n_kv_heads: usize,
-    head_dim: usize,
-    sliding_window: Option<usize>,
-    scale: f32,
-}
-
-/// Gemma 4 prefill attention: one serial pass over (head, row) with
-/// optional sliding-window masking. Shares the backend prefill body
-/// (compacted qk scratch, bit-identical per (row, head)).
-///
-/// Test-only since the v0.5 cleanup (see `Gemma4FullAttentionSpec`): the
-/// production path uses the cached attention, and this reference stays live
-/// as the semantic oracle for the inline tests.
-#[cfg(test)]
-fn full_attention<B: Backend>(
-    backend: &B,
-    q: &B::Tensor,
-    k: &B::Tensor,
-    v: &B::Tensor,
-    spec: Gemma4FullAttentionSpec,
-) -> Result<B::Tensor, B::Error> {
-    let seq_len = backend.shape(q)[0];
-    let q_width = spec.n_heads * spec.head_dim;
-    let kv_width = spec.n_kv_heads * spec.head_dim;
-    let n_repeat = spec.n_heads / spec.n_kv_heads;
-    let q_data = backend.data(q);
-    let k_data = backend.data(k);
-    let v_data = backend.data(v);
-    let mut out = vec![0.0; seq_len * q_width];
-    let mut scores = vec![0.0f32; seq_len];
-
-    for h in 0..spec.n_heads {
-        for i in 0..seq_len {
-            let min_j = spec
-                .sliding_window
-                .map(|w| (i + 1).saturating_sub(w))
-                .unwrap_or(0);
-            let out_idx = i * q_width + h * spec.head_dim;
-            crate::backend::prefill_attention_row_head(
-                q_data,
-                k_data,
-                v_data,
-                i,
-                h,
-                q_width,
-                spec.head_dim,
-                kv_width,
-                n_repeat,
-                spec.scale,
-                min_j,
-                &mut scores,
-                &mut out[out_idx..out_idx + spec.head_dim],
-            );
-        }
-    }
-    backend.load_from_cpu(out, &[seq_len, q_width])
-}
-
 struct Gemma4CachedAttentionSpec {
     n_heads: usize,
     n_kv_heads: usize,
@@ -3416,29 +3348,6 @@ mod tests {
         let allocation = logits.data().as_ptr();
         let uncapped = softcap_logits(&backend, logits, None).unwrap();
         assert_eq!(uncapped.data().as_ptr(), allocation, "disabled softcap");
-    }
-
-    #[test]
-    fn sliding_softmax_limits_attention_range() {
-        let backend = CpuBackend;
-        let q = CpuTensor::from_data(vec![3, 1], vec![1.0, 1.0, 1.0]);
-        let k = CpuTensor::from_data(vec![3, 1], vec![1.0, 1.0, 1.0]);
-        let v = CpuTensor::from_data(vec![3, 1], vec![10.0, 20.0, 30.0]);
-        let out = full_attention(
-            &backend,
-            &q,
-            &k,
-            &v,
-            Gemma4FullAttentionSpec {
-                n_heads: 1,
-                n_kv_heads: 1,
-                head_dim: 1,
-                sliding_window: Some(2),
-                scale: 1.0,
-            },
-        )
-        .unwrap();
-        assert!((out.data()[2] - 25.0).abs() < 1e-5);
     }
 
     #[test]

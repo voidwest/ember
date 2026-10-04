@@ -23,19 +23,6 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-pub trait ModelBackend {
-    fn backend_metadata(&self) -> BackendMetadata;
-    fn model_metadata(&self) -> ModelMetadata;
-    fn tokenizer_metadata(&self) -> Option<TokenizerMetadata> {
-        None
-    }
-    fn tokenize(&self, prompt: &str) -> Result<TokenizedPrompt>;
-    fn extract_hidden_states(
-        &mut self,
-        request: HiddenStateRequest<'_>,
-    ) -> Result<BackendHiddenStateOutput>;
-}
-
 #[derive(Debug, Clone)]
 pub struct HiddenStateRequest<'a> {
     pub token_ids: &'a [u32],
@@ -97,14 +84,8 @@ where
             },
         })
     }
-}
 
-impl<M> ModelBackend for NativeModelBackend<M>
-where
-    M: ForwardModel<CpuBackend>,
-    <CpuBackend as Backend>::Error: Send + Sync + 'static,
-{
-    fn backend_metadata(&self) -> BackendMetadata {
+    pub fn backend_metadata(&self) -> BackendMetadata {
         BackendMetadata {
             name: ExecutionBackendName::Native.as_str().to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -117,15 +98,15 @@ where
         }
     }
 
-    fn model_metadata(&self) -> ModelMetadata {
+    pub fn model_metadata(&self) -> ModelMetadata {
         self.model_metadata.clone()
     }
 
-    fn tokenizer_metadata(&self) -> Option<TokenizerMetadata> {
+    pub fn tokenizer_metadata(&self) -> Option<TokenizerMetadata> {
         Some(self.tokenizer_metadata.clone())
     }
 
-    fn tokenize(&self, prompt: &str) -> Result<TokenizedPrompt> {
+    pub fn tokenize(&self, prompt: &str) -> Result<TokenizedPrompt> {
         let (token_ids, offsets) = self
             .tokenizer
             .encode_with_offsets(prompt)
@@ -143,7 +124,7 @@ where
         Ok(TokenizedPrompt { token_ids, offsets })
     }
 
-    fn extract_hidden_states(
+    pub fn extract_hidden_states(
         &mut self,
         request: HiddenStateRequest<'_>,
     ) -> Result<BackendHiddenStateOutput> {
@@ -671,8 +652,8 @@ fn compare_logits_artifacts(
     })
 }
 
-pub fn run_extraction_with_backend<B: ModelBackend>(
-    backend: &mut B,
+pub fn run_extraction_with_backend<M: ForwardModel<CpuBackend>>(
+    backend: &mut NativeModelBackend<M>,
     config: &ExtractionConfig,
 ) -> Result<ExtractionRunOutput> {
     config.validate()?;

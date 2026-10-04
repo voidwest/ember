@@ -25,7 +25,7 @@ use crate::backend::{Backend, CpuBackend};
 use crate::embedding::EmbeddingSequence;
 use crate::llama::Llama;
 use crate::loader::load_gguf; // mmproj (f16/f32 vision tensors) only
-use crate::multimodal::assembler::{EmbeddingAssembler, ImageFeatures, SmolVlmAssembler};
+use crate::multimodal::assembler::{ImageFeatures, SmolVlmAssembler};
 use crate::multimodal::batch::BatchedImageInput;
 use crate::multimodal::image::{preprocess, ImagePreprocessConfig, PreprocessedImage};
 use crate::multimodal::request::{
@@ -79,8 +79,8 @@ pub struct SmolVlm {
     /// Identity of the vision weights (sha256 of the mmproj file); folds
     /// into feature-cache keys so features never cross model boundaries.
     pub vision_identity: u64,
-    /// Optional encoded-media cache ([`Self::with_feature_cache`]); `None`
-    /// disables reuse entirely (the historical behavior).
+    /// Optional encoded-media cache, set by the caller; `None` disables reuse
+    /// entirely (the historical behavior).
     pub feature_cache: Option<std::sync::Mutex<crate::multimodal::cache::MediaFeatureCache>>,
 }
 
@@ -156,14 +156,6 @@ impl SmolVlm {
             vision_identity,
             feature_cache: None,
         })
-    }
-
-    /// Enable the encoded-media feature cache with a byte budget.
-    pub fn with_feature_cache(mut self, max_bytes: usize) -> Self {
-        self.feature_cache = Some(std::sync::Mutex::new(
-            crate::multimodal::cache::MediaFeatureCache::new(max_bytes),
-        ));
-        self
     }
 
     /// Cache key for one decoded image under this wrapper's configuration.

@@ -409,16 +409,6 @@ impl ExperimentRunner {
         self
     }
 
-    #[must_use]
-    pub fn has_experiment(&self) -> bool {
-        self.experiment.is_some()
-    }
-
-    #[must_use]
-    pub fn has_capture(&self) -> bool {
-        self.capture.is_some()
-    }
-
     /// Whether the active experiment mutates hidden states.
     #[must_use]
     pub fn intervenes(&self) -> bool {

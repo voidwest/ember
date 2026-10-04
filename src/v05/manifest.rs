@@ -30,13 +30,7 @@ pub fn hex(bytes: &[u8]) -> String {
 
 /// SHA-256 digest as lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex(&Sha256::digest(bytes))
 }
 
 /// Canonical JSON bytes of a serializable value: sorted keys, stable

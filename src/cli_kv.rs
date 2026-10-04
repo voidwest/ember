@@ -299,7 +299,7 @@ fn run_export(
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
     let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
-    validate_loader_architecture(&loader, &architecture)?;
+    validate_kv_architecture(&architecture)?;
     let model = ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(cache_capacity))?;
     timings.insert("model_load".into(), elapsed_ms(model_start));
     anyhow::ensure!(
@@ -570,7 +570,7 @@ fn run_compare(
             .with_context(|| format!("failed to hash tokenizer '{tokenizer_path}'"))?;
         let loader = load_gguf_with_k_strategy(model_path, k_strategy, allow_fallback)?;
         let architecture = ember::loader::resolve_generation_architecture(architecture, &loader)?;
-        validate_loader_architecture(&loader, &architecture)?;
+        validate_kv_architecture(&architecture)?;
         let model = ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(capacity))?;
         model.set_execution_mode(execution);
         let tokenizer = EmberTokenizer::from_file(tokenizer_path)?;
@@ -812,7 +812,7 @@ fn run_replay(
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
     let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
-    validate_loader_architecture(&loader, &architecture)?;
+    validate_kv_architecture(&architecture)?;
     let model =
         ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(requested_capacity))?;
     if trace_enabled {
@@ -1032,7 +1032,7 @@ fn run_trace_native(
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
     let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
-    validate_loader_architecture(&loader, &architecture)?;
+    validate_kv_architecture(&architecture)?;
     let model =
         ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(requested_capacity))?;
     timings.insert("model_load".into(), elapsed_ms(model_start));
@@ -1365,27 +1365,13 @@ fn directory_regular_file_bytes(path: &Path) -> anyhow::Result<u64> {
     Ok(total)
 }
 
-fn validate_loader_architecture(
-    loader: &ember::loader::GgufLoader,
-    requested: &str,
-) -> anyhow::Result<()> {
-    use ember::loader::GgufValue;
-    let recorded = match loader.metadata.get("general.architecture") {
-        Some(GgufValue::Str(value)) => value.as_str(),
-        Some(_) => anyhow::bail!("GGUF general.architecture is not a string"),
-        None => "llama",
-    };
-    let matches = match requested {
-        "llama" => recorded == "llama",
-        "qwen3" => matches!(recorded, "qwen2" | "qwen3"),
-        "gpt2" | "gemma4" => {
-            anyhow::bail!("kv commands support llama/qwen3 models only; the model is '{requested}'")
-        }
-        _ => false,
-    };
+/// `architecture` is `resolve_generation_architecture`'s result, which
+/// already matched the GGUF declaration (fail-closed); only the KV family
+/// restriction remains to check.
+fn validate_kv_architecture(architecture: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
-        matches,
-        "requested architecture '{requested}' does not match GGUF architecture '{recorded}'"
+        matches!(architecture, "llama" | "qwen3"),
+        "kv commands support llama/qwen3 models only; the model is '{architecture}'"
     );
     Ok(())
 }

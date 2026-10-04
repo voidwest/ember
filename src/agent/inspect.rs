@@ -58,7 +58,6 @@ fn f(v: &serde_json::Value) -> f64 {
 /// Derive a summary from ordered events (no wall-clock reliance).
 pub fn summarize(events: &[serde_json::Value]) -> TraceSummary {
     let mut s = TraceSummary::default();
-    let mut decode_evals = 0u64;
     let mut tok_per_s_sum = 0.0;
     let mut tok_per_s_n = 0usize;
     for e in events {
@@ -90,7 +89,6 @@ pub fn summarize(events: &[serde_json::Value]) -> TraceSummary {
                 s.prefill_ms += f(&data["prefill_ms"]);
                 s.decode_ms += f(&data["decode_ms"]);
                 s.output_tokens += data["output_tokens_committed"].as_u64().unwrap_or(0);
-                decode_evals += data["decode_evaluations"].as_u64().unwrap_or(0);
                 if let Some(t) = data["tok_per_s"].as_f64()
                     && t > 0.0
                 {
@@ -144,7 +142,6 @@ pub fn summarize(events: &[serde_json::Value]) -> TraceSummary {
             s.prompt_tokens_committed += b.saturating_sub(a);
         }
     }
-    let _ = decode_evals;
     if tok_per_s_n > 0 {
         s.tok_per_s = Some(tok_per_s_sum / tok_per_s_n as f64);
     }
@@ -414,7 +411,7 @@ fn sha_digest(text: &str) -> String {
     if text.is_empty() {
         "<none>".to_string()
     } else {
-        crate::extraction::sha256_bytes(text.as_bytes())[..12].to_string()
+        super::ids::short_hash(text.as_bytes())
     }
 }
 
@@ -478,9 +475,8 @@ pub fn replay(
         let step = e["step"].as_str().unwrap_or("");
         match et {
             "tool_call_validated" => {
-                if let Some(args) = e["data"]["arguments"].as_object() {
+                if e["data"]["arguments"].is_object() {
                     pending_args.push_back(e["data"]["arguments"].clone());
-                    let _ = args;
                 }
             }
             "tool_execution_finished" => {

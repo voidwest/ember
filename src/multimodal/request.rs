@@ -168,16 +168,6 @@ pub struct VideoFrames {
     pub source_duration_s: Option<f64>,
 }
 
-impl VideoFrames {
-    pub fn width(&self) -> Option<usize> {
-        self.frames.first().map(|f| f.shape()[2])
-    }
-
-    pub fn height(&self) -> Option<usize> {
-        self.frames.first().map(|f| f.shape()[1])
-    }
-}
-
 impl ContentPart {
     /// The media kind of this part (`None` for text).
     pub fn media_kind(&self) -> Option<MediaKind> {
@@ -225,21 +215,6 @@ impl MediaId {
         t.shape().hash(&mut h);
         for v in t.data() {
             v.to_bits().hash(&mut h);
-        }
-        MediaId(h.finish())
-    }
-
-    /// Convenience for hashing several tensors in sequence (e.g. video
-    /// frames): order-sensitive.
-    pub fn from_tensors(tensors: &[CpuTensor]) -> Self {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        tensors.len().hash(&mut h);
-        for t in tensors {
-            t.shape().hash(&mut h);
-            for v in t.data() {
-                v.to_bits().hash(&mut h);
-            }
         }
         MediaId(h.finish())
     }

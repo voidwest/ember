@@ -485,7 +485,7 @@ pub struct KQuantWeight {
 }
 
 /// Whether the opt-in quant pre-split is requested (prefill-only lever).
-fn presplit_enabled() -> bool {
+pub(crate) fn presplit_enabled() -> bool {
     matches!(
         std::env::var("EMBER_PRESPLIT").as_deref(),
         Ok("1") | Ok("true") | Ok("yes")

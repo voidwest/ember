@@ -31,7 +31,7 @@ fn registry(_tools: usize) -> ToolRegistry {
     ToolRegistry::builder()
         .register(Arc::new(CalculatorTool))
         .unwrap()
-        .register(Arc::new(LookupFixtureTool::from_map(fixtures)))
+        .register(Arc::new(LookupFixtureTool::new(fixtures)))
         .unwrap()
         .build()
         .unwrap()

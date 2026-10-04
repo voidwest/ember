@@ -87,7 +87,6 @@ pub mod quant_fault;
 pub mod quant_k;
 #[doc(hidden)]
 pub mod residency;
-pub mod residual_patch;
 pub mod runtime_schedule;
 pub mod sampler;
 #[doc(hidden)]

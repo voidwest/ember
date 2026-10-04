@@ -516,24 +516,6 @@ impl QuantizedWeightInterleaved {
         Ok(blocks_per_row)
     }
 
-    /// Rebuild from serialized interleaved bytes, validating both lengths
-    /// against the shape (on-disk packed-layout cache round-trip).
-    pub fn from_packed_parts(
-        quants: alloc::vec::Vec<u8>,
-        scales: alloc::vec::Vec<u8>,
-        out_features: usize,
-        in_features: usize,
-    ) -> Result<Self, alloc::string::String> {
-        let blocks_per_row =
-            Self::validate_parts(quants.len(), scales.len(), out_features, in_features)?;
-        Ok(Self {
-            quants: PackedStorage::Owned(quants),
-            scales: PackedStorage::Owned(scales),
-            shape: alloc::vec![out_features, in_features],
-            blocks_per_row,
-        })
-    }
-
     /// Zero-copy view of two packed ranges inside a read-only mapping (the
     /// on-disk packed-layout cache).
     pub(crate) fn from_mapped_parts(
@@ -730,21 +712,6 @@ impl QuantizedWeightVnni {
             ));
         }
         Ok(blocks_per_row)
-    }
-
-    /// Rebuild from serialized packed bytes, validating the encoded length
-    /// against the shape.
-    pub fn from_packed_bytes(
-        data: alloc::vec::Vec<u8>,
-        out_features: usize,
-        in_features: usize,
-    ) -> Result<Self, alloc::string::String> {
-        let blocks_per_row = Self::validate_packed_len(data.len(), out_features, in_features)?;
-        Ok(Self {
-            storage: PackedStorage::Owned(data),
-            shape: alloc::vec![out_features, in_features],
-            blocks_per_row,
-        })
     }
 
     /// Zero-copy view of a packed range inside a read-only mapping (the

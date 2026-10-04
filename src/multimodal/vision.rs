@@ -73,23 +73,6 @@ impl VisionTransformer {
         self.encode_impl(backend, pixels, None, None)
     }
 
-    /// Encode with per-image patch-validity masks (`[n_images,
-    /// patches_per_side, patches_per_side]`, 1 = valid pixel region).
-    ///
-    /// Used by padded video frames: the reference computes *variable*
-    /// position ids over the valid rectangle (bucketized fractional coords)
-    /// and excludes invalid patches from every layer's attention via an
-    /// additive mask. With all-valid masks this path is bit-identical to
-    /// [`Self::encode`] (the bucketized grid collapses to row-major ids).
-    pub fn encode_with_patch_masks(
-        &self,
-        backend: &CpuBackend,
-        pixels: &CpuTensor,
-        masks: &CpuTensor,
-    ) -> Result<CpuTensor, CpuError> {
-        self.encode_impl(backend, pixels, Some(masks), None)
-    }
-
     /// Like [`Self::encode`] but records the progressive-validation
     /// intermediates: patch embeddings (after position embeddings), every
     /// layer output, and the post-norm encoder output.
@@ -1129,20 +1112,6 @@ impl VisionModel {
         let hidden = self.transformer.encode(backend, pixels)?;
         let num_patches = self.transformer.config.num_patches();
         self.connector.forward(backend, &hidden, num_patches)
-    }
-
-    /// [`Self::encode`] with per-image patch masks (padded video frames).
-    pub fn encode_masked(
-        &self,
-        backend: &CpuBackend,
-        pixels: &CpuTensor,
-        masks: &CpuTensor,
-    ) -> Result<CpuTensor> {
-        let hidden = self
-            .transformer
-            .encode_with_patch_masks(backend, pixels, masks)?;
-        let num_patches = self.transformer.config.num_patches();
-        Ok(self.connector.forward(backend, &hidden, num_patches)?)
     }
 }
 

@@ -20,7 +20,7 @@
 //!   (`ember voice --converse`) is a thin wrapper around exactly this;
 //!   applications call the same API.
 //!
-//! Barge-in semantics follow the established VoiceLoop policy, now fed from
+//! Barge-in semantics follow the established voice-turn policy, fed from
 //! the CONCURRENT detector instead of single-threaded checkpoints:
 //!
 //! * interrupt during GENERATION → cancel at the next token checkpoint + KV
@@ -239,6 +239,27 @@ struct TurnBookkeeping {
     reply_codes: usize,
 }
 
+/// Barge-in probe shared by the generation and speech phases: pumps the
+/// detector between checkpoints and latches once a SpeechStarted onset has
+/// fired. The controller arms collection for the new utterance; the driver
+/// performs the state transition after the phase returns (deferred-capture
+/// contract).
+struct BargeInProbe<'a> {
+    duplex: &'a RefCell<DuplexController>,
+    hit: bool,
+}
+
+impl BargeInProbe<'_> {
+    fn poll(&mut self) -> bool {
+        for ev in self.duplex.borrow_mut().pump_events() {
+            if matches!(ev, TurnEvent::SpeechStarted) {
+                self.hit = true;
+            }
+        }
+        self.hit
+    }
+}
+
 /// Model-backed conversation driver over a duplex controller.
 ///
 /// Pure Rust (no cpal here): hermetic tests drive it with synthetic ring
@@ -293,11 +314,6 @@ impl<'m> VoiceConversation<'m> {
 
     pub fn turns_completed(&self) -> usize {
         self.turns_completed
-    }
-
-    /// Drain observed events since the last call.
-    pub fn take_events(&mut self) -> Vec<ConverseEvent> {
-        std::mem::take(&mut self.events)
     }
 
     /// One pump step: drain captured audio through the detector, feed live
@@ -466,26 +482,7 @@ impl<'m> VoiceConversation<'m> {
     }
 
     fn generate_reply_phase(&mut self) {
-        struct Probe<'a> {
-            duplex: &'a RefCell<DuplexController>,
-            hit: bool,
-        }
-        impl Probe<'_> {
-            /// Pump the detector between tokens. Returns true once a barge-in
-            /// onset has fired (latched for every later checkpoint).
-            fn poll(&mut self) -> bool {
-                for ev in self.duplex.borrow_mut().pump_events() {
-                    if matches!(ev, TurnEvent::SpeechStarted) {
-                        // Controller armed collection for the new utterance;
-                        // the driver performs the state transition after the
-                        // phase returns (deferred-capture contract).
-                        self.hit = true;
-                    }
-                }
-                self.hit
-            }
-        }
-        let mut probe = Probe {
+        let mut probe = BargeInProbe {
             duplex: &self.duplex,
             hit: false,
         };
@@ -557,26 +554,10 @@ impl<'m> VoiceConversation<'m> {
         // A barge-in detected inside this phase arms deferred capture so
         // enter_deferred_capture reopens the user stream afterwards.
         self.deferred_capture_open = true;
-        let interrupt_flag = Rc::new(std::cell::Cell::new(false));
-        let interrupt_probe = interrupt_flag.clone();
 
-        struct SpeakProbe<'a> {
-            duplex: &'a RefCell<DuplexController>,
-            hit: bool,
-        }
-        impl SpeakProbe<'_> {
-            fn poll(&mut self) -> bool {
-                for ev in self.duplex.borrow_mut().pump_events() {
-                    if matches!(ev, TurnEvent::SpeechStarted) {
-                        self.hit = true;
-                    }
-                }
-                self.hit
-            }
-        }
         // Shared between BOTH closures sequentially (they never overlap):
         // wrapped so each closure gets its own copy of the handle.
-        let probe_cell = Rc::new(RefCell::new(SpeakProbe {
+        let probe_cell = Rc::new(RefCell::new(BargeInProbe {
             duplex: &self.duplex,
             hit: false,
         }));
@@ -593,7 +574,6 @@ impl<'m> VoiceConversation<'m> {
         let audio_started_flag = self.audio_started.clone();
         let audio_started = std::cell::Cell::new(false);
         let mut synth_err: Option<String> = None;
-        let _t_debug = std::cell::Cell::new(0u32);
 
         let synth = tts.stream_speech(
             backend,
@@ -603,7 +583,6 @@ impl<'m> VoiceConversation<'m> {
             &mut |chunk_meta| {
                 let hit = probe_for_chunk.borrow_mut().poll();
                 if hit {
-                    interrupt_probe.set(true);
                     return false; // stop synthesis; remainder dropped
                 }
                 if !audio_started.get() {
@@ -629,7 +608,7 @@ impl<'m> VoiceConversation<'m> {
                 !hit
             },
         );
-        let barge_in_during_speech = interrupt_flag.get() || probe_cell.borrow().hit;
+        let barge_in_during_speech = probe_cell.borrow().hit;
         match synth {
             Ok((_, _, timings)) => {
                 if std::env::var("EMBER_CONVERSE_DBG").is_ok() {
@@ -656,7 +635,6 @@ impl<'m> VoiceConversation<'m> {
                     // (non-Latin/empty after preprocessing). Honest skip: the
                     // turn completes with zero audio rather than failing.
                     eprintln!("converse: nothing speakable to synthesize");
-                    synth_err = None;
                     if let Some(bk) = &mut self.bk {
                         bk.reply_codes = 0;
                     }

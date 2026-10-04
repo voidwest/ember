@@ -37,6 +37,7 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ember::v05::manifest::hex as hex_encode;
 use rand::RngCore;
 use std::path::Path;
 
@@ -472,14 +473,6 @@ fn write_key_file(path: &Path, content: &str) -> Result<()> {
     file.write_all(content.as_bytes())
         .and_then(|()| file.sync_all())
         .with_context(|| format!("failed to write {}", path.display()))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>> {

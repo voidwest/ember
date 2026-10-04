@@ -197,81 +197,6 @@ pub fn silu_mul_into(gate: &[f32], up: &[f32], dst: &mut [f32]) {
     silu_mul_into_scalar(gate, up, dst);
 }
 
-/// SiLU in-place: `dst[i] = xxx[i] / (1.0 + exp(-xxx[i]))`.
-/// Reads from `src`, writes to `dst` (may alias).
-#[inline]
-pub fn silu_into(src: &[f32], dst: &mut [f32]) {
-    assert_eq!(
-        src.len(),
-        dst.len(),
-        "silu_into destination length mismatch"
-    );
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            // SAFETY: features checked; lengths asserted equal above.
-            unsafe {
-                return x86_64::silu_into_avx2(src, dst);
-            }
-        }
-    }
-    silu_into_scalar(src, dst);
-}
-
-/// Fused RMS norm + residual add: `dst = (x * weight / rms(x)) + residual`.
-/// `x`, `weight`, `residual`, and `dst` must all have the same length.
-#[inline]
-pub fn rms_norm_residual_into(
-    x: &[f32],
-    weight: &[f32],
-    eps: f32,
-    residual: &[f32],
-    dst: &mut [f32],
-) {
-    let n = x.len();
-    assert!(
-        !x.is_empty(),
-        "rms_norm_residual_into requires a non-empty input"
-    );
-    assert_eq!(
-        weight.len(),
-        n,
-        "rms_norm_residual_into weight length mismatch"
-    );
-    assert_eq!(
-        residual.len(),
-        n,
-        "rms_norm_residual_into residual length mismatch"
-    );
-    assert_eq!(
-        dst.len(),
-        n,
-        "rms_norm_residual_into destination length mismatch"
-    );
-    assert!(
-        eps.is_finite() && eps >= 0.0,
-        "rms_norm_residual_into requires finite eps >= 0"
-    );
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            // SAFETY: features checked; lengths asserted equal above.
-            unsafe {
-                return x86_64::rms_norm_residual_into_avx2(x, weight, eps, residual, dst);
-            }
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    if is_aarch64_feature_detected!("neon") {
-        rms_norm_into(x, weight, eps, dst);
-        for (value, &addend) in dst.iter_mut().zip(residual) {
-            *value += addend;
-        }
-        return;
-    }
-    rms_norm_residual_into_scalar(x, weight, eps, residual, dst);
-}
-
 // ---------------------------------------------------------------------------
 // scalar fallback (always compiled)
 // ---------------------------------------------------------------------------
@@ -289,27 +214,6 @@ fn silu_mul_into_scalar(gate: &[f32], up: &[f32], dst: &mut [f32]) {
     for i in 0..gate.len() {
         let g = gate[i];
         dst[i] = (g / (1.0 + (-g).exp())) * up[i];
-    }
-}
-
-fn silu_into_scalar(src: &[f32], dst: &mut [f32]) {
-    for i in 0..src.len() {
-        dst[i] = src[i] / (1.0 + (-src[i]).exp());
-    }
-}
-
-fn rms_norm_residual_into_scalar(
-    x: &[f32],
-    weight: &[f32],
-    eps: f32,
-    residual: &[f32],
-    dst: &mut [f32],
-) {
-    let n = x.len();
-    let sum_sq: f32 = x.iter().map(|v| v * v).sum();
-    let rstd = (sum_sq / n as f32 + eps).sqrt().recip();
-    for i in 0..n {
-        dst[i] = x[i] * rstd * weight[i] + residual[i];
     }
 }
 
@@ -500,101 +404,6 @@ mod x86_64 {
             while i < n {
                 let g = gate[i];
                 dst[i] = (g / (1.0 + (-g).exp())) * up[i];
-                i += 1;
-            }
-        }
-    }
-
-    /// SIMD SiLU into pre-allocated dst using AVX2+FMA.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
-    #[target_feature(enable = "avx2,fma")]
-    pub(crate) unsafe fn silu_into_avx2(src: &[f32], dst: &mut [f32]) {
-        // SAFETY: the caller guarantees the CPU features; `silu_into` asserts
-        // equal lengths, and every 8-lane load/store is guarded by `i + 8 <=
-        // n`.
-        unsafe {
-            let n = src.len();
-            let one = _mm256_set1_ps(1.0);
-            let mut i = 0;
-            while i + 8 <= n {
-                let x = _mm256_loadu_ps(src.as_ptr().add(i));
-                let neg_x = _mm256_sub_ps(_mm256_setzero_ps(), x);
-                let exp_neg = exp_ps(neg_x);
-                let denom = _mm256_add_ps(one, exp_neg);
-                let r = _mm256_div_ps(x, denom);
-                _mm256_storeu_ps(dst.as_mut_ptr().add(i), r);
-                i += 8;
-            }
-            while i < n {
-                dst[i] = src[i] / (1.0 + (-src[i]).exp());
-                i += 1;
-            }
-        }
-    }
-
-    /// SIMD fused RMS norm + residual add: `dst[i] = (x[i] * rstd * weight[i]) + residual[i]`.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
-    #[target_feature(enable = "avx2,fma")]
-    pub(crate) unsafe fn rms_norm_residual_into_avx2(
-        x: &[f32],
-        weight: &[f32],
-        eps: f32,
-        residual: &[f32],
-        dst: &mut [f32],
-    ) {
-        // SAFETY: the caller guarantees the CPU features;
-        // `rms_norm_residual_into` asserts all four lengths equal, and every
-        // 8-lane load/store is guarded by `i + 8 <= n`.
-        unsafe {
-            let n = x.len();
-            // sum of squares
-            let mut ss0 = _mm256_setzero_ps();
-            let mut ss1 = _mm256_setzero_ps();
-            let mut i = 0;
-            while i + 16 <= n {
-                let v0 = _mm256_loadu_ps(x.as_ptr().add(i));
-                let v1 = _mm256_loadu_ps(x.as_ptr().add(i + 8));
-                ss0 = _mm256_fmadd_ps(v0, v0, ss0);
-                ss1 = _mm256_fmadd_ps(v1, v1, ss1);
-                i += 16;
-            }
-            while i + 8 <= n {
-                let v = _mm256_loadu_ps(x.as_ptr().add(i));
-                ss0 = _mm256_fmadd_ps(v, v, ss0);
-                i += 8;
-            }
-            let acc = _mm256_add_ps(ss0, ss1);
-            let low = _mm256_castps256_ps128(acc);
-            let high = _mm256_extractf128_ps::<1>(acc);
-            let sum128 = _mm_add_ps(low, high);
-            let sum128 = _mm_hadd_ps(sum128, sum128);
-            let sum128 = _mm_hadd_ps(sum128, sum128);
-            let mut sum_sq = _mm_cvtss_f32(sum128);
-            while i < n {
-                sum_sq += x[i] * x[i];
-                i += 1;
-            }
-
-            let rstd = _mm256_set1_ps((sum_sq / n as f32 + eps).sqrt().recip());
-
-            // dst[i] = x[i] * rstd * weight[i] + residual[i]
-            i = 0;
-            while i + 8 <= n {
-                let xv = _mm256_loadu_ps(x.as_ptr().add(i));
-                let wv = _mm256_loadu_ps(weight.as_ptr().add(i));
-                let rv = _mm256_loadu_ps(residual.as_ptr().add(i));
-                let normed = _mm256_mul_ps(_mm256_mul_ps(xv, rstd), wv);
-                _mm256_storeu_ps(dst.as_mut_ptr().add(i), _mm256_add_ps(normed, rv));
-                i += 8;
-            }
-            while i < n {
-                dst[i] = x[i] * (sum_sq / n as f32 + eps).sqrt().recip() * weight[i] + residual[i];
                 i += 1;
             }
         }
@@ -3922,18 +3731,12 @@ mod tests {
             -120.0, -95.0, -90.0, -88.5, -87.5, -50.0, -1.0, 0.0, 1.0, 50.0, 87.5, 88.5, 90.0,
             95.0, 120.0, 3.0,
         ];
-        let mut out = vec![0.0; src.len()];
-        super::silu_into(&src, &mut out);
         let ones = vec![1.0; src.len()];
         let mut fused = vec![0.0; src.len()];
         super::silu_mul_into(&src, &ones, &mut fused);
-        for ((&x, &y), &z) in src.iter().zip(&out).zip(&fused) {
+        for (&x, &z) in src.iter().zip(&fused) {
             let expected = (x as f64 / (1.0 + (-(x as f64)).exp())) as f32;
             let tolerance = 1e-5 * x.abs().max(1.0);
-            assert!(
-                (y - expected).abs() <= tolerance,
-                "silu({x}) = {y}, expected {expected}"
-            );
             assert!(
                 (z - expected).abs() <= tolerance,
                 "silu_mul({x}) = {z}, expected {expected}"
@@ -3962,10 +3765,6 @@ mod tests {
                 out, scalar,
                 "Q8 fast decode must retain scalar reduction order"
             );
-            rms_norm_residual_into(&x, &w, 1e-5, &x, &mut out);
-            for i in 0..n {
-                assert_eq!(out[i].to_bits(), (expected.data()[i] + x[i]).to_bits());
-            }
         }
     }
 

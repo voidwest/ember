@@ -177,11 +177,6 @@ impl MediaFeatureCache {
     }
 }
 
-/// Content identity for a decoded RGB frame/image tensor.
-pub fn media_id_of_tensor(t: &CpuTensor) -> MediaId {
-    MediaId::from_tensor(t)
-}
-
 // ---------------------------------------------------------------------------
 // Phase 5 Track F: concurrency-safe wrapper with per-key coalescing
 // ---------------------------------------------------------------------------

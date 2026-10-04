@@ -299,30 +299,12 @@ pub fn parse_npy(bytes: &[u8]) -> Result<DirectionMatrix, String> {
     DirectionMatrix::from_shape(&shape, values)
 }
 
-/// Serialize a `.npy` (version 1.0, `<f4`) array; used by tests and the
-/// probe tooling that writes directions.
+/// Serialize a `.npy` (version 1.0, `<f4`) array; used by tests to write
+/// direction files.
 pub fn write_npy(shape: &[usize], values: &[f32]) -> Vec<u8> {
-    let shape_text = match shape {
-        [one] => format!("({one},)"),
-        many => format!(
-            "({})",
-            many.iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    };
-    let mut header = format!("{{'descr': '<f4', 'fortran_order': False, 'shape': {shape_text}, }}");
-    // Pad so the data starts on a 64-byte boundary, newline-terminated.
-    let unpadded = 10 + header.len() + 1;
-    header.push_str(&" ".repeat(unpadded.next_multiple_of(64) - unpadded));
-    header.push('\n');
-    let mut out = b"\x93NUMPY\x01\x00".to_vec();
-    out.extend((header.len() as u16).to_le_bytes());
-    out.extend(header.as_bytes());
-    for value in values {
-        out.extend(value.to_le_bytes());
-    }
+    let mut out = Vec::new();
+    crate::npy::write_npy_header(&mut out, shape).expect("npy v1 header fits in u16");
+    crate::npy::write_f32_slice(&mut out, values).expect("writing to a Vec cannot fail");
     out
 }
 
@@ -558,9 +540,7 @@ pub fn direction_artifact_files(
                 })
                 .collect(),
         };
-        let mut json = serde_json::to_value(&record).map_err(|error| error.to_string())?;
-        crate::plan::sort_value_keys(&mut json);
-        let mut bytes = serde_json::to_vec_pretty(&json).map_err(|error| error.to_string())?;
+        let mut bytes = crate::v05::run::pretty_json(&record)?;
         bytes.push(b'\n');
         files.insert(record_path, bytes);
         files.insert(tensor_path, payload);

@@ -28,8 +28,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use super::ids::short_hash;
-
 /// Schema tag on every line.
 pub const TRACE_SCHEMA: &str = "ember.agent.trace.v1";
 
@@ -148,10 +146,6 @@ impl TraceRecorder {
         })
     }
 
-    pub fn run_id(&self) -> &str {
-        &self.run_id
-    }
-
     /// Re-key the recorder to the owning run's id (the session assigns
     /// fresh run ids per run; every emitted line must carry it).
     pub fn set_run_id(&mut self, run_id: &str) {
@@ -160,11 +154,6 @@ impl TraceRecorder {
 
     pub fn config(&self) -> &TraceConfig {
         &self.config
-    }
-
-    /// Elapsed milliseconds since the run started (monotonic clock).
-    pub fn elapsed_ms(&self) -> f64 {
-        self.start.elapsed().as_secs_f64() * 1e3
     }
 
     pub fn events(&self) -> &[serde_json::Value] {
@@ -288,11 +277,6 @@ fn epoch_ms() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
-}
-
-/// Content identity helper reused by sessions (hash of committed text).
-pub fn content_digest(text: &str) -> String {
-    short_hash(text.as_bytes())
 }
 
 /// Parse a trace JSONL file tolerantly (Track Q/S): complete lines are

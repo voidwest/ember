@@ -1559,7 +1559,7 @@ fn estimated_tensor_allocation_bytes(
                 | crate::quant_k::KExecution::CompressedArm => {
                     let mut owned = if mmap_present { 0 } else { encoded_bytes };
                     if matches!(execution, crate::quant_k::KExecution::CompressedX86)
-                        && presplit_requested()
+                        && crate::quant_k::presplit_enabled()
                     {
                         let blocks = u64::try_from(element_count / crate::quant_k::QK_K).map_err(
                             |error| {
@@ -1588,13 +1588,6 @@ fn estimated_tensor_allocation_bytes(
             info.name, dtype
         ))),
     }
-}
-
-fn presplit_requested() -> bool {
-    matches!(
-        std::env::var("EMBER_PRESPLIT").as_deref(),
-        Ok("1") | Ok("true") | Ok("yes")
-    )
 }
 
 /// Encoded byte length of `element_count` values of a GGUF dtype.

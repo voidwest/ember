@@ -41,13 +41,6 @@ pub struct AudioEncoderConfig {
     pub layer_norm_eps: f32,
 }
 
-impl AudioEncoderConfig {
-    /// Encoder output frames for `mel_frames` input frames.
-    pub fn out_frames(&self, mel_frames: usize) -> usize {
-        mel_frames.div_ceil(2)
-    }
-}
-
 /// One pre-norm Whisper encoder layer.
 pub struct AudioEncoderLayer {
     self_attn_layer_norm: LayerNorm<CpuBackend>,
@@ -935,17 +928,6 @@ impl AudioModel {
                 rms_eps: 1e-6,
             },
         })
-    }
-
-    /// Encode + project: mel `[n_mels, T]` -> `[ceil(ceil(T/2)/8), llm_width]`.
-    pub fn encode_and_project(
-        &self,
-        backend: &CpuBackend,
-        mel: &CpuTensor,
-    ) -> Result<(CpuTensor, AudioTrace), CpuError> {
-        let (encoder_out, trace) = self.encoder.encode_traced(backend, mel)?;
-        let projected = self.projector.forward(backend, &encoder_out)?;
-        Ok((projected, trace))
     }
 }
 

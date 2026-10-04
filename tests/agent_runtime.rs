@@ -50,7 +50,7 @@ fn basic_registry() -> ToolRegistry {
     ]);
     registry_of(vec![
         Arc::new(CalculatorTool),
-        Arc::new(LookupFixtureTool::from_map(fixtures)),
+        Arc::new(LookupFixtureTool::new(fixtures)),
         Arc::new(EchoTool),
     ])
 }
@@ -783,7 +783,7 @@ fn replay_reexecutes_recorded_calls_and_verifies_digests() {
     ];
     let fixtures = std::collections::BTreeMap::from([("alpha".to_string(), "42".to_string())]);
     let registry = registry_of(vec![
-        Arc::new(LookupFixtureTool::from_map(fixtures)),
+        Arc::new(LookupFixtureTool::new(fixtures)),
         Arc::new(WriteArtifactTool),
         Arc::new(FailTool),
     ]);

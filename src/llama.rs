@@ -389,10 +389,6 @@ impl LlamaConfig {
 ///
 /// reference: llama paper (touvron et al. 2023) section 3.3, the palm paper's
 /// swiglu variant (shazeer 2020).
-// NOTE: generic <B: Backend> model structs are used by the eager forward
-// path via Llama::<CpuBackend>; the former #[allow(dead_code)] was removed
-// in the Luminal-review cleanup because the structs are constructed
-// (LlamaAttention::new_shared etc.) and reachable.
 pub struct LlamaMlp<B: Backend> {
     /// gate projection (input -> 8/3 * input for standard llama)
     pub(crate) gate_proj: Linear<B>,
@@ -581,10 +577,6 @@ impl<B: Backend> LlamaMlp<B> {
 ///   - llama.cpp's attention in `llama-arch.cpp` - the gold standard
 ///     for a working reference that handles all the edge cases
 ///   - huggingface `LlamaAttention` for the pure-python reference
-// NOTE: generic <B: Backend> model structs are used by the eager forward
-// path via Llama::<CpuBackend>; the former #[allow(dead_code)] was removed
-// in the Luminal-review cleanup because the structs are constructed
-// (LlamaAttention::new_shared etc.) and reachable.
 pub struct LlamaAttention<B: Backend> {
     /// query projection (no bias)
     pub(crate) q_proj: Linear<B>,
@@ -1290,10 +1282,6 @@ impl<B: Backend> LlamaAttention<B> {
 ///   `blk.{i}.attn_norm.weight` -> rms_norm weight for attention
 ///   `blk.{i}.ffn_norm.weight`  -> rms_norm weight for mlp
 ///   (no bias tensors - rms norm has no bias parameter)
-// NOTE: generic <B: Backend> model structs are used by the eager forward
-// path via Llama::<CpuBackend>; the former #[allow(dead_code)] was removed
-// in the Luminal-review cleanup because the structs are constructed
-// (LlamaAttention::new_shared etc.) and reachable.
 pub struct LlamaBlock<B: Backend> {
     /// pre-attention rms normalization weight
     ///

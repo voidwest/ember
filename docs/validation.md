@@ -210,7 +210,7 @@ F1-F5 with hook-driven defusion).
   tensor.
 - **Gate D (memory)**: packed K-quant weights stay mmap-resident on the
   planned path (no eager expansion); the scratch arena is a named, reusable
-  allocation reported by `inspect-plan` and the arena report.
+  allocation reported by `inspect-plan`.
 - **Gate E (allocation)**: after warmup, the planned decode loop performs
   zero heap allocations per token other than the documented logits tensor
   materialization (3: shape + strides + data), verified on the real model

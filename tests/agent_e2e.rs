@@ -104,7 +104,7 @@ fn real_model_uses_the_weather_fixture_tool() {
         ("lisbon".to_string(), "27 C".to_string()),
     ]);
     let registry = ToolRegistry::builder()
-        .register(Arc::new(LookupFixtureTool::from_map(fixtures)))
+        .register(Arc::new(LookupFixtureTool::new(fixtures)))
         .unwrap()
         .register(Arc::new(CalculatorTool))
         .unwrap()

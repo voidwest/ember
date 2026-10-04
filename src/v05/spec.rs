@@ -456,13 +456,6 @@ impl RawExperimentSpec {
         Ok(spec)
     }
 
-    /// Parse a strict TOML document from a file.
-    pub fn from_toml_path(path: &std::path::Path) -> Result<RawExperimentSpec, SpecError> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|error| SpecError::at("<file>", format!("cannot read {path:?}: {error}")))?;
-        Self::from_toml_str(&text)
-    }
-
     /// Validate the schema identifier and resolve all defaults.
     pub fn resolve(self) -> Result<ExperimentSpecV1, SpecError> {
         check_schema_version(&self.schema)?;

@@ -363,7 +363,6 @@ impl OuteTts {
         // token ids must exist inside the model's embedding table; the
         // largest mapped id is a code token far below any table bound, and
         // encode-time failures fail closed anyway.
-        let _ = llm.config.embed_dim;
 
         let codec = WavTokenizerDecoder::from_gguf(codec_path)?;
 
@@ -453,11 +452,9 @@ impl OuteTts {
             self.llm.config.embed_dim,
         )?;
         let start_pos = 0usize;
-        let budget = prompt_ids.len() + max_tokens;
         let mut cache = self
             .llm
             .create_request_cache(backend, prompt_ids.len(), max_tokens);
-        let _ = budget;
         let mut logits = self
             .llm
             .forward_last_logits_embeddings_with_cache(backend, &emb, &mut cache, start_pos)?;
@@ -466,13 +463,11 @@ impl OuteTts {
         // greedy loop
         let t_gen = Instant::now();
         let mut ids: Vec<u32> = Vec::new();
-        let mut stopped = false;
         while ids.len() < max_tokens {
             let best = crate::sampler::argmax_token(backend.data(&logits));
             let best = u32::try_from(best)?;
             ids.push(best);
             if !on_token(best) || best == self.audio_end_id || self.eos_ids.contains(&best) {
-                stopped = true;
                 break;
             }
             logits = self.llm.forward_last_logits_with_cache(
@@ -482,7 +477,6 @@ impl OuteTts {
                 prompt_ids.len() + ids.len() - 1,
             )?;
         }
-        let _ = stopped;
         timings.generate_ms = t_gen.elapsed().as_secs_f64() * 1e3;
         timings.n_tokens = ids.len();
 
@@ -495,7 +489,6 @@ impl OuteTts {
             self.codec.decode(backend, &codes)?
         };
         timings.codec_ms = t_codec.elapsed().as_secs_f64() * 1e3;
-        let _ = t_all;
         Ok((pcm, ids, timings))
     }
 
@@ -552,7 +545,6 @@ impl OuteTts {
         let mut emitted_samples = 0usize;
         let mut last_emitted_code = 0usize;
         let mut first_audio = false;
-        let mut cancelled = false;
         let sr = self.codec.config.sample_rate;
         let spt = self.codec.config.hop_length as f64;
         let stable_margin_codes = effective_stable_margin();
@@ -587,7 +579,6 @@ impl OuteTts {
                 if std::env::var("EMBER_CONVERSE_DBG").is_ok() {
                     eprintln!("LOOPDBG cancel-at {}", ids.len());
                 }
-                cancelled = true;
                 break;
             }
             let done = best == self.audio_end_id
@@ -713,7 +704,6 @@ impl OuteTts {
                     first_audio = true;
                 }
                 if (!meta.pcm.is_empty() || meta.final_chunk || has_revision) && !on_chunk(meta) {
-                    cancelled = true;
                     break;
                 }
             }
@@ -750,7 +740,6 @@ impl OuteTts {
         for (band, (sum, count)) in drift_acc.iter().enumerate() {
             timings.drift_by_distance[band] = if *count > 0 { sum / *count as f64 } else { 0.0 };
         }
-        let _ = cancelled;
         Ok((pcm_full, ids, timings))
     }
 }

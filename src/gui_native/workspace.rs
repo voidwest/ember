@@ -13,7 +13,7 @@ use super::form::FormValues;
 use super::theme::{Radius, Space, Type};
 use super::{
     model_display_name, operation_explainer, operation_label, per_layer, site_contract_name,
-    site_label, token_label, Colors, ComboId, Console, ExperimentComparison, Status,
+    site_label, Colors, ComboId, Console, ExperimentComparison, Status,
 };
 use crate::gui::LayerMetric;
 use gpui_kit::component::{
@@ -906,15 +906,4 @@ impl Console {
                 )),
         )
     }
-}
-
-/// Used by the model line in the setup pane and by tests.
-#[allow(dead_code)]
-pub(super) fn model_line(path: &str) -> String {
-    model_display_name(path)
-}
-
-#[allow(dead_code)]
-pub(super) fn token_line(token: &str) -> &'static str {
-    token_label(token)
 }

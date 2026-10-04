@@ -246,6 +246,68 @@ pub(crate) fn write_json_file(path: &str, value: &serde_json::Value) -> anyhow::
     Ok(())
 }
 
+/// Write `values` as raw little-endian f32 to `dir/<name>.bin` (the
+/// progressive-validation dump layout the reference scripts read).
+pub(crate) fn write_f32_bin(dir: &Path, name: &str, values: &[f32]) -> anyhow::Result<()> {
+    let bytes: Vec<u8> = values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    fs::write(dir.join(format!("{name}.bin")), bytes)?;
+    Ok(())
+}
+
+/// [`write_f32_bin`] for a tensor, recording its shape for the dump manifest.
+pub(crate) fn write_bin(
+    dir: &Path,
+    name: &str,
+    tensor: &ember::tensor::CpuTensor,
+    shapes: &mut Vec<(String, Vec<usize>)>,
+) -> anyhow::Result<()> {
+    write_f32_bin(dir, name, tensor.data())?;
+    shapes.push((name.to_string(), tensor.shape().to_vec()));
+    Ok(())
+}
+
+/// Replay greedy decode from prefilled `embeddings` on a fresh cache, returning
+/// every step's `[vocab]` logits (step 0 is the prefill's last position, as
+/// in the reference `generate()`) and `vocab`. Stops after an EOS token or
+/// `max_tokens` steps.
+pub(crate) fn greedy_step_logits(
+    llm: &ember::llama::Llama<ember::backend::CpuBackend>,
+    backend: &ember::backend::CpuBackend,
+    eos_ids: &[u32],
+    embeddings: &ember::tensor::CpuTensor,
+    prompt_len: usize,
+    max_tokens: usize,
+) -> anyhow::Result<(Vec<f32>, usize)> {
+    use ember::backend::Backend;
+    use ember::model::ForwardModel;
+    let mut cache = llm.create_request_cache(backend, prompt_len, max_tokens);
+    let vocab = llm.vocab_size(backend);
+    let mut step_logits: Vec<f32> = Vec::new();
+    let mut logits =
+        llm.forward_last_logits_embeddings_with_cache(backend, embeddings, &mut cache, 0)?;
+    for step in 0..max_tokens {
+        let data = backend.data(&logits);
+        step_logits.extend_from_slice(&data[..vocab]);
+        let best = ember::sampler::argmax_token(data);
+        let best = u32::try_from(best)?;
+        if eos_ids.contains(&best) {
+            break;
+        }
+        if step + 1 < max_tokens {
+            logits = llm.forward_last_logits_with_cache(
+                backend,
+                &[best],
+                &mut cache,
+                prompt_len + step,
+            )?;
+        }
+    }
+    Ok((step_logits, vocab))
+}
+
 /// Derive a JSON sidecar next to an output without treating every occurrence
 /// of `.npy` in the path as a suffix.
 pub(crate) fn sidecar_path(output_path: &str, suffix: &str) -> anyhow::Result<String> {

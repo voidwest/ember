@@ -40,14 +40,6 @@ pub enum HalfDtype {
 }
 
 impl HalfDtype {
-    /// The GGML dtype code.
-    pub fn ggml_code(self) -> u32 {
-        match self {
-            Self::F16 => 1,
-            Self::Bf16 => 30,
-        }
-    }
-
     /// Lower-case dtype name as GGUF tooling prints it.
     pub fn name(self) -> &'static str {
         match self {

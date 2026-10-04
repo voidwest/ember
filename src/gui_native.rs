@@ -125,25 +125,13 @@ pub(crate) struct NativeGuiArgs {
     render_test_dir: Option<std::path::PathBuf>,
 }
 
-/// The v0.4 hook stage ids (from Ember's own hook definitions), in order.
-const STAGES: [&str; 6] = [
-    "before-layer",
-    "after-attention",
-    "after-mlp",
-    "after-layer",
-    "before-logits",
-    "after-logits",
-];
-const PER_LAYER_STAGES: [&str; 4] = [
-    "before-layer",
-    "after-attention",
-    "after-mlp",
-    "after-layer",
-];
 const EXECUTIONS: [&str; 3] = ["reference", "planned", "planned-fused"];
 
+/// Whether the hook stage id carries a per-layer tensor.
 fn per_layer(site: &str) -> bool {
-    PER_LAYER_STAGES.contains(&site)
+    ember::v05::hook::SemanticHookSite::ALL
+        .iter()
+        .any(|hook| hook.stage_id() == site && hook.is_per_layer())
 }
 
 fn operation_label(operation: &str) -> &'static str {
@@ -717,7 +705,10 @@ impl Console {
         .map(|combo| {
             let options = match combo {
                 ComboId::Model => models.clone(),
-                ComboId::Site => STAGES.iter().map(|s| s.to_string()).collect(),
+                ComboId::Site => crate::gui::hook_stages()
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
                 ComboId::Op => ["replace", "zero", "scale", "interpolate", "add-delta"]
                     .iter()
                     .map(|s| s.to_string())
@@ -749,7 +740,10 @@ impl Console {
             model_sizes: Default::default(),
             model_path,
             selected_model: None,
-            site_options: STAGES.iter().map(|s| s.to_string()).collect(),
+            site_options: crate::gui::hook_stages()
+                .into_iter()
+                .map(String::from)
+                .collect(),
             site: "after-mlp".to_string(),
             layer,
             op: "scale".to_string(),

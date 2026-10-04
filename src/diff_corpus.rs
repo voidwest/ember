@@ -58,7 +58,6 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
@@ -848,9 +847,7 @@ fn save_crash(
     report: &SideReport,
 ) -> anyhow::Result<()> {
     let bytes = std::fs::read(blob_path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let digest = format!("{:x}", hasher.finalize());
+    let digest = crate::extraction::sha256_bytes(&bytes);
     let short = digest[..16].to_string();
     let key = (report.runtime.clone(), short.clone());
     {

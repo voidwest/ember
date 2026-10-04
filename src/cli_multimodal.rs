@@ -1,10 +1,11 @@
 //! `ember multimodal`: image-conditioned generation and validation dumps
 //! for the first image-capable model (SmolVLM-256M-Instruct).
 
+use crate::cli_support::{greedy_step_logits, write_bin, write_f32_bin};
 use crate::Args;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use ember::backend::{Backend, CpuBackend};
+use ember::backend::CpuBackend;
 use ember::smolvlm::{MultimodalTimings, SmolVlm};
 use ember::tokenizer::EmberTokenizer;
 use std::path::PathBuf;
@@ -88,14 +89,7 @@ pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) 
         "prompt has {placeholders} <image> placeholders but {} --image flags were given",
         command.image.len()
     );
-    let parts: Vec<ember::multimodal::ContentPart> =
-        std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
-            .chain(command.image.iter().map(|p| {
-                ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
-                    std::path::PathBuf::from(p),
-                ))
-            }))
-            .collect();
+    let parts = image_parts(&prompt, &command.image);
     let mut generated = Vec::new();
     let mut text = String::new();
     let mut last_timings = MultimodalTimings::default();
@@ -144,6 +138,17 @@ pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) 
         dump_validation_artifacts(&model, &backend, &tokenizer, command, &prompt, dir)?;
     }
     Ok(())
+}
+
+/// The prompt text followed by every `--image`, in binding order.
+fn image_parts(prompt: &str, images: &[String]) -> Vec<ember::multimodal::ContentPart> {
+    std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
+        .chain(images.iter().map(|p| {
+            ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
+                PathBuf::from(p),
+            ))
+        }))
+        .collect()
 }
 
 /// One traced pass over the whole multimodal input pipeline, printing
@@ -239,18 +244,10 @@ fn dump_validation_artifacts(
     prompt: &str,
     dir: &std::path::Path,
 ) -> Result<()> {
-    use ember::model::ForwardModel;
     std::fs::create_dir_all(dir)?;
 
     let (trace, sequence) = {
-        let parts: Vec<ember::multimodal::ContentPart> =
-            std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
-                .chain(command.image.iter().map(|p| {
-                    ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
-                        std::path::PathBuf::from(p),
-                    ))
-                }))
-                .collect();
+        let parts = image_parts(prompt, &command.image);
         model.build_inputs_parts(backend, tokenizer, &parts, 0)?
     };
 
@@ -337,59 +334,20 @@ fn dump_validation_artifacts(
     write_bin(dir, "7_first_logits", &logits, &mut shapes)?;
 
     // 8. greedy generation ids + per-step logits (for near-tie analysis)
-    let parts: Vec<ember::multimodal::ContentPart> =
-        std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
-            .chain(command.image.iter().map(|p| {
-                ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
-                    std::path::PathBuf::from(p),
-                ))
-            }))
-            .collect();
+    let parts = image_parts(prompt, &command.image);
     let (generated, text, timings) =
         model.generate_with_parts(backend, tokenizer, &parts, command.max_tokens)?;
-    {
-        // replay the decode loop on a fresh cache to capture step logits.
-        // Step 0 is the prefill's last-position logits; subsequent steps
-        // decode generated tokens (matching the reference generate()).
-        let mut cache =
-            model
-                .llm
-                .create_request_cache(backend, trace.input_ids.len(), command.max_tokens);
-        let eos_ids = tokenizer.eos_token_ids();
-        let vocab = model.llm.vocab_size(backend);
-        let mut step_logits: Vec<f32> = Vec::new();
-        let start_pos = trace.input_ids.len();
-        let mut logits = model.llm.forward_last_logits_embeddings_with_cache(
-            backend,
-            &sequence.embeddings,
-            &mut cache,
-            0,
-        )?;
-        for step in 0..command.max_tokens {
-            let data = backend.data(&logits);
-            step_logits.extend_from_slice(&data[..vocab]);
-            let best = ember::sampler::argmax_token(data);
-            let best = u32::try_from(best)?;
-            if eos_ids.contains(&best) {
-                break;
-            }
-            if step + 1 < command.max_tokens {
-                logits = model.llm.forward_last_logits_with_cache(
-                    backend,
-                    &[best],
-                    &mut cache,
-                    start_pos + step,
-                )?;
-            }
-        }
-        let mut bytes = Vec::with_capacity(step_logits.len() * 4);
-        for v in &step_logits {
-            bytes.extend(v.to_le_bytes());
-        }
-        std::fs::write(dir.join("step_logits.bin"), &bytes)?;
-        let n_steps = step_logits.len() / vocab;
-        shapes.push(("step_logits".into(), vec![n_steps, vocab]));
-    }
+    // replay the decode loop on a fresh cache to capture step logits
+    let (step_logits, vocab) = greedy_step_logits(
+        &model.llm,
+        backend,
+        &tokenizer.eos_token_ids(),
+        &sequence.embeddings,
+        trace.input_ids.len(),
+        command.max_tokens,
+    )?;
+    write_f32_bin(dir, "step_logits", &step_logits)?;
+    shapes.push(("step_logits".into(), vec![step_logits.len() / vocab, vocab]));
     let manifest = serde_json::json!({
         "model": command.model,
         "mmproj": command.mmproj,
@@ -426,20 +384,5 @@ fn dump_validation_artifacts(
         serde_json::to_string_pretty(&manifest)?,
     )?;
     println!("validation artifacts written to {}", dir.display());
-    Ok(())
-}
-
-fn write_bin(
-    dir: &std::path::Path,
-    name: &str,
-    tensor: &ember::tensor::CpuTensor,
-    shapes: &mut Vec<(String, Vec<usize>)>,
-) -> Result<()> {
-    let mut bytes = Vec::with_capacity(tensor.len() * 4);
-    for v in tensor.data() {
-        bytes.extend(v.to_le_bytes());
-    }
-    std::fs::write(dir.join(format!("{name}.bin")), &bytes)?;
-    shapes.push((name.to_string(), tensor.shape().to_vec()));
     Ok(())
 }
