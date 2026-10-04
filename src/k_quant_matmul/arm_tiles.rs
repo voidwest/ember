@@ -139,10 +139,19 @@ pub(super) unsafe fn q4_tile<const C: usize>(
             let x = activation.qs.as_ptr();
             let mut total = [vdupq_n_s32(0); C];
             let mut correction = [vdupq_n_s32(0); C];
-            let mut header = [([0u8; 8], [0u8; 8]); C];
-            for (c, unpacked) in header.iter_mut().enumerate() {
+            // Per column: scales and mins widened to i32, four per vector.
+            let mut header = [[vdupq_n_s32(0); 4]; C];
+            for (c, widened) in header.iter_mut().enumerate() {
                 let block = &weights[c * row_bytes + b * Q4_K_BLOCK_BYTES..][..16];
-                *unpacked = unpack_k4_scales(&block[4..16]);
+                let (scales, mins) = unpack_k4_scales(&block[4..16]);
+                let scales16 = vmovl_u8(vld1_u8(scales.as_ptr()));
+                let mins16 = vmovl_u8(vld1_u8(mins.as_ptr()));
+                *widened = [
+                    vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(scales16))),
+                    vreinterpretq_s32_u32(vmovl_high_u16(scales16)),
+                    vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(mins16))),
+                    vreinterpretq_s32_u32(vmovl_high_u16(mins16)),
+                ];
             }
             for g in 0..4 {
                 let mut lo = [vdupq_n_s32(0); C];
@@ -163,19 +172,19 @@ pub(super) unsafe fn q4_tile<const C: usize>(
                     }
                 }
                 for c in 0..C {
-                    let (scales, _) = header[c];
-                    total[c] = vmlaq_n_s32(total[c], lo[c], i32::from(scales[2 * g]));
-                    total[c] = vmlaq_n_s32(total[c], hi[c], i32::from(scales[2 * g + 1]));
+                    let scales = header[c][g / 2];
+                    total[c] = super::arm::mla_lane(total[c], lo[c], scales, (2 * g) % 4);
+                    total[c] = super::arm::mla_lane(total[c], hi[c], scales, (2 * g + 1) % 4);
                 }
             }
             let row_d = vld1q_f32(activation.d.as_ptr());
             for c in 0..C {
-                let (_, mins) = header[c];
-                for (s, &min) in mins.iter().enumerate() {
-                    correction[c] = vmlaq_n_s32(
+                for s in 0..QK_K / 32 {
+                    correction[c] = super::arm::mla_lane(
                         correction[c],
                         vld1q_s32(activation.pair_sums[s].as_ptr()),
-                        i32::from(min),
+                        header[c][2 + s / 4],
+                        s % 4,
                     );
                 }
                 let block = &weights[c * row_bytes + b * Q4_K_BLOCK_BYTES..][..4];
@@ -216,11 +225,24 @@ pub(super) unsafe fn q6_tile<const C: usize>(
     // 192..208. `x` points at the 1024 interleaved quants of a `Q8K4Block`;
     // `dot16` reads 64 bytes from at most offset `4 * 240`.
     unsafe {
-        let mask = vdupq_n_u8(15);
-        let high_mask = vdupq_n_u8(48);
+        let six = vdupq_n_u8(63);
+        let bias = vdupq_n_s8(32);
         for (b, activation) in group.iter().enumerate() {
             let x = activation.qs.as_ptr();
             let mut total = [vdupq_n_s32(0); C];
+            // Sixteen sign-extended scales per column, four per vector.
+            let mut sc = [[vdupq_n_s32(0); 4]; C];
+            for (c, scales) in sc.iter_mut().enumerate() {
+                let block = weights.as_ptr().add(c * row_bytes + b * Q6_K_BLOCK_BYTES);
+                let scales8 = vld1q_s8(block.add(192).cast::<i8>());
+                let s16 = [vmovl_s8(vget_low_s8(scales8)), vmovl_high_s8(scales8)];
+                *scales = [
+                    vmovl_s16(vget_low_s16(s16[0])),
+                    vmovl_high_s16(s16[0]),
+                    vmovl_s16(vget_low_s16(s16[1])),
+                    vmovl_high_s16(s16[1]),
+                ];
+            }
             for half in 0..2 {
                 for j in [0, 16] {
                     for c in 0..C {
@@ -228,19 +250,20 @@ pub(super) unsafe fn q6_tile<const C: usize>(
                         let l0 = vld1q_u8(block.add(half * 64 + j));
                         let l1 = vld1q_u8(block.add(half * 64 + 32 + j));
                         let h = vld1q_u8(block.add(128 + half * 32 + j));
+                        let h2 = vshrq_n_u8::<2>(h);
+                        // Same bytes as masking and or-ing the high bits in.
                         let quants = [
-                            vorrq_u8(vandq_u8(l0, mask), vandq_u8(vshlq_n_u8::<4>(h), high_mask)),
-                            vorrq_u8(vandq_u8(l1, mask), vandq_u8(vshlq_n_u8::<2>(h), high_mask)),
-                            vorrq_u8(vshrq_n_u8::<4>(l0), vandq_u8(h, high_mask)),
-                            vorrq_u8(vshrq_n_u8::<4>(l1), vandq_u8(vshrq_n_u8::<2>(h), high_mask)),
+                            vandq_u8(vsliq_n_u8::<4>(l0, h), six),
+                            vandq_u8(vsliq_n_u8::<4>(l1, h2), six),
+                            vandq_u8(vsriq_n_u8::<4>(h, l0), six),
+                            vandq_u8(vsriq_n_u8::<4>(h2, l1), six),
                         ];
                         for (segment, q) in quants.into_iter().enumerate() {
-                            let signed = vsubq_s8(vreinterpretq_s8_u8(q), vdupq_n_s8(32));
-                            let scale =
-                                *block.add(192 + half * 8 + segment * 2 + j / 16) as i8 as i32;
+                            let signed = vsubq_s8(vreinterpretq_s8_u8(q), bias);
+                            let s = half * 8 + segment * 2 + j / 16;
                             let element = half * 128 + segment * 32 + j;
                             let dot = dot16(vdupq_n_s32(0), x.add(4 * element), signed);
-                            total[c] = vmlaq_n_s32(total[c], dot, scale);
+                            total[c] = super::arm::mla_lane(total[c], dot, sc[c][s / 4], s % 4);
                         }
                     }
                 }

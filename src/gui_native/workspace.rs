@@ -140,6 +140,101 @@ impl Console {
         }
     }
 
+    /// Show a short confirmation bottom-right for a couple of seconds. A newer
+    /// one replaces it; the older timer then finds a different id and leaves
+    /// the newer toast alone.
+    pub(super) fn show_toast(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+        let id = self.toast.as_ref().map_or(1, |(_, id)| id + 1);
+        self.toast = Some((text.into(), id));
+        cx.notify();
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(2200))
+                    .await;
+                let _ = this.update(&mut cx, |console, cx| {
+                    if console
+                        .toast
+                        .as_ref()
+                        .is_some_and(|(_, current)| *current == id)
+                    {
+                        console.toast = None;
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Ask where to save an SVG drawing, write it there and confirm.
+    pub(super) fn save_svg(&mut self, name: &str, svg: String, cx: &mut Context<Self>) {
+        let directory = std::env::var_os("HOME")
+            .map(|home| std::path::PathBuf::from(home).join("Downloads"))
+            .filter(|path| path.is_dir())
+            .unwrap_or_else(std::env::temp_dir);
+        let answer = cx.prompt_for_new_path(&directory, Some(name));
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let Ok(Ok(Some(path))) = answer.await else {
+                    return;
+                };
+                let written = std::fs::write(&path, svg);
+                let _ = this.update(&mut cx, |console, cx| match written {
+                    Ok(()) => console.show_toast(
+                        format!(
+                            "Saved {}",
+                            path.file_name().map_or_else(
+                                || path.display().to_string(),
+                                |name| name.to_string_lossy().into_owned()
+                            )
+                        ),
+                        cx,
+                    ),
+                    Err(error) => {
+                        console.error = Some(format!("could not save the SVG: {error}"));
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// The toast, when there is one: bottom-right, above the content.
+    pub(super) fn toast_overlay(&self, colors: &Colors) -> Option<AnyElement> {
+        let (text, id) = self.toast.as_ref()?;
+        let card = div()
+            .absolute()
+            .bottom(px(Space::XL))
+            .right(px(Space::XL))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(Space::SM))
+            .px(px(Space::LG))
+            .py(px(Space::SM))
+            .rounded(px(Radius::LG))
+            .bg(colors.surface_raised)
+            .border_1()
+            .border_color(colors.border_strong)
+            .shadow_md()
+            .child(div().size(px(6.0)).rounded_full().bg(colors.ok))
+            .child(label(text.clone(), Type::LABEL, colors.text));
+        Some(if cfg!(feature = "gui-tests") {
+            card.into_any_element()
+        } else {
+            card.with_animation(
+                SharedString::from(format!("toast-in-{id}")),
+                Animation::new(std::time::Duration::from_millis(160)),
+                |card, delta| card.opacity(delta),
+            )
+            .into_any_element()
+        })
+    }
+
     pub(super) fn clear_reference(&mut self, cx: &mut Context<Self>) {
         self.reference = None;
         cx.notify();

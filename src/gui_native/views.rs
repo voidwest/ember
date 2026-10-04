@@ -1964,8 +1964,38 @@ impl Console {
         let export = text_button(
             "copy-layer-csv",
             "Copy CSV",
-            cx.listener(move |_console, _: &ClickEvent, _window, cx| {
+            cx.listener(move |console, _: &ClickEvent, _window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(csv.clone()));
+                console.show_toast("Copied the layer table as CSV", cx);
+            }),
+        );
+        // A drawing of the chart for slides and papers, in the current theme.
+        let svg = {
+            let change = self
+                .result_context
+                .as_ref()
+                .map(super::workspace::change_summary)
+                .unwrap_or_default();
+            chart::layers_svg(
+                &self.layer_series,
+                self.reference
+                    .as_ref()
+                    .map(|reference| &reference.layers[..]),
+                self.intervention_layer_for_result(),
+                chart::SvgLabels {
+                    title: "Representation divergence by layer",
+                    subtitle: &change,
+                    x_axis: "Transformer layer",
+                    y_axis: "Relative L2 difference from baseline",
+                },
+                colors,
+            )
+        };
+        let save_svg = text_button(
+            "save-layer-svg",
+            "Save SVG",
+            cx.listener(move |console, _: &ClickEvent, _window, cx| {
+                console.save_svg("ember-layers.svg", svg.clone(), cx);
             }),
         );
         panel(
@@ -1995,6 +2025,7 @@ impl Console {
                                 )),
                         )
                         .child(div().w_full())
+                        .child(save_svg)
                         .child(export),
                 )
                 .child(chart::layer_divergence_chart(
@@ -2309,7 +2340,7 @@ impl Console {
                                 if let Some(markdown) = console.result_markdown() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(markdown));
                                     console.copied = true;
-                                    cx.notify();
+                                    console.show_toast("Copied the summary as Markdown", cx);
                                 }
                             }),
                         ))
@@ -2349,6 +2380,7 @@ impl Console {
                                 if self.reference.is_some() { "Re-pin reference" } else { "Pin as reference" },
                                 cx.listener(|console, _: &ClickEvent, _window, cx| {
                                     console.pin_reference(cx);
+                                    console.show_toast("Pinned as the reference for the next run", cx);
                                 }),
                             ))
                             .child(text_button(
@@ -2563,6 +2595,16 @@ impl Console {
                     )
             }
             Some(_out) => div().child(label("(empty output)", Type::SUBSECTION, colors.text_faint)),
+            // While the run is in flight the pane shows the shape of the text
+            // to come rather than a sentence about it.
+            None if self.busy() => div()
+                .pt(px(Space::XS))
+                .child(super::skeleton::skeleton_text(
+                    &format!("output-skeleton-{title}"),
+                    3,
+                    14.0,
+                    colors.selection.into(),
+                )),
             None => div().child(label(
                 "no run yet \u{2014} outputs appear here",
                 Type::META,
@@ -2778,6 +2820,7 @@ impl Render for Console {
             .when(self.statusbar_needed(), |shell| {
                 shell.child(statusbar.flex_none())
             })
+            .children(self.toast_overlay(&colors))
             .when(self.palette_open, |shell| {
                 shell.child(self.palette_overlay(&colors, cx))
             })

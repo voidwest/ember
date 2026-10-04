@@ -15,6 +15,8 @@ struct ChartPaint {
     grid: Vec<Path<Pixels>>,
     series: Option<Path<Pixels>>,
     reference: Option<Path<Pixels>>,
+    /// A hairline at the hovered layer, so the readout has a place on the axis.
+    crosshair: Option<Path<Pixels>>,
     intervention: Option<Path<Pixels>>,
     points: Vec<(usize, Point<Pixels>)>,
 }
@@ -153,6 +155,7 @@ pub(super) fn layer_divergence_chart_with(
     let marker_color = Hsla::from(colors.accent).opacity(0.82);
     let point_color = colors.accent;
     let reference_color = Hsla::from(colors.text_muted).opacity(0.85);
+    let crosshair_color = Hsla::from(colors.text_faint).opacity(0.6);
     let selected_color = colors.text;
     let metrics_for_geometry = metrics.clone();
     let metrics_for_mouse = metrics.clone();
@@ -213,6 +216,17 @@ pub(super) fn layer_divergence_chart_with(
                     builder.build().ok()
                 });
 
+            // The crosshair: a solid hairline at the layer under the pointer,
+            // after the line charts in Ely GPUI Components (charts/pointer.rs).
+            let crosshair = hovered_layer
+                .filter(|layer| *layer >= min_layer && *layer <= max_layer)
+                .and_then(|layer| {
+                    let x = x_for(layer);
+                    let mut builder = PathBuilder::stroke(px(1.0));
+                    builder.move_to(point(x, top));
+                    builder.line_to(point(x, bottom));
+                    builder.build().ok()
+                });
             let reference = reference_for_geometry.as_ref().and_then(|reference| {
                 let mut builder = PathBuilder::stroke(px(1.5)).dash_array(&[px(2.0), px(3.0)]);
                 let mut count = 0;
@@ -233,6 +247,7 @@ pub(super) fn layer_divergence_chart_with(
                 grid,
                 series,
                 reference,
+                crosshair,
                 intervention,
                 points,
             }
@@ -284,6 +299,9 @@ pub(super) fn layer_divergence_chart_with(
             }
             if let Some(path) = paint.intervention {
                 window.paint_path(path, marker_color);
+            }
+            if let Some(path) = paint.crosshair {
+                window.paint_path(path, crosshair_color);
             }
             if let Some(path) = paint.reference {
                 window.paint_path(path, reference_color);
@@ -421,9 +439,221 @@ pub(super) fn layer_divergence_chart_with(
         )
 }
 
+// ---------------------------------------------------------------------------
+// SVG export
+//
+// `hex`, `escaped` and the page layout (background, gridlines with labels in a
+// left gutter, marks, axis labels under the frame) are adapted from Ely GPUI
+// Components, `src/charts/export.rs` (MIT OR Apache-2.0; see `third_party/`).
+// ---------------------------------------------------------------------------
+
+/// A colour as SVG writes it, and its opacity apart.
+fn hex(color: Hsla) -> (String, f32) {
+    let rgba: Rgba = color.into();
+    let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
+    (
+        format!(
+            "#{:02x}{:02x}{:02x}",
+            byte(rgba.r),
+            byte(rgba.g),
+            byte(rgba.b)
+        ),
+        rgba.a,
+    )
+}
+
+/// Text safe inside SVG.
+fn escaped(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// What the exported chart shows, beyond the series itself.
+pub(super) struct SvgLabels<'a> {
+    pub title: &'a str,
+    pub subtitle: &'a str,
+    pub x_axis: &'a str,
+    pub y_axis: &'a str,
+}
+
+/// The layer chart as a standalone SVG drawing, for slides and papers: the
+/// series, an optional dashed second series, the intervention marker,
+/// gridlines and labelled axes, in the console's current colours.
+pub(super) fn layers_svg(
+    metrics: &[LayerMetric],
+    reference: Option<&[LayerMetric]>,
+    intervention: Option<usize>,
+    labels: SvgLabels<'_>,
+    colors: &Colors,
+) -> String {
+    use std::fmt::Write;
+    let (width, height) = (960.0f32, 520.0f32);
+    let (left, right, top, bottom) = (72.0f32, 32.0f32, 92.0f32, 72.0f32);
+    let (fx, fy, fw, fh) = (left, top, width - left - right, height - top - bottom);
+    let min_layer = metrics.first().map_or(0, |metric| metric.layer);
+    let max_layer = metrics.last().map_or(min_layer, |metric| metric.layer);
+    let span = max_layer.saturating_sub(min_layer).max(1) as f32;
+    let y_max = nice_max(
+        metrics
+            .iter()
+            .chain(reference.into_iter().flatten())
+            .filter_map(|metric| metric.relative_l2_difference)
+            .fold(0.0f64, f64::max),
+    );
+    let x_for = |layer: usize| fx + fw * (layer.saturating_sub(min_layer) as f32 / span);
+    let y_for = |value: f64| fy + fh - fh * (value / y_max).clamp(0.0, 1.0) as f32;
+    let (back, _) = hex(colors.canvas.into());
+    let (grid, _) = hex(colors.border_strong.into());
+    let (text, _) = hex(colors.text.into());
+    let (faint, _) = hex(colors.text_muted.into());
+    let (accent, _) = hex(colors.accent.into());
+    let (other, _) = hex(colors.text_muted.into());
+    let mut out = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" font-family="-apple-system, 'SF Pro Text', 'Noto Sans', sans-serif" font-size="13">"#
+    );
+    let _ = write!(
+        out,
+        r#"<rect width="{width}" height="{height}" fill="{back}"/>"#
+    );
+    let _ = write!(
+        out,
+        r#"<text x="{fx}" y="36" font-size="20" font-weight="600" fill="{text}">{}</text>"#,
+        escaped(labels.title)
+    );
+    let _ = write!(
+        out,
+        r#"<text x="{fx}" y="62" fill="{faint}">{}</text>"#,
+        escaped(labels.subtitle)
+    );
+    for step in 0..=4 {
+        let value = y_max * step as f64 / 4.0;
+        let y = y_for(value);
+        let _ = write!(
+            out,
+            r#"<line x1="{fx}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="{grid}" stroke-opacity="0.5" stroke-width="1"/>"#,
+            fx + fw
+        );
+        let _ = write!(
+            out,
+            r#"<text x="{:.1}" y="{:.1}" text-anchor="end" font-family="ui-monospace, 'SF Mono', monospace" font-size="12" fill="{faint}">{}</text>"#,
+            fx - 10.0,
+            y + 4.0,
+            escaped(&metric_label(value))
+        );
+    }
+    let step = ((max_layer - min_layer) / 16).max(1);
+    for layer in (min_layer..=max_layer).step_by(step) {
+        let _ = write!(
+            out,
+            r#"<text x="{:.1}" y="{:.1}" text-anchor="middle" font-family="ui-monospace, 'SF Mono', monospace" font-size="12" fill="{faint}">L{layer}</text>"#,
+            x_for(layer),
+            fy + fh + 22.0
+        );
+    }
+    let _ = write!(
+        out,
+        r#"<text x="{:.1}" y="{:.1}" text-anchor="middle" fill="{faint}">{}</text>"#,
+        fx + fw / 2.0,
+        height - 18.0,
+        escaped(labels.x_axis)
+    );
+    let _ = write!(
+        out,
+        r#"<text transform="translate(20 {:.1}) rotate(-90)" text-anchor="middle" fill="{faint}">{}</text>"#,
+        fy + fh / 2.0,
+        escaped(labels.y_axis)
+    );
+    if let Some(layer) = intervention.filter(|layer| *layer >= min_layer && *layer <= max_layer) {
+        let x = x_for(layer);
+        let _ = write!(
+            out,
+            r#"<line x1="{x:.1}" y1="{fy}" x2="{x:.1}" y2="{:.1}" stroke="{accent}" stroke-width="1.5" stroke-dasharray="4 3"/>"#,
+            fy + fh
+        );
+        let _ = write!(
+            out,
+            r#"<text x="{:.1}" y="{:.1}" fill="{accent}" font-size="12">intervention · L{layer}</text>"#,
+            x + 6.0,
+            fy + 14.0
+        );
+    }
+    let polyline = |series: &[LayerMetric]| {
+        series
+            .iter()
+            .filter_map(|metric| {
+                metric
+                    .relative_l2_difference
+                    .map(|value| format!("{:.1},{:.1}", x_for(metric.layer), y_for(value)))
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if let Some(reference) = reference {
+        let _ = write!(
+            out,
+            r#"<polyline points="{}" fill="none" stroke="{other}" stroke-width="1.5" stroke-dasharray="2 3"/>"#,
+            polyline(reference)
+        );
+    }
+    let _ = write!(
+        out,
+        r#"<polyline points="{}" fill="none" stroke="{accent}" stroke-width="2.5" stroke-linejoin="round"/>"#,
+        polyline(metrics)
+    );
+    for metric in metrics {
+        if let Some(value) = metric.relative_l2_difference {
+            let _ = write!(
+                out,
+                r#"<circle cx="{:.1}" cy="{:.1}" r="3.5" fill="{accent}"/>"#,
+                x_for(metric.layer),
+                y_for(value)
+            );
+        }
+    }
+    out.push_str("</svg>");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{metric_label, nice_max};
+
+    #[test]
+    fn the_svg_export_is_a_complete_drawing() {
+        let metrics: Vec<crate::gui::LayerMetric> = (0..4)
+            .map(|layer| crate::gui::LayerMetric {
+                layer,
+                relative_l2_difference: Some(layer as f64 * 0.1),
+                cosine_distance: None,
+                maximum_absolute_difference: None,
+                exact: false,
+            })
+            .collect();
+        let svg = super::layers_svg(
+            &metrics,
+            None,
+            Some(2),
+            super::SvgLabels {
+                title: "A & B",
+                subtitle: "<sub>",
+                x_axis: "Transformer layer",
+                y_axis: "relative L2",
+            },
+            &crate::gui_native::theme::dark(),
+        );
+        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
+        if let Some(path) = std::env::var_os("EMBER_SVG_DUMP") {
+            std::fs::write(path, &svg).unwrap();
+        }
+        assert!(
+            svg.contains("A &amp; B") && svg.contains("&lt;sub&gt;"),
+            "labels are escaped"
+        );
+        assert!(svg.contains("intervention · L2"));
+        assert_eq!(svg.matches("<circle").count(), 4);
+    }
 
     #[test]
     fn chart_range_handles_zero_and_non_finite_series() {
