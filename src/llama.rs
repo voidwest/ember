@@ -6394,6 +6394,58 @@ mod tests {
             .is_err());
         assert_eq!(cache.cursor(), 0);
         assert!(model.forward_decode_batch(&backend, &mut []).is_ok());
+
+        // A position that disagrees with the cursor, a full cache and a
+        // cache of the wrong geometry are errors, not panics.
+        let vocab = model.config.vocab_size;
+        let mut logits = vec![0.0f32; vocab];
+        let mut sequences = [DecodeBatchSequence {
+            token_id: 1,
+            cache: &mut cache,
+            start_pos: 3,
+            logits: &mut logits,
+        }];
+        let error = model
+            .forward_decode_batch(&backend, &mut sequences)
+            .unwrap_err();
+        assert!(error.to_string().contains("cursor"), "{error}");
+        let mut full = model.create_cache(&backend, 1);
+        let mut sequences = [DecodeBatchSequence {
+            token_id: 1,
+            cache: &mut full,
+            start_pos: 0,
+            logits: &mut logits,
+        }];
+        model
+            .forward_decode_batch(&backend, &mut sequences)
+            .unwrap();
+        assert_eq!(full.cursor(), 1);
+        let mut sequences = [DecodeBatchSequence {
+            token_id: 1,
+            cache: &mut full,
+            start_pos: 1,
+            logits: &mut logits,
+        }];
+        let error = model
+            .forward_decode_batch(&backend, &mut sequences)
+            .unwrap_err();
+        assert!(error.to_string().contains("full"), "{error}");
+        let mut wide = crate::kv_cache::KVCache::new(
+            model.blocks.len(),
+            model.config.n_kv_heads,
+            model.config.head_dim * 2,
+            8,
+        );
+        let mut sequences = [DecodeBatchSequence {
+            token_id: 1,
+            cache: &mut wide,
+            start_pos: 0,
+            logits: &mut logits,
+        }];
+        let error = model
+            .forward_decode_batch(&backend, &mut sequences)
+            .unwrap_err();
+        assert!(error.to_string().contains("KV heads"), "{error}");
     }
 }
 
