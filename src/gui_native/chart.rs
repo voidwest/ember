@@ -543,7 +543,7 @@ pub(super) fn layers_svg(
             escaped(&metric_label(value))
         );
     }
-    let step = ((max_layer - min_layer) / 16).max(1);
+    let step = (max_layer.saturating_sub(min_layer) / 16).max(1);
     for layer in (min_layer..=max_layer).step_by(step) {
         let _ = write!(
             out,

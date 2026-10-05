@@ -24,6 +24,42 @@ use gpui_kit::component::{button::Button, Disableable, Sizable};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+/// Untrusted text (model output, prompts, stored names) as one inline
+/// Markdown run: metacharacters escaped and line breaks folded, so it cannot
+/// add links, images, HTML or structure to wherever the summary is pasted.
+fn md_inline(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.trim().chars() {
+        match ch {
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '~' | '#' | '!' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// A run of `text`'s longest backtick sequence plus one, at least `min`.
+fn backtick_fence(text: &str, min: usize) -> String {
+    let longest = text.split(|ch| ch != '`').map(str::len).max().unwrap_or(0);
+    "`".repeat(min.max(longest + 1))
+}
+
+/// Untrusted multi-line text as a fenced block, rendered verbatim.
+fn md_block(label: &str, text: &str) -> String {
+    let fence = backtick_fence(text, 3);
+    format!("**{label}:**\n\n{fence}text\n{}\n{fence}\n", text.trim())
+}
+
+/// A path as an inline code span its own backticks cannot close.
+fn md_code(text: &str) -> String {
+    let fence = backtick_fence(text, 1);
+    format!("{fence} {} {fence}", text.replace(['\n', '\r'], " "))
+}
+
 /// The comparison as Markdown. `note` is a quoted line under the title (a
 /// reopened run, the sample); the bundle section appears when the
 /// intervention's bundle directory is on disk.
@@ -42,9 +78,9 @@ pub(super) fn experiment_markdown(
     }
     out.push_str(&format!(
         "- **Model:** {}\n",
-        model_display_name(&context.model_path)
+        md_inline(&model_display_name(&context.model_path))
     ));
-    out.push_str(&format!("- **Prompt:** {}\n", context.prompt.trim()));
+    out.push_str(&format!("- **Prompt:** {}\n", md_inline(&context.prompt)));
     out.push_str(&format!(
         "- **Change:** {} at layer {} ({}), affecting {}\n",
         operation_label(&context.op),
@@ -76,8 +112,10 @@ pub(super) fn experiment_markdown(
             "- **Peak divergence:** {value:.3} (relative L2) at layer {layer}\n"
         ));
     }
-    out.push_str(&format!("\n**Baseline:** {}\n\n", baseline.text.trim()));
-    out.push_str(&format!("**Intervention:** {}\n", intervention.text.trim()));
+    out.push('\n');
+    out.push_str(&md_block("Baseline", &baseline.text));
+    out.push('\n');
+    out.push_str(&md_block("Intervention", &intervention.text));
     if !layer_series.is_empty() {
         out.push_str("\n## Divergence by layer\n\n| layer | relative L2 | cosine distance |\n|---|---|---|\n");
         for metric in layer_series {
@@ -102,11 +140,12 @@ pub(super) fn experiment_markdown(
 }
 
 fn bundle_markdown(bundles: &RecordBundles) -> String {
+    let command = verify_command(bundles);
     format!(
-        "\n## Bundles\n\n- Baseline: `{}`\n- Intervention: `{}`\n\nCheck them with:\n\n```sh\n{}\n```\n",
-        bundles.baseline,
-        bundles.intervention,
-        verify_command(bundles)
+        "\n## Bundles\n\n- Baseline: {}\n- Intervention: {}\n\nCheck them with:\n\n{fence}sh\n{command}\n{fence}\n",
+        md_code(&bundles.baseline),
+        md_code(&bundles.intervention),
+        fence = backtick_fence(&command, 3),
     )
 }
 
@@ -118,7 +157,7 @@ fn shell_quote(path: &str) -> String {
 /// The CLI command that verifies both of a run's bundles.
 pub(super) fn verify_command(bundles: &RecordBundles) -> String {
     format!(
-        "ember experiment verify {} && ember experiment verify {}",
+        "ember experiment verify -- {} && ember experiment verify -- {}",
         shell_quote(&bundles.baseline),
         shell_quote(&bundles.intervention)
     )
@@ -139,15 +178,15 @@ pub(super) fn record_markdown(record: &RunRecord) -> String {
         ),
         None => {
             let mut out = format!("# Ember experiment\n\n> {note}\n\n");
-            out.push_str(&format!("- **Model:** {}\n", record.model));
-            out.push_str(&format!("- **Prompt:** {}\n", record.prompt.trim()));
+            out.push_str(&format!("- **Model:** {}\n", md_inline(&record.model)));
+            out.push_str(&format!("- **Prompt:** {}\n", md_inline(&record.prompt)));
             out.push_str(&format!(
                 "- **Change:** {}{} ({})\n\n",
-                record.intervention,
+                md_inline(&record.intervention),
                 record
                     .layer
                     .map_or_else(String::new, |layer| format!(" at layer {layer}")),
-                record.hook
+                md_inline(&record.hook)
             ));
             out.push_str("## Result\n\n");
             out.push_str(&format!(
@@ -173,11 +212,10 @@ pub(super) fn record_markdown(record: &RunRecord) -> String {
                 if record.verified { "yes" } else { "no" }
             ));
             if let Some(result) = &record.result {
-                out.push_str(&format!(
-                    "\n**Baseline:** {}\n\n**Intervention:** {}\n",
-                    result.baseline_text.trim(),
-                    result.intervention_text.trim()
-                ));
+                out.push('\n');
+                out.push_str(&md_block("Baseline", &result.baseline_text));
+                out.push('\n');
+                out.push_str(&md_block("Intervention", &result.intervention_text));
             }
             out
         }
@@ -190,6 +228,15 @@ pub(super) fn record_markdown(record: &RunRecord) -> String {
         out.push_str(&bundle_markdown(bundles));
     }
     out
+}
+
+/// What the export strip shows for one record, computed once per record and
+/// bundle location rather than on every frame (both probe the filesystem).
+pub(super) struct ExportCache {
+    number: u64,
+    bundles: Option<RecordBundles>,
+    markdown: String,
+    bundles_on_disk: Option<RecordBundles>,
 }
 
 impl Console {
@@ -232,6 +279,17 @@ impl Console {
                 return;
             }
         };
+        // The model path comes from the store file. Loading cannot be
+        // cancelled, so a FIFO or device there would block the worker (a
+        // missing file is reported by the worker as usual).
+        if std::fs::metadata(&config.model_path).is_ok_and(|metadata| !metadata.is_file()) {
+            self.export_note = Some(format!(
+                "Run #{number} cannot be re-run: {} is not a model file",
+                config.model_path
+            ));
+            cx.notify();
+            return;
+        }
         // The worker loads the run's model if it is not the resident one;
         // the console's view of the session then no longer holds.
         if self
@@ -279,8 +337,22 @@ impl Console {
         let number = self.export_run?;
         let record = self.export_record(number)?;
         let rebundling = self.rebundle == Some(number);
-        let markdown = record_markdown(record);
-        let bundles = record.bundles.clone().filter(RecordBundles::exist);
+        let (markdown, bundles) = {
+            let mut cache = self.export_cache.borrow_mut();
+            let fresh = cache
+                .as_ref()
+                .is_some_and(|cache| cache.number == number && cache.bundles == record.bundles);
+            if !fresh {
+                *cache = Some(ExportCache {
+                    number,
+                    bundles: record.bundles.clone(),
+                    markdown: record_markdown(record),
+                    bundles_on_disk: record.bundles.clone().filter(RecordBundles::exist),
+                });
+            }
+            let cache = cache.as_ref().expect("filled above");
+            (cache.markdown.clone(), cache.bundles_on_disk.clone())
+        };
         let can_rerun = record.config.is_some();
 
         let mut actions = div()
@@ -349,11 +421,21 @@ impl Console {
                 );
             }
             None if can_rerun => {
+                // Name what a re-run loads: the stored configuration is
+                // replayed as recorded.
+                let model = record.config.as_ref().map_or(String::new(), |config| {
+                    format!(
+                        " It loads {} (max {} tokens).",
+                        super::truncate_path_start(&config.model_path, 72),
+                        config.max_tokens
+                    )
+                });
                 bundle_line = if record.bundles.is_some() {
-                    "This run's bundle is no longer on disk. Re-run it to write a new, verifiable one.".to_string()
+                    format!(
+                        "This run's bundle is no longer on disk. Re-run it to write a new, verifiable one.{model}"
+                    )
                 } else {
-                    "No bundle was kept for this run. Re-run it to write a verifiable one."
-                        .to_string()
+                    format!("No bundle was kept for this run. Re-run it to write a verifiable one.{model}")
                 };
                 actions = actions.child(
                     Button::new("export-rebundle")
@@ -418,7 +500,26 @@ impl Console {
 
 #[cfg(test)]
 mod tests {
-    use super::{record_markdown, verify_command};
+    use super::{md_block, md_code, md_inline, record_markdown, verify_command};
+
+    #[test]
+    fn untrusted_text_cannot_add_markdown_structure() {
+        let hostile = "ok ![x](https://evil.example/p.png) [link](https://e) <b>hi</b>\n# head";
+        let inline = md_inline(hostile);
+        assert!(
+            !inline.contains("[link]") && !inline.contains("!["),
+            "{inline}"
+        );
+        assert!(!inline.contains('\n'));
+        assert!(!inline.contains("<b>"));
+        // A fenced block cannot be closed from inside.
+        let block = md_block("Baseline", "a ```` b\n````\n[x](y)");
+        let fence = "`````";
+        assert!(block.starts_with(&format!("**Baseline:**\n\n{fence}text\n")));
+        assert!(block.trim_end().ends_with(fence));
+        // Nor can a code span.
+        assert_eq!(md_code("a`b"), "`` a`b ``");
+    }
     use ember::app_store::{RecordBundles, RunRecord};
 
     #[test]
@@ -458,7 +559,7 @@ mod tests {
         });
         assert_eq!(
             command,
-            "ember experiment verify '/tmp/a b/base' && ember experiment verify '/tmp/it'\\''s'"
+            "ember experiment verify -- '/tmp/a b/base' && ember experiment verify -- '/tmp/it'\\''s'"
         );
     }
 }

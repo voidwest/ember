@@ -185,7 +185,7 @@ impl RunRecord {
     /// `true`; the timestamp is negated for the same reason. Written as a
     /// comparator-shaped key so `sort_by_key` can use it directly.
     pub fn sort_key(&self) -> (bool, i64) {
-        (!self.pinned, -self.finished_at)
+        (!self.pinned, self.finished_at.saturating_neg())
     }
 }
 
@@ -396,7 +396,7 @@ impl AppStore {
     /// reused number would make them act on the wrong row.
     pub fn next_run_number(&mut self) -> u64 {
         let highest_stored = self.runs.iter().map(|run| run.number).max().unwrap_or(0);
-        self.last_run_number = self.last_run_number.max(highest_stored) + 1;
+        self.last_run_number = self.last_run_number.max(highest_stored).saturating_add(1);
         self.last_run_number
     }
 
@@ -534,7 +534,7 @@ impl AppStore {
         for run in merged.runs.iter_mut().rev() {
             let key = run_key(run);
             if ours.contains(&key) && !theirs.contains(&key) && taken.contains(&run.number) {
-                next += 1;
+                next = next.saturating_add(1);
                 renumbered.push(Renumbered {
                     from: run.number,
                     to: next,
