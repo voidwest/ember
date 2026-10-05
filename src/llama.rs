@@ -1608,6 +1608,9 @@ pub struct Llama<B: Backend> {
     packing_ns: u64,
     /// Diagnostics: wall time spent building the interleaved lm-head layout.
     packing_interleaved_ns: u64,
+    /// Per-frequency-pair `rope_freqs.weight` factors (llama3-style RoPE
+    /// scaling) baked into the RoPE tables; `None` for uniform-theta RoPE.
+    rope_frequency_factors: Option<Vec<f32>>,
 }
 
 /// Existing Llama projection groups that can receive the packed Q8_0 decode
@@ -2713,6 +2716,7 @@ impl Llama<CpuBackend> {
             config.rope_theta,
             rope_factors.as_deref(),
         );
+        let rope_frequency_factors = rope_factors;
         log::debug!(
             "rope_cos shape: {:?}, rope_sin shape: {:?}",
             rope_cos.shape(),
@@ -2906,6 +2910,7 @@ impl Llama<CpuBackend> {
             decode_state: RefCell::new(None),
             packing_ns,
             packing_interleaved_ns,
+            rope_frequency_factors,
         };
         model.validate_loaded_shapes()?;
         model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
@@ -3353,6 +3358,12 @@ impl<B: Backend> Llama<B> {
 
     /// create a kv cache sized for this model's parameters.
     ///
+    /// The `rope_freqs.weight` factors applied to every RoPE frequency pair,
+    /// or `None` when the model uses plain uniform-theta RoPE.
+    pub fn rope_frequency_factors(&self) -> Option<&[f32]> {
+        self.rope_frequency_factors.as_deref()
+    }
+
     /// important difference from gpt-2: the cache allocates for
     /// `n_kv_heads` kv heads, not `n_heads` query heads.
     /// gqa repeats k/v during attention rather than storing duplicates.
@@ -4372,6 +4383,7 @@ mod tests {
             decode_state: RefCell::new(None),
             packing_ns: 0,
             packing_interleaved_ns: 0,
+            rope_frequency_factors: None,
         }
     }
 

@@ -90,7 +90,11 @@ at the architecture's configured side of RoPE. The manifest records:
 
 - adjacent-pair or split-half RoPE layout;
 - rotated dimension count and theta;
-- `uniform-theta` frequency layout;
+- `uniform-theta` frequency layout, plus the per-pair `frequency_factors`
+  for models that ship `rope_freqs.weight` (llama3-style scaling). Snapshots
+  written before Ember recorded the factors omit them even for such models;
+  compatibility checks accept a missing list, and the model-identity checks
+  still pin the exact model;
 - `absolute-zero-based` position origin;
 - `post-rope` stored-key state;
 - Q/K normalization order, tensor presence, and epsilon.

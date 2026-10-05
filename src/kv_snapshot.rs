@@ -87,6 +87,12 @@ pub struct KvRopeMetadata {
     /// Currently `uniform-theta`; future architecture-specific tables need a
     /// new independently meaningful identifier and metadata.
     pub frequency_layout: String,
+    /// Per-frequency-pair factors (`rope_freqs.weight`, llama3-style RoPE
+    /// scaling) applied on top of the uniform-theta frequencies, when the
+    /// model has them. Snapshots written before this field existed omit it
+    /// even for such models, so `None` means "uniform or not recorded".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_factors: Option<Vec<f32>>,
     pub position_origin: String,
     pub keys_state: String,
     pub qk_norm_order: KvQkNormOrder,
@@ -125,7 +131,31 @@ pub struct KvCompatibilityTarget {
     pub plan_hash: Option<String>,
 }
 
+/// Whether two RoPE descriptions agree on their frequency factors. A side
+/// that does not record them (snapshots that predate the field) is accepted;
+/// the model-identity checks still pin the actual model.
+pub(crate) fn frequency_factors_agree(left: &KvRopeMetadata, right: &KvRopeMetadata) -> bool {
+    match (&left.frequency_factors, &right.frequency_factors) {
+        (Some(left), Some(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(a, b)| a.to_bits() == b.to_bits())
+        }
+        _ => true,
+    }
+}
+
 impl KvCompatibilityTarget {
+    /// Record the model's RoPE frequency factors (see
+    /// [`crate::llama::Llama::rope_frequency_factors`]), which the execution
+    /// plan does not carry.
+    pub fn with_rope_frequency_factors(mut self, factors: Option<&[f32]>) -> Self {
+        self.rope.frequency_factors = factors.map(<[f32]>::to_vec);
+        self
+    }
+
     /// Build target metadata from the frozen v0.4 plan without changing that
     /// plan's schema.
     pub fn from_execution_plan(plan: &ExecutionPlan) -> anyhow::Result<Self> {
@@ -162,6 +192,7 @@ impl KvCompatibilityTarget {
                 dimension_count: plan.gguf.rope_dimension_count,
                 theta: plan.gguf.rope_theta,
                 frequency_layout: "uniform-theta".into(),
+                frequency_factors: None,
                 position_origin: "absolute-zero-based".into(),
                 keys_state: "post-rope".into(),
                 qk_norm_order,
@@ -919,6 +950,11 @@ fn validate_compatibility(
     );
     compare(
         &mut reasons,
+        frequency_factors_agree(&manifest.rope, &target.rope),
+        "RoPE frequency factors mismatch",
+    );
+    compare(
+        &mut reasons,
         manifest.rope.position_origin == target.rope.position_origin,
         "RoPE position origin mismatch",
     );
@@ -1192,6 +1228,20 @@ fn validate_rope(rope: &KvRopeMetadata, head_dim: usize) -> anyhow::Result<()> {
         "unsupported RoPE frequency layout '{}'",
         rope.frequency_layout
     );
+    if let Some(factors) = &rope.frequency_factors {
+        anyhow::ensure!(
+            factors.len() == rope.dimension_count / 2,
+            "RoPE frequency factors have {} entries; expected {}",
+            factors.len(),
+            rope.dimension_count / 2
+        );
+        anyhow::ensure!(
+            factors
+                .iter()
+                .all(|factor| factor.is_finite() && *factor > 0.0),
+            "RoPE frequency factors must be finite and positive"
+        );
+    }
     anyhow::ensure!(
         rope.position_origin == "absolute-zero-based",
         "unsupported RoPE position origin '{}'",
@@ -1714,6 +1764,7 @@ pub(crate) mod tests {
                 dimension_count: head_dim,
                 theta: 10_000.0,
                 frequency_layout: "uniform-theta".into(),
+                frequency_factors: None,
                 position_origin: "absolute-zero-based".into(),
                 keys_state: "post-rope".into(),
                 qk_norm_order: KvQkNormOrder::AfterRope,

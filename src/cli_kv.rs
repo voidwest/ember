@@ -320,7 +320,8 @@ fn run_export(
         Some(&model_sha256),
         Some(&tokenizer_sha256),
     )?;
-    let target = KvCompatibilityTarget::from_execution_plan(&plan)?;
+    let target = KvCompatibilityTarget::from_execution_plan(&plan)?
+        .with_rope_frequency_factors(model.rope_frequency_factors());
     ensure_default_live_cache_limit(&target)?;
     let execution_fingerprint = target.execution_fingerprint.clone();
     let execution_plan_hash = target.plan_hash.clone();
@@ -594,7 +595,8 @@ fn run_compare(
             Some(&model_sha256),
             Some(&tokenizer_sha256),
         )?;
-        let target = KvCompatibilityTarget::from_execution_plan(&plan)?;
+        let target = KvCompatibilityTarget::from_execution_plan(&plan)?
+            .with_rope_frequency_factors(model.rope_frequency_factors());
         let cache_pair_bytes = target
             .live_cache_bytes()?
             .checked_mul(2)
@@ -840,7 +842,8 @@ fn run_replay(
         Some(&model_sha256),
         Some(&tokenizer_sha256),
     )?;
-    let target = KvCompatibilityTarget::from_execution_plan(&plan)?;
+    let target = KvCompatibilityTarget::from_execution_plan(&plan)?
+        .with_rope_frequency_factors(model.rope_frequency_factors());
     let execution_fingerprint = target.execution_fingerprint.clone();
     let execution_plan_hash = target.plan_hash.clone();
     let report = snapshot.compatibility_report(&target);
@@ -1053,7 +1056,8 @@ fn run_trace_native(
         Some(&model_sha256),
         Some(&tokenizer_sha256),
     )?;
-    let target = KvCompatibilityTarget::from_execution_plan(&plan)?;
+    let target = KvCompatibilityTarget::from_execution_plan(&plan)?
+        .with_rope_frequency_factors(model.rope_frequency_factors());
     ensure_default_live_cache_limit(&target)?;
     let execution_fingerprint = target.execution_fingerprint.clone();
     let execution_plan_hash = target.plan_hash.clone();
