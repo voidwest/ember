@@ -406,19 +406,11 @@ pub(crate) fn run_verify_sweep(
     );
     let report = verify_sweep(dir, options).map_err(anyhow::Error::msg)?;
     if let Some(path) = write_report {
-        let root = dir
-            .canonicalize()
-            .with_context(|| format!("cannot resolve '{}'", dir.display()))?;
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .canonicalize()
-            .with_context(|| format!("cannot resolve '{}'", path.display()))?;
-        anyhow::ensure!(
-            !parent.starts_with(&root),
-            "--write-report must point outside the sweep; verification never modifies it"
-        );
+        crate::cli_experiment::ensure_outside_bundle(
+            dir,
+            path,
+            "--write-report must point outside the sweep; verification never modifies it",
+        )?;
         let mut bytes = serde_json::to_vec_pretty(&report)?;
         bytes.push(b'\n');
         ember::atomic_file::atomic_write(path, &bytes)

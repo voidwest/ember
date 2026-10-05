@@ -1770,10 +1770,13 @@ pub(crate) fn load_anchored_bundle(
 
 /// Refuse a report path inside the bundle: verification must not add files
 /// to the bundle it checks.
-fn write_report_outside(
+/// Fail unless `path` would be written outside `bundle` (a bundle or sweep
+/// directory); commands that only read a bundle never write into it.
+/// `refusal` is the error message.
+pub(crate) fn ensure_outside_bundle(
     bundle: &std::path::Path,
     path: &std::path::Path,
-    report: &ember::v05::verify::VerificationReport,
+    refusal: &str,
 ) -> anyhow::Result<()> {
     let bundle_root = bundle
         .canonicalize()
@@ -1785,10 +1788,20 @@ fn write_report_outside(
     let parent = parent
         .canonicalize()
         .with_context(|| format!("cannot resolve '{}'", parent.display()))?;
-    anyhow::ensure!(
-        !parent.starts_with(&bundle_root),
-        "--write-report must point outside the bundle; verification never modifies the bundle"
-    );
+    anyhow::ensure!(!parent.starts_with(&bundle_root), "{refusal}");
+    Ok(())
+}
+
+fn write_report_outside(
+    bundle: &std::path::Path,
+    path: &std::path::Path,
+    report: &ember::v05::verify::VerificationReport,
+) -> anyhow::Result<()> {
+    ensure_outside_bundle(
+        bundle,
+        path,
+        "--write-report must point outside the bundle; verification never modifies the bundle",
+    )?;
     let mut bytes = serde_json::to_vec_pretty(report)?;
     bytes.push(b'\n');
     ember::atomic_file::atomic_write(path, &bytes)

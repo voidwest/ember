@@ -72,21 +72,11 @@ fn load_pinned_tokenizer(
 
 /// Refuse an output path inside the bundle: bundles are immutable.
 fn ensure_outside(bundle: &Path, path: &Path) -> anyhow::Result<()> {
-    let bundle_root = bundle
-        .canonicalize()
-        .with_context(|| format!("cannot resolve '{}'", bundle.display()))?;
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let parent = parent
-        .canonicalize()
-        .with_context(|| format!("cannot resolve '{}'", parent.display()))?;
-    anyhow::ensure!(
-        !parent.starts_with(&bundle_root),
-        "--out must point outside the bundle; the lens never modifies the bundle"
-    );
-    Ok(())
+    crate::cli_experiment::ensure_outside_bundle(
+        bundle,
+        path,
+        "--out must point outside the bundle; the lens never modifies the bundle",
+    )
 }
 
 pub(crate) fn run_lens_command(

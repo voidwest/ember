@@ -646,7 +646,7 @@ impl SweepManifest {
 /// shortest representation serde_json writes inside that exact range (the
 /// shortest form never has more digits or a finer last digit than the
 /// rounded decimal). Magnitudes below 1e-22 round to zero.
-fn json_stable(value: f64) -> f64 {
+pub fn json_stable(value: f64) -> f64 {
     if value == 0.0 || !value.is_finite() {
         return value;
     }

@@ -229,18 +229,7 @@ pub fn project(delta: &[f64], readout: &[f64]) -> f64 {
 
 /// Round to 9 significant digits so a value survives JSON exactly (the
 /// same rule as sweep metrics).
-pub fn json_stable(value: f64) -> f64 {
-    if value == 0.0 || !value.is_finite() {
-        return value;
-    }
-    let magnitude = value.abs().log10().floor() as i32;
-    let text = if 8 - magnitude > 22 {
-        format!("{value:.22}")
-    } else {
-        format!("{value:.8e}")
-    };
-    text.parse().unwrap_or(value)
-}
+pub use crate::v05::sweep::json_stable;
 
 /// Average ranks (1-based), ties sharing their mean rank.
 fn ranks(values: &[f64]) -> Vec<f64> {
