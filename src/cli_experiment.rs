@@ -508,8 +508,9 @@ pub(crate) fn prepare_run(
     // on helper threads while it loads. Results are checked in the order
     // they were when everything ran in sequence, with the same errors, and
     // the tokenizer is parsed only after its bytes match the spec's pin.
+    let model_file = ModelFileIdentity::of(&resolved.model.path)?;
     let abandon = AtomicBool::new(false);
-    std::thread::scope(|scope| {
+    let prepared = std::thread::scope(|scope| {
         // After an early error (or a panic) the helpers' results go unused;
         // stop them instead of waiting out a whole-model hash when the scope
         // joins. A drop guard covers the unwinding path too.
@@ -523,7 +524,49 @@ pub(crate) fn prepare_run(
             model_hash,
             &abandon,
         )
-    })
+    })?;
+    model_file.ensure_unchanged(&resolved.model.path)?;
+    Ok(prepared)
+}
+
+/// What identifies a model file on disk. The SHA-256 and the weights come
+/// from separate opens (the hash runs beside the load); a file replaced or
+/// rewritten in between would otherwise be used under the recorded hash.
+pub(crate) struct ModelFileIdentity {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    inode: (u64, u64),
+}
+
+impl ModelFileIdentity {
+    pub(crate) fn of(path: &std::path::Path) -> anyhow::Result<Self> {
+        let metadata = std::fs::metadata(path)
+            .with_context(|| format!("cannot stat model '{}'", path.display()))?;
+        Ok(Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            inode: {
+                use std::os::unix::fs::MetadataExt as _;
+                (metadata.dev(), metadata.ino())
+            },
+        })
+    }
+
+    pub(crate) fn ensure_unchanged(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        let now = Self::of(path)?;
+        let same = now.len == self.len && now.modified == self.modified;
+        #[cfg(unix)]
+        let same = same && now.inode == self.inode;
+        anyhow::ensure!(
+            same,
+            "model '{}' changed while it was being hashed and loaded; its recorded SHA-256 \
+             may not describe the weights in use",
+            path.display()
+        );
+        Ok(())
+    }
 }
 
 /// Sets the flag when dropped: tells `prepare_run`'s helper threads that
@@ -2291,6 +2334,22 @@ mod tests {
             bundle_evidence_path(Path::new("probe.v1")),
             PathBuf::from("probe.v1.evidence.json")
         );
+    }
+
+    #[test]
+    fn a_model_file_replaced_during_load_is_detected() {
+        let dir = std::env::temp_dir().join(format!("ember-model-identity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("model.gguf");
+        std::fs::write(&model, b"weights").unwrap();
+        let identity = super::ModelFileIdentity::of(&model).unwrap();
+        identity.ensure_unchanged(&model).unwrap();
+        // Replaced by rename (same length): a different file.
+        let replacement = dir.join("other.gguf");
+        std::fs::write(&replacement, b"WEIGHTS").unwrap();
+        std::fs::rename(&replacement, &model).unwrap();
+        assert!(identity.ensure_unchanged(&model).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

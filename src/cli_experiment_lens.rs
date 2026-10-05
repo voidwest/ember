@@ -104,6 +104,7 @@ pub(crate) fn run_lens_command(
     }
 
     // -- model: must be the file the bundle recorded --
+    let model_file = crate::cli_experiment::ModelFileIdentity::of(&command.model)?;
     let model_sha = sha256_file_result(&command.model)
         .with_context(|| format!("failed to hash '{}'", command.model.display()))?;
     if model_sha != manifest.model.sha256 {
@@ -122,6 +123,7 @@ pub(crate) fn run_lens_command(
         "the lens supports llama-family models (llama/qwen3); got architecture '{architecture}'"
     );
     let model = Llama::from_loader_with_max_seq_len(loader, None)?;
+    model_file.ensure_unchanged(&command.model)?;
 
     // -- tokenizer: --tokenizer, else the path the bound spec names --
     let tokenizer_path = match &command.tokenizer {
