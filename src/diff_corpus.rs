@@ -521,6 +521,7 @@ pub struct CorpusRunStats {
     pub log_path: PathBuf,
 }
 
+#[derive(Clone)]
 struct CorpusRunConfig {
     n: usize,
     seed: u64,
@@ -544,6 +545,52 @@ fn saves_crash(outcome: DiffOutcome) -> bool {
             | DiffOutcome::Timeout
             | DiffOutcome::ResourceLimitOrExternalKill
     )
+}
+
+/// Create or truncate an output file without following a symlink in its
+/// place: an out-dir someone else prepared must not redirect a write.
+fn create_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    no_follow(&mut options);
+    options.open(path)
+}
+
+fn no_follow(options: &mut std::fs::OpenOptions) {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = options;
+}
+
+/// `blobs/` holds one campaign's inputs under fixed names (`m00000.bin`,
+/// ...), which its log refers to. A second campaign with a different tag in
+/// the same out-dir would overwrite them and leave the first log pointing at
+/// other bytes, so the directory is marked with its run tag and refused to
+/// any other run (re-running the same tag regenerates identical blobs).
+fn claim_blobs_dir(blobs_dir: &Path, run_tag: &str) -> anyhow::Result<()> {
+    let marker = blobs_dir.join("RUN_TAG");
+    match std::fs::read_to_string(&marker) {
+        Ok(existing) => anyhow::ensure!(
+            existing.trim() == run_tag,
+            "'{}' holds the blobs of run {}; use a fresh --out-dir for run {run_tag}",
+            blobs_dir.display(),
+            existing.trim()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::ensure!(
+                std::fs::read_dir(blobs_dir)?.next().is_none(),
+                "'{}' already holds blobs from an unknown run; use a fresh --out-dir",
+                blobs_dir.display()
+            );
+            create_no_follow(&marker)?.write_all(format!("{run_tag}\n").as_bytes())?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }
 
 /// Lexically normalize an absolute path (no IO, so it works before the
@@ -717,10 +764,11 @@ fn run_corpus(config: &CorpusRunConfig) -> anyhow::Result<CorpusRunStats> {
     std::fs::create_dir_all(&blobs_dir)?;
     std::fs::create_dir_all(&crash_dir)?;
     let run_tag = corpus_run_tag(config.mode, config.n, config.seed);
+    claim_blobs_dir(&blobs_dir, &run_tag)?;
     let log_path = config.out_dir.join(format!("log_{run_tag}.jsonl"));
     // Truncate any prior log for this tag first: rerunning a tag must not
     // silently duplicate the campaign in its audit trail (diff_fuzz.py).
-    std::fs::write(&log_path, "")?;
+    create_no_follow(&log_path)?;
 
     // Phase 1: single-threaded generation with one evolving RNG, mirroring
     // diff_fuzz.py's `seed = rng.choice(seeds); mutations.append(mut(...))`
@@ -738,13 +786,18 @@ fn run_corpus(config: &CorpusRunConfig) -> anyhow::Result<CorpusRunStats> {
         } else {
             mutate_raw(seed_blob, &mut rng)
         };
-        std::fs::write(blobs_dir.join(format!("m{i:05}.bin")), &blob)?;
+        create_no_follow(&blobs_dir.join(format!("m{i:05}.bin")))?.write_all(&blob)?;
     }
 
     // Phase 2: parallel evaluation. Each worker owns one case at a time;
     // externals run sequentially within the case so concurrent child
     // processes never exceed `jobs` (<= 4).
-    let log_file = std::fs::OpenOptions::new().append(true).open(&log_path)?;
+    let log_file = {
+        let mut options = std::fs::OpenOptions::new();
+        options.append(true);
+        no_follow(&mut options);
+        options.open(&log_path)?
+    };
     let shared = Shared {
         log: Mutex::new(BufWriter::new(log_file)),
         counts: Mutex::new(BTreeMap::new()),
@@ -869,8 +922,9 @@ fn save_crash(
     }
     let dir = config.out_dir.join("crashes").join(&report.runtime);
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join(format!("{short}.bin")), &bytes)?;
-    std::fs::write(dir.join(format!("{short}.stderr")), &report.stderr_tail)?;
+    create_no_follow(&dir.join(format!("{short}.bin")))?.write_all(&bytes)?;
+    create_no_follow(&dir.join(format!("{short}.stderr")))?
+        .write_all(report.stderr_tail.as_bytes())?;
     shared.failure_inputs_saved.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
@@ -974,10 +1028,8 @@ pub fn run_diff_corpus(request: &CorpusRequest, verbose: bool) -> anyhow::Result
         rng_note: "StdRng: same operators/slots/tables as diff_fuzz.py, NOT bit-identical streams (Python random.Random differs)".to_string(),
     };
     let summary_path = out_dir.join(format!("summary_{run_tag}.json"));
-    std::fs::write(
-        &summary_path,
-        serde_json::to_string_pretty(&summary)? + "\n",
-    )?;
+    create_no_follow(&summary_path)?
+        .write_all((serde_json::to_string_pretty(&summary)? + "\n").as_bytes())?;
     if verbose {
         for (target, counts) in &stats.per_target {
             println!(
@@ -1246,8 +1298,42 @@ mod tests {
         for key in ["i", "target", "outcome", "termination", "blob"] {
             assert!(first.get(key).is_some(), "record missing {key}");
         }
-        // Blobs streamed to disk one file per case.
-        assert_eq!(std::fs::read_dir(out_dir.join("blobs")).unwrap().count(), 3);
+        // Blobs streamed to disk one file per case, marked with the run.
+        let blobs = std::fs::read_dir(out_dir.join("blobs"))
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "bin")
+            })
+            .count();
+        assert_eq!(blobs, 3);
+        // The same run may repeat in place; another run may not reuse it.
+        run_corpus(&config).unwrap();
+        let other = CorpusRunConfig {
+            seed: 8,
+            ..config.clone()
+        };
+        let error = run_corpus(&other).unwrap_err().to_string();
+        assert!(error.contains("fresh --out-dir"), "{error}");
+        // An output file planted as a symlink is not followed.
+        #[cfg(unix)]
+        {
+            let elsewhere = dir.join("out2");
+            std::fs::create_dir_all(&elsewhere).unwrap();
+            let victim = dir.join("victim");
+            std::fs::write(&victim, b"keep").unwrap();
+            std::os::unix::fs::symlink(&victim, elsewhere.join("log_raw-3-7.jsonl")).unwrap();
+            let planted = CorpusRunConfig {
+                out_dir: elsewhere,
+                ..config.clone()
+            };
+            assert!(run_corpus(&planted).is_err());
+            assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        }
         // SAFETY: as for the `set_var` calls above.
         unsafe {
             std::env::remove_var(ExternalRuntime::LlamaCpp.env_override());

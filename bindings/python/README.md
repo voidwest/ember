@@ -45,7 +45,8 @@ result = ember.diff("model.gguf", against=["llama.cpp", "candle"], timeout_secs=
 result["schema"]            # "ember.diff.v1"
 result["agreement"]         # {"all_agree": bool, "distinct_outcomes": [...], ...}
 
-# Scaled differential corpus campaign (writes blobs/log/summary under out_dir).
+# Scaled differential corpus campaign (writes blobs/log/summary under out_dir;
+# one campaign per out_dir: a different n/seed/mode needs a fresh directory).
 campaign = ember.diff_corpus(n=100, out_dir=".cache/corpus-run", against=["candle"])
 campaign["summary"]["per_target"]
 campaign["log_path"]
