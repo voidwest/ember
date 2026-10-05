@@ -572,9 +572,12 @@ fn normalize_abs(path: &Path) -> PathBuf {
     out
 }
 
-/// Refuse an `--out-dir` inside the frozen comparative tree. Checked
-/// lexically *before* creating anything (so refusal leaves no trace), then
-/// re-checked after canonicalization (catches symlink tricks).
+/// Refuse an `--out-dir` inside the frozen comparative tree, wherever the
+/// process runs from (the Python binding is called from notebooks anywhere).
+/// The tree is recognised by its path components, not by the current
+/// directory: checked lexically and through the nearest existing ancestor's
+/// canonical path *before* creating anything (so refusal leaves no trace and
+/// symlinked parents are seen through), then re-checked after creation.
 fn guard_out_dir(out_dir: &Path) -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     let abs = if out_dir.is_absolute() {
@@ -582,25 +585,49 @@ fn guard_out_dir(out_dir: &Path) -> anyhow::Result<PathBuf> {
     } else {
         cwd.join(out_dir)
     };
-    let frozen = normalize_abs(&cwd.join("research/embersec/comparative"));
     let norm = normalize_abs(&abs);
-    anyhow::ensure!(
-        norm != frozen && !norm.starts_with(&frozen),
-        "--out-dir '{}' is inside the frozen research/embersec/comparative/ tree; choose a scratch directory (e.g. .cache/diff-corpus/<run-tag>/)",
-        out_dir.display()
-    );
-    std::fs::create_dir_all(out_dir)?;
-    if let (Ok(canonical), Ok(frozen_canonical)) = (
-        std::fs::canonicalize(out_dir),
-        std::fs::canonicalize(&frozen),
-    ) {
+    let refuse = |path: &Path| {
         anyhow::ensure!(
-            canonical != frozen_canonical && !canonical.starts_with(&frozen_canonical),
-            "--out-dir '{}' resolves inside the frozen research/embersec/comparative/ tree; refusing",
+            !inside_frozen_tree(path),
+            "--out-dir '{}' is inside the frozen research/embersec/comparative/ tree; choose a scratch directory (e.g. .cache/diff-corpus/<run-tag>/)",
             out_dir.display()
         );
-    }
+        Ok(())
+    };
+    refuse(&norm)?;
+    refuse(&canonical_with_missing_tail(&norm))?;
+    std::fs::create_dir_all(out_dir)?;
+    refuse(&std::fs::canonicalize(out_dir)?)?;
     Ok(abs)
+}
+
+/// Whether `path` lies in (or is) a `research/embersec/comparative` tree.
+fn inside_frozen_tree(path: &Path) -> bool {
+    let parts: Vec<_> = path.components().map(|part| part.as_os_str()).collect();
+    parts
+        .windows(3)
+        .any(|window| window == ["research", "embersec", "comparative"])
+}
+
+/// `path` with its longest existing prefix canonicalized and the rest
+/// appended, so a symlinked parent is resolved before anything is created.
+fn canonical_with_missing_tail(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut tail = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                tail.push(name.to_os_string());
+                existing = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+    let mut resolved = std::fs::canonicalize(&existing).unwrap_or(existing);
+    for name in tail.iter().rev() {
+        resolved.push(name);
+    }
+    resolved
 }
 
 fn load_default_seeds(mode: CorpusMode) -> anyhow::Result<(Vec<String>, Vec<Vec<u8>>)> {
@@ -1080,6 +1107,29 @@ mod tests {
                 9_223_372_036_854_775_807,
             ]
         );
+    }
+
+    #[test]
+    fn the_frozen_tree_is_refused_wherever_the_process_runs() {
+        let root = std::env::temp_dir().join(format!("ember-frozen-guard-{}", std::process::id()));
+        let frozen = root.join("repo/research/embersec/comparative");
+        std::fs::create_dir_all(frozen.join("results")).unwrap();
+        // Directly, by absolute path, from an unrelated working directory.
+        let target = frozen.join("results/diff_fuzz");
+        assert!(guard_out_dir(&target).is_err());
+        assert!(!target.exists(), "a refusal creates nothing");
+        // Through a symlinked parent.
+        #[cfg(unix)]
+        {
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&frozen, &link).unwrap();
+            let through = link.join("scratch-out");
+            assert!(guard_out_dir(&through).is_err());
+            assert!(!frozen.join("scratch-out").exists());
+        }
+        // A scratch directory is fine.
+        assert!(guard_out_dir(&root.join("scratch/run-1")).is_ok());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
