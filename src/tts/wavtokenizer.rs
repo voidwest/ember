@@ -334,6 +334,80 @@ pub struct WavTokenizerConfig {
     pub adanorm_bands: usize,
 }
 
+/// Largest FFT size a codec may declare (the stock decoder uses 1280):
+/// Bluestein allocates tables of the next power of two above `2 * n_fft`.
+pub const MAX_N_FFT: usize = 1 << 16;
+
+/// Most codec frames one decode accepts: time attention builds a
+/// `frames²` score matrix (1 GiB of f32 here, ~218 s of audio at the
+/// stock 75 frames/s).
+pub const MAX_DECODE_FRAMES: usize = 16_384;
+
+impl WavTokenizerConfig {
+    /// Reject metadata the decoder cannot run with, before anything is
+    /// sized by it: zero sizes divided by or subtracted from, a hop longer
+    /// than the window, or an FFT too large to plan.
+    fn validate(&self) -> Result<()> {
+        use crate::loader::limits::{
+            MAX_EMBED_DIM, MAX_INTERMEDIATE_DIM, MAX_LAYERS, MAX_VOCAB_SIZE,
+        };
+        ensure!(self.sample_rate > 0, "codec sample rate must be non-zero");
+        ensure!(
+            self.n_fft > 0 && self.n_fft <= MAX_N_FFT && self.n_fft.is_multiple_of(2),
+            "n_fft {} must be even and in 2..={MAX_N_FFT}",
+            self.n_fft
+        );
+        ensure!(
+            self.hop_length > 0 && self.hop_length <= self.n_fft,
+            "hop length {} must be in 1..=n_fft ({})",
+            self.hop_length,
+            self.n_fft
+        );
+        for (name, value, max) in [
+            ("codebook_bins", self.codebook_bins, MAX_VOCAB_SIZE),
+            ("latent_dim", self.latent_dim, MAX_EMBED_DIM),
+            ("dim", self.dim, MAX_EMBED_DIM),
+            (
+                "intermediate_dim",
+                self.intermediate_dim,
+                MAX_INTERMEDIATE_DIM,
+            ),
+            ("convnext_layers", self.convnext_layers, MAX_LAYERS),
+            ("adanorm_bands", self.adanorm_bands, MAX_LAYERS),
+        ] {
+            ensure!(
+                value > 0 && value <= max,
+                "codec {name} {value} must be in 1..={max}"
+            );
+        }
+        ensure!(
+            self.group_norm_groups > 0 && self.dim.is_multiple_of(self.group_norm_groups),
+            "codec dim {} does not split into {} groups",
+            self.dim,
+            self.group_norm_groups
+        );
+        for (name, eps) in [
+            ("group_norm_eps", self.group_norm_eps),
+            ("layer_norm_eps", self.layer_norm_eps),
+        ] {
+            ensure!(
+                eps.is_finite() && eps >= 0.0,
+                "codec {name} must be finite and non-negative, got {eps}"
+            );
+        }
+        Ok(())
+    }
+}
+
+fn expect_shape(name: &str, tensor: &CpuTensor, expected: &[usize]) -> Result<()> {
+    ensure!(
+        tensor.shape() == expected,
+        "codec tensor {name} has shape {:?}, expected {expected:?}",
+        tensor.shape()
+    );
+    Ok(())
+}
+
 /// GroupNorm affine params (per-channel weight/bias).
 struct GroupNorm {
     groups: usize,
@@ -695,44 +769,74 @@ impl WavTokenizerDecoder {
             layer_norm_eps: get_f32("wt.layer_norm_eps")?,
             adanorm_bands: get_u32("wt.adanorm_bands")?,
         };
-        ensure!(
-            config.n_fft.is_multiple_of(2),
-            "n_fft {} must be even for rfft bins",
-            config.n_fft
-        );
+        config.validate()?;
+        // Every tensor is checked against the config as it is taken, so
+        // decode never indexes, slices or asserts on a malformed codec.
+        let (dim, bands) = (config.dim, config.adanorm_bands);
 
         let take_vec = |l: &mut crate::loader::GgufLoader, name: &str| -> Result<CpuTensor> {
             l.take_f32(name)
                 .with_context(|| format!("codec gguf missing tensor {name}"))
         };
-        let take_bias = |l: &mut crate::loader::GgufLoader, name: &str| -> Result<Vec<f32>> {
-            Ok(take_vec(l, name)?.data().to_vec())
-        };
-        let take_linear =
-            |l: &mut crate::loader::GgufLoader, name: &str| -> Result<Linear<CpuBackend>> {
-                // Two storage cases, both arriving HF-oriented via
-                // gguf_to_hf (dim-reversed from GGUF):
-                // - Conv1d(k=1):  [out, in, 1]
-                // - nn.Linear:    [out, in]
-                // Either way the payload is row-major (out, in) -> transpose
-                // to the Linear layout [in, out].
-                let w = gguf_to_hf(&take_vec(l, &format!("{name}.weight"))?);
-                let (o, i) = match w.shape().len() {
-                    3 if w.shape()[2] == 1 => (w.shape()[0], w.shape()[1]),
-                    2 => (w.shape()[0], w.shape()[1]),
-                    _ => anyhow::bail!(
-                        "{name}.weight expected HF [out, in(, 1)], got {:?}",
-                        w.shape()
-                    ),
-                };
-                let m = CpuTensor::from_data(vec![o, i], w.data().to_vec());
-                let b = take_bias(l, &format!("{name}.bias"))?;
-                let n_bias = b.len();
-                Ok(Linear::new(
-                    m.transpose(),
-                    Some(CpuTensor::from_data(vec![n_bias], b)),
-                ))
+        let take_bias =
+            |l: &mut crate::loader::GgufLoader, name: &str, len: usize| -> Result<Vec<f32>> {
+                let t = take_vec(l, name)?;
+                ensure!(
+                    t.data().len() == len,
+                    "codec tensor {name} has {} values, expected {len}",
+                    t.data().len()
+                );
+                Ok(t.data().to_vec())
             };
+        let take_hf = |l: &mut crate::loader::GgufLoader,
+                       name: &str,
+                       expected: &[usize]|
+         -> Result<CpuTensor> {
+            let t = gguf_to_hf(&take_vec(l, name)?);
+            expect_shape(name, &t, expected)?;
+            Ok(t)
+        };
+        let take_conv = |l: &mut crate::loader::GgufLoader,
+                         name: &str,
+                         c_in: usize,
+                         c_out: usize,
+                         k: usize|
+         -> Result<DenseConv1d> {
+            let w = take_hf(l, &format!("{name}.weight"), &[c_out, c_in, k])?;
+            let b = take_bias(l, &format!("{name}.bias"), c_out)?;
+            Ok(DenseConv1d::from_hf_weight(&w, b))
+        };
+        let take_linear = |l: &mut crate::loader::GgufLoader,
+                           name: &str,
+                           in_dim: usize,
+                           out_dim: usize|
+         -> Result<Linear<CpuBackend>> {
+            // Two storage cases, both arriving HF-oriented via
+            // gguf_to_hf (dim-reversed from GGUF):
+            // - Conv1d(k=1):  [out, in, 1]
+            // - nn.Linear:    [out, in]
+            // Either way the payload is row-major (out, in) -> transpose
+            // to the Linear layout [in, out].
+            let w = gguf_to_hf(&take_vec(l, &format!("{name}.weight"))?);
+            let (o, i) = match w.shape().len() {
+                3 if w.shape()[2] == 1 => (w.shape()[0], w.shape()[1]),
+                2 => (w.shape()[0], w.shape()[1]),
+                _ => anyhow::bail!(
+                    "{name}.weight expected HF [out, in(, 1)], got {:?}",
+                    w.shape()
+                ),
+            };
+            ensure!(
+                (o, i) == (out_dim, in_dim),
+                "{name}.weight is [{o}, {i}], expected [{out_dim}, {in_dim}]"
+            );
+            let m = CpuTensor::from_data(vec![o, i], w.data().to_vec());
+            let b = take_bias(l, &format!("{name}.bias"), out_dim)?;
+            Ok(Linear::new(
+                m.transpose(),
+                Some(CpuTensor::from_data(vec![out_dim], b)),
+            ))
+        };
         let take_gn = |l: &mut crate::loader::GgufLoader,
                        name: &str,
                        groups: usize,
@@ -741,16 +845,21 @@ impl WavTokenizerDecoder {
             Ok(GroupNorm {
                 groups,
                 eps,
-                weight: take_bias(l, &format!("{name}.weight"))?,
-                bias: take_bias(l, &format!("{name}.bias"))?,
+                weight: take_bias(l, &format!("{name}.weight"), dim)?,
+                bias: take_bias(l, &format!("{name}.bias"), dim)?,
             })
         };
 
         let codebook = take_vec(&mut loader, "w.codebook")?;
-        let embed = DenseConv1d::from_hf_weight(
-            &gguf_to_hf(&take_vec(&mut loader, "w.embed.weight")?),
-            take_bias(&mut loader, "w.embed.bias")?,
+        ensure!(
+            Some(codebook.data().len()) == config.codebook_bins.checked_mul(config.latent_dim),
+            "codec codebook has {} values, expected {} x {}",
+            codebook.data().len(),
+            config.codebook_bins,
+            config.latent_dim
         );
+        // k7 p3 and k3 p1 below: the convs must keep the frame count
+        let embed = take_conv(&mut loader, "w.embed", config.latent_dim, dim, 7)?;
 
         let mut resnets: Vec<ResnetBlock> = Vec::with_capacity(4);
         for i in [0usize, 1, 3, 4] {
@@ -761,26 +870,14 @@ impl WavTokenizerDecoder {
                     config.group_norm_groups,
                     config.group_norm_eps,
                 )?,
-                conv1: DenseConv1d::from_hf_weight(
-                    &gguf_to_hf(&take_vec(
-                        &mut loader,
-                        &format!("w.pos_net.{i}.conv1.weight"),
-                    )?),
-                    take_bias(&mut loader, &format!("w.pos_net.{i}.conv1.bias"))?,
-                ),
+                conv1: take_conv(&mut loader, &format!("w.pos_net.{i}.conv1"), dim, dim, 3)?,
                 norm2: take_gn(
                     &mut loader,
                     &format!("w.pos_net.{i}.norm2"),
                     config.group_norm_groups,
                     config.group_norm_eps,
                 )?,
-                conv2: DenseConv1d::from_hf_weight(
-                    &gguf_to_hf(&take_vec(
-                        &mut loader,
-                        &format!("w.pos_net.{i}.conv2.weight"),
-                    )?),
-                    take_bias(&mut loader, &format!("w.pos_net.{i}.conv2.bias"))?,
-                ),
+                conv2: take_conv(&mut loader, &format!("w.pos_net.{i}.conv2"), dim, dim, 3)?,
             });
         }
 
@@ -791,10 +888,10 @@ impl WavTokenizerDecoder {
                 config.group_norm_groups,
                 config.group_norm_eps,
             )?,
-            q: take_linear(&mut loader, "w.pos_net.2.q")?,
-            k: take_linear(&mut loader, "w.pos_net.2.k")?,
-            v: take_linear(&mut loader, "w.pos_net.2.v")?,
-            proj_out: take_linear(&mut loader, "w.pos_net.2.proj_out")?,
+            q: take_linear(&mut loader, "w.pos_net.2.q", dim, dim)?,
+            k: take_linear(&mut loader, "w.pos_net.2.k", dim, dim)?,
+            v: take_linear(&mut loader, "w.pos_net.2.v", dim, dim)?,
+            proj_out: take_linear(&mut loader, "w.pos_net.2.proj_out", dim, dim)?,
         };
         let pos_group_norm = take_gn(
             &mut loader,
@@ -806,53 +903,59 @@ impl WavTokenizerDecoder {
         // torch stores [bands, dim]; GGUF reverses dims -> restore
         let adanorm = AdaLayerNorm {
             eps: config.layer_norm_eps,
-            scale: gguf_to_hf(&take_vec(&mut loader, "w.adanorm.scale")?),
-            shift: gguf_to_hf(&take_vec(&mut loader, "w.adanorm.shift")?),
+            scale: take_hf(&mut loader, "w.adanorm.scale", &[bands, dim])?,
+            shift: take_hf(&mut loader, "w.adanorm.shift", &[bands, dim])?,
             band: 0, // inference always uses bandwidth_id 0 (outetts default)
         };
 
         let mut convnext = Vec::with_capacity(config.convnext_layers);
         for i in 0..config.convnext_layers {
             convnext.push(ConvNeXtBlock {
-                dwconv_weight: gguf_to_hf(&take_vec(
+                dwconv_weight: take_hf(
                     &mut loader,
                     &format!("w.convnext.{i}.dwconv.weight"),
-                )?),
-                dwconv_bias: take_bias(&mut loader, &format!("w.convnext.{i}.dwconv.bias"))?,
+                    &[dim, 1, 7],
+                )?,
+                dwconv_bias: take_bias(&mut loader, &format!("w.convnext.{i}.dwconv.bias"), dim)?,
                 norm: AdaLayerNorm {
                     eps: config.layer_norm_eps,
-                    scale: gguf_to_hf(&take_vec(
+                    scale: take_hf(
                         &mut loader,
                         &format!("w.convnext.{i}.norm.scale"),
-                    )?),
-                    shift: gguf_to_hf(&take_vec(
+                        &[bands, dim],
+                    )?,
+                    shift: take_hf(
                         &mut loader,
                         &format!("w.convnext.{i}.norm.shift"),
-                    )?),
+                        &[bands, dim],
+                    )?,
                     band: 0,
                 },
-                pwconv1: take_linear(&mut loader, &format!("w.convnext.{i}.pwconv1"))?,
-                pwconv2: take_linear(&mut loader, &format!("w.convnext.{i}.pwconv2"))?,
-                gamma: take_bias(&mut loader, &format!("w.convnext.{i}.gamma"))?,
+                pwconv1: take_linear(
+                    &mut loader,
+                    &format!("w.convnext.{i}.pwconv1"),
+                    dim,
+                    config.intermediate_dim,
+                )?,
+                pwconv2: take_linear(
+                    &mut loader,
+                    &format!("w.convnext.{i}.pwconv2"),
+                    config.intermediate_dim,
+                    dim,
+                )?,
+                gamma: take_bias(&mut loader, &format!("w.convnext.{i}.gamma"), dim)?,
             });
         }
 
-        let final_norm_weight = take_bias(&mut loader, "w.final_layer_norm.weight")?;
-        let final_norm_bias = take_bias(&mut loader, "w.final_layer_norm.bias")?;
-        let head_out = take_linear(&mut loader, "w.head.out")?;
-        let window: Vec<f64> = take_vec(&mut loader, "w.window")?
-            .data()
+        let final_norm_weight = take_bias(&mut loader, "w.final_layer_norm.weight", dim)?;
+        let final_norm_bias = take_bias(&mut loader, "w.final_layer_norm.bias", dim)?;
+        let head_out = take_linear(&mut loader, "w.head.out", dim, 2 * (config.n_fft / 2 + 1))?;
+        let window: Vec<f64> = take_bias(&mut loader, "w.window", config.n_fft)?
             .iter()
             .map(|&v| v as f64)
             .collect();
 
         let fft = Bluestein::new(config.n_fft);
-        ensure!(
-            window.len() == config.n_fft,
-            "window length {} != n_fft {}",
-            window.len(),
-            config.n_fft
-        );
         let resnets: [ResnetBlock; 4] = resnets
             .try_into()
             .map_err(|_| anyhow::anyhow!("pos_net must contain four resblocks"))?;
@@ -896,6 +999,10 @@ impl WavTokenizerDecoder {
         let cfg = &self.config;
         ensure!(!codes.is_empty(), "no codec tokens to decode");
         let t = codes.len();
+        ensure!(
+            t <= MAX_DECODE_FRAMES,
+            "{t} codec tokens exceed the {MAX_DECODE_FRAMES}-frame decode limit"
+        );
         for (i, c) in codes.iter().enumerate() {
             ensure!(
                 (*c as usize) < cfg.codebook_bins,
@@ -1200,6 +1307,56 @@ fn softmax_rows(w: &mut [f32], width: usize) {
         let inv = 1.0 / sum as f32;
         for v in row.iter_mut() {
             *v *= inv;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stock() -> WavTokenizerConfig {
+        WavTokenizerConfig {
+            sample_rate: 24_000,
+            n_fft: 1280,
+            hop_length: 320,
+            codebook_bins: 4096,
+            latent_dim: 512,
+            dim: 768,
+            intermediate_dim: 2304,
+            convnext_layers: 12,
+            group_norm_groups: 32,
+            group_norm_eps: 1e-6,
+            layer_norm_eps: 1e-6,
+            adanorm_bands: 4,
+        }
+    }
+
+    #[test]
+    fn stock_config_is_accepted() {
+        stock().validate().unwrap();
+    }
+
+    type Mutation = fn(&mut WavTokenizerConfig);
+
+    #[test]
+    fn hostile_metadata_is_an_error_before_any_allocation() {
+        let cases: [(&str, Mutation); 9] = [
+            ("n_fft", |c| c.n_fft = 0),
+            ("n_fft", |c| c.n_fft = MAX_N_FFT + 2),
+            ("hop length", |c| c.hop_length = 0),
+            ("hop length", |c| c.hop_length = c.n_fft + 1),
+            ("groups", |c| c.group_norm_groups = 0),
+            ("groups", |c| c.group_norm_groups = 7),
+            ("convnext_layers", |c| c.convnext_layers = 0),
+            ("dim", |c| c.dim = 0),
+            ("layer_norm_eps", |c| c.layer_norm_eps = f32::NAN),
+        ];
+        for (needle, mutate) in cases {
+            let mut config = stock();
+            mutate(&mut config);
+            let err = config.validate().expect_err(needle).to_string();
+            assert!(err.contains(needle), "{needle}: {err}");
         }
     }
 }
