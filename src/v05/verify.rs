@@ -347,6 +347,15 @@ const REQUIRED_FILES: [&str; 15] = [
 
 const PAYLOAD_FILE: &str = "captures/tensors.safetensors";
 
+/// Listed bundle files that are not semantic payloads: the two identity
+/// documents, runtime state and placement metadata.
+const NON_PAYLOAD_FILES: [&str; 4] = [
+    "manifest.json",
+    "semantic-manifest.json",
+    "runtime.json",
+    "resolved-experiment.json",
+];
+
 /// Bundle files under this prefix are optional deterministic artifacts
 /// (directions, analysis reports), read and checked when present.
 const ARTIFACTS_PREFIX: &str = "artifacts/";
@@ -516,6 +525,27 @@ fn verify_and_load(
     }
 
     let semantic_manifest = parse_semantic_manifest(&files["semantic-manifest.json"])?;
+    // The semantic hash is recomputed from the parsed structure, so a field
+    // the parser does not know would sit outside every identity check.
+    // Require the document to be exactly what the structure serializes to.
+    // (`null` and an omitted optional field mean the same; some 1.0 writers
+    // emitted `null` where the structure skips `None`.)
+    let mut raw_semantic: serde_json::Value =
+        serde_json::from_slice(&files["semantic-manifest.json"])
+            .map_err(|error| format!("semantic-manifest.json is not valid JSON: {error}"))?;
+    let mut parsed_semantic = serde_json::to_value(&semantic_manifest)
+        .map_err(|error| format!("semantic manifest serialization failed: {error}"))?;
+    strip_null_fields(&mut raw_semantic);
+    strip_null_fields(&mut parsed_semantic);
+    let unread_field = first_json_difference(&raw_semantic, &parsed_semantic, "$");
+    report.record(
+        "semantic manifest fields",
+        unread_field.is_none(),
+        match unread_field {
+            None => "every field is part of the semantic identity".to_string(),
+            Some(path) => format!("{path} does not round-trip through the semantic manifest"),
+        },
+    );
     report.record(
         "semantic manifest schema",
         semantic_manifest.bundle_schema == BUNDLE_SCHEMA_V1,
@@ -1019,6 +1049,16 @@ fn verify_and_load(
             Some(_) => {}
         }
     }
+    // Every listed file other than the identity/placement documents must be
+    // a semantic payload; otherwise an added file (notes, an unparsed
+    // artifact) would pass the semantic-hash and signature anchors.
+    for name in &listed {
+        if !NON_PAYLOAD_FILES.contains(&name.as_str())
+            && !semantic_manifest.payloads.contains_key(name)
+        {
+            payload_errors.push(format!("{name}: not covered by the semantic manifest"));
+        }
+    }
     report.record(
         "semantic payload checksums",
         payload_errors.is_empty(),
@@ -1088,6 +1128,56 @@ fn verify_and_load(
 /// Read one bundle file, refusing anything but a regular file and refusing
 /// a file that was swapped for another entry between the type check and the
 /// open.
+/// Path of the first place two JSON documents differ, if any.
+fn first_json_difference(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+    path: &str,
+) -> Option<String> {
+    use serde_json::Value;
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            let keys: BTreeSet<&String> = left.keys().chain(right.keys()).collect();
+            keys.into_iter().find_map(|key| {
+                let path = format!("{path}.{key}");
+                match (left.get(key), right.get(key)) {
+                    (Some(left), Some(right)) => first_json_difference(left, right, &path),
+                    _ => Some(path),
+                }
+            })
+        }
+        (Value::Array(left), Value::Array(right)) if left.len() == right.len() => left
+            .iter()
+            .zip(right)
+            .enumerate()
+            .find_map(|(index, (left, right))| {
+                first_json_difference(left, right, &format!("{path}[{index}]"))
+            }),
+        // Writers store some f32 parameters as their short decimal while
+        // the structure holds the widened value; both denote one f32.
+        (Value::Number(left), Value::Number(right))
+            if left.as_f64().map(|value| value as f32)
+                == right.as_f64().map(|value| value as f32) =>
+        {
+            None
+        }
+        _ if left == right => None,
+        _ => Some(path.to_string()),
+    }
+}
+
+/// Remove `null`-valued object fields at every depth.
+fn strip_null_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, field| !field.is_null());
+            map.values_mut().for_each(strip_null_fields);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_null_fields),
+        _ => {}
+    }
+}
+
 fn read_regular_file(root: &Path, relative: &str) -> Result<Vec<u8>, String> {
     let path = &root.join(relative);
     let mut file = open_regular_file(root, relative)?;
@@ -1615,7 +1705,7 @@ mod tests {
         let root = testutil::sample_bundle("valid");
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);
-        assert_eq!(report.checks.len(), 21);
+        assert_eq!(report.checks.len(), 22);
         // Verification never writes into the bundle it checks.
         assert!(!root.join("verification.json").exists());
         let _ = std::fs::remove_dir_all(&root);
@@ -1797,6 +1887,77 @@ mod tests {
         inventory.insert("semantic-manifest.json".into(), sha256_hex(&bytes));
         manifest.payload_hash = BundleIdentity::payload_hash(&inventory).unwrap();
         std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let checksums = manifest
+            .files
+            .iter()
+            .filter(|name| !matches!(name.as_str(), "checksums.sha256" | "verification.json"))
+            .map(|name| {
+                format!(
+                    "{}  {name}\n",
+                    sha256_hex(&std::fs::read(root.join(name)).unwrap())
+                )
+            })
+            .collect::<String>();
+        std::fs::write(root.join("checksums.sha256"), checksums).unwrap();
+    }
+
+    /// Content the semantic identity does not cover must fail verification,
+    /// or a semantic-hash or signature anchor would vouch for it.
+    #[test]
+    fn content_outside_the_semantic_identity_fails_closed() {
+        // An extra listed file, resealed into manifest.json and checksums.
+        let root = testutil::sample_bundle("uncovered-file");
+        let original = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+        assert!(original.ok, "{:?}", original.checks);
+        std::fs::write(root.join("notes.md"), "trust me\n").unwrap();
+        let path = root.join("manifest.json");
+        let mut manifest: BundleManifest =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest.files.push("notes.md".into());
+        manifest.files.sort();
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let mut semantic = read_semantic_manifest(&root).unwrap();
+        reseal(&root, &mut semantic);
+        let anchored = VerifyOptions {
+            expected_semantic_hash: Some(original.semantic_hash.clone()),
+            ..VerifyOptions::default()
+        };
+        let report = verify_bundle(&root, &anchored).unwrap();
+        assert_eq!(failed_names(&report), ["semantic payload checksums"]);
+        std::fs::remove_dir_all(root).unwrap();
+
+        // An unknown semantic-manifest field, with every hash resealed.
+        let root = testutil::sample_bundle("unknown-field");
+        let original = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+        let anchored = VerifyOptions {
+            expected_semantic_hash: Some(original.semantic_hash.clone()),
+            ..VerifyOptions::default()
+        };
+        let mut semantic = read_semantic_manifest(&root).unwrap();
+        reseal(&root, &mut semantic);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("semantic-manifest.json")).unwrap())
+                .unwrap();
+        value["model"]["note"] = "unchecked".into();
+        let bytes = crate::v05::manifest::canonical_json(&value).unwrap();
+        std::fs::write(root.join("semantic-manifest.json"), &bytes).unwrap();
+        let mut manifest: BundleManifest =
+            serde_json::from_slice(&std::fs::read(path_of(&root)).unwrap()).unwrap();
+        let mut inventory = semantic.payloads.clone();
+        inventory.insert("semantic-manifest.json".into(), sha256_hex(&bytes));
+        manifest.payload_hash = BundleIdentity::payload_hash(&inventory).unwrap();
+        std::fs::write(path_of(&root), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        rewrite_checksums(&root, &manifest);
+        let report = verify_bundle(&root, &anchored).unwrap();
+        assert_eq!(failed_names(&report), ["semantic manifest fields"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn path_of(root: &Path) -> PathBuf {
+        root.join("manifest.json")
+    }
+
+    fn rewrite_checksums(root: &Path, manifest: &BundleManifest) {
         let checksums = manifest
             .files
             .iter()
