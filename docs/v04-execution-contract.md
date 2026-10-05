@@ -100,7 +100,7 @@ Out of scope (hard constraints, from the release spec):
 
 ## 3. Current v0.3 decode sequence (frozen reference)
 
-Both families run the single generic hooked forward path in `src/llama.rs`
+Both families run the single generic hooked forward path in `crates/ember-core/src/llama.rs`
 (`Llama::forward_with_cache_hooked`, block path
 `LlamaBlock::forward_with_cache_hooked`, attention
 `LlamaAttention::forward_with_cache`). Config differences (RoPE layout,

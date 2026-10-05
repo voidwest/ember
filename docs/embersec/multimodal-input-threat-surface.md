@@ -116,8 +116,8 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
   shape fuzz against `preprocess`/`to_mono_16k`/encoder entry points.
 - **VAL-6 · Unsafe reachability after media decode.** Enabled decoders (png 0.18, zune-jpeg 0.5) are pure
   Rust: no C/FFI in the decode path. The only `unsafe` reachable downstream are `matrixmultiply::sgemm`
-  (`src/tensor.rs:197-214, 262-279`, guarded by shape asserts + contiguous-layout invariants) and the
-  AVX2 `fast_exp_raw` (`src/simd.rs:1544-1608`, length-checked wrappers). No unsafe/FFI finding.
+  (`crates/ember-core/src/tensor.rs:197-214, 262-279`, guarded by shape asserts + contiguous-layout invariants) and the
+  AVX2 `fast_exp_raw` (`crates/ember-core/src/simd.rs:1544-1608`, length-checked wrappers). No unsafe/FFI finding.
 
 ---
 
@@ -171,7 +171,7 @@ pushed to `origin/main`:
   gemma4 parity, loader/npy/tokenizer/kv hardening, fuzz harness, docs),
 - `75183e67`: audio/vision hardening delta (WAV panic/amplification fixes,
   encoder shape checks, validated audio seam + duration/segment caps, tests).
-The pre-existing unstaged leftovers (`src/quant.rs`, the deleted
+The pre-existing unstaged leftovers (`crates/ember-core/src/quant.rs`, the deleted
 `data/test_*.npy`, and the two untracked files) were left untouched.
 
 Deferred: VAL-2 (cache-key width), VAL-4 (tile-grid mirror dedup), and the

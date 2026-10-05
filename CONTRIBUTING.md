@@ -54,6 +54,12 @@ installed; the script prints the `rustup` command for anything it skipped.
 
 ## Repository layout and boundaries
 
+- The code is a cargo workspace: `crates/ember-core/` holds the kernels,
+  models, execution plans, KV cache and the hook framework; the root `ember`
+  crate holds the research layers, the CLI and the consoles, and re-exports
+  `ember-core`'s modules at their `ember::` paths. Keep the direction one-way:
+  `ember-core` must not depend on anything in `src/`. A change confined to
+  `src/` does not recompile `ember-core`.
 - `main` is the public branch: code, docs, tests, CI, and tracked data
   exports. It is pushed to origin.
 - `paper/` and the `paper-private` branch hold the TACL submission sources
@@ -270,12 +276,13 @@ re-implementing the check, and the decision logic itself is covered
 model-free by `tests/gated_suite_contract.rs`. If a suite must be skipped
 in a release job, that is a **release blocker**, not a caveat.
 
-## Design and review checklist: `src/k_quant_matmul.rs`
+## Design and review checklist: `crates/ember-core/src/k_quant_matmul.rs`
 
-`src/k_quant_matmul.rs` is the canonical Q4_K/Q6_K-weight × transient Q8_K-
-activation matmul. Read it with [`src/k_matmul.rs`](src/k_matmul.rs), the
-exact-f32 oracle; [`src/quant_k.rs`](src/quant_k.rs), the checked block layout;
-[`src/loader.rs`](src/loader.rs), the recorded strategy; and the frozen
+`crates/ember-core/src/k_quant_matmul.rs` is the canonical Q4_K/Q6_K-weight ×
+transient Q8_K-activation matmul. Read it with
+[`k_matmul.rs`](crates/ember-core/src/k_matmul.rs), the exact-f32 oracle;
+[`quant_k.rs`](crates/ember-core/src/quant_k.rs), the checked block layout;
+[`loader.rs`](crates/ember-core/src/loader.rs), the recorded strategy; and the frozen
 [`v0.3 contract`](docs/v03-execution-contracts.md). It is a hot,
 unsafe-adjacent boundary, not a place to add an unvalidated second kernel.
 

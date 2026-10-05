@@ -16,7 +16,7 @@ replacement-memory thesis had failed for a normal prefill/decode session.
 
 The final tracked `git diff --binary HEAD` SHA-256 is
 `3e14188cd141604fd2de5b5e4e9379784478166483b0b3a0f2ab43512b4a532b`.
-Untracked research notes, the driver, and `src/residency.rs` are deliberately
+Untracked research notes, the driver, and `crates/ember-core/src/residency.rs` are deliberately
 preserved and are not included in Git's unstaged-diff hash.
 
 No scheduler, tile, compensation, ISA, or quantization-format work was done in
@@ -79,13 +79,13 @@ cross-workload planner.
 
 ## 4. Code changes
 
-- `src/residency.rs`: low-frequency Linux phase recorder plus a timing-only
+- `crates/ember-core/src/residency.rs`: low-frequency Linux phase recorder plus a timing-only
   perturbation-audit mode.
 - `src/main.rs`: `bench-lifecycle` CLI, modes A-E, selections F-J, explicit
   generic prefill and trait-dispatched packed decode, deterministic JSON.
-- `src/llama.rs`: constructor that suppresses automatic packing, explicit
+- `crates/ember-core/src/llama.rs`: constructor that suppresses automatic packing, explicit
   projection-selection groups, separately timed packing and re-eviction.
-- `src/model.rs` and `src/quant.rs`: separate existing packed-layout
+- `crates/ember-core/src/model.rs` and `crates/ember-core/src/quant.rs`: separate existing packed-layout
   construction from source-page advice and return advice success/failure.
 - `scripts/benchmark_packed_lifecycle.py`: fresh-process orchestration,
   affinity, randomized order, temperature gating, parity, break-even, raw JSON,
@@ -98,13 +98,13 @@ automatic packing and `EMBER_LLAMA_PACKED_Q8=0` rollback behavior remain.
 
 Line numbers refer to the formatted session state:
 
-- `src/residency.rs:1-176`
+- `crates/ember-core/src/residency.rs:1-176`
 - `src/main.rs:203-313`, `src/main.rs:476`,
   `src/main.rs:1559-1847`, `src/main.rs:2706-2738`
-- `src/llama.rs:1086-1133`, `src/llama.rs:1737-1750`,
-  `src/llama.rs:1891-2038`
-- `src/model.rs:307-373`
-- `src/quant.rs:226-252`
+- `crates/ember-core/src/llama.rs:1086-1133`, `crates/ember-core/src/llama.rs:1737-1750`,
+  `crates/ember-core/src/llama.rs:1891-2038`
+- `crates/ember-core/src/model.rs:307-373`
+- `crates/ember-core/src/quant.rs:226-252`
 - `src/lib.rs:1-19`
 - `scripts/benchmark_packed_lifecycle.py:1-533`
 - `.gitignore:29-31`
