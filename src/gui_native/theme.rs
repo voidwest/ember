@@ -15,7 +15,7 @@ impl AppearanceMode {
         let Some(path) = settings_path() else {
             return Self::System;
         };
-        let Ok(value) = std::fs::read_to_string(path) else {
+        let Some(value) = read_setting(&path) else {
             return Self::System;
         };
         match value.trim() {
@@ -53,13 +53,7 @@ impl AppearanceMode {
         let Some(path) = settings_path() else {
             return;
         };
-        let Some(parent) = path.parent() else {
-            return;
-        };
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
-        let _ = std::fs::write(path, self.label().to_ascii_lowercase());
+        write_setting(&path, &self.label().to_ascii_lowercase());
     }
 }
 
@@ -77,7 +71,7 @@ fn settings_path() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
-    Some(ember::app_store::config_dir().join("native-console-theme"))
+    Some(ember::app_store::config_dir()?.join("native-console-theme"))
 }
 
 /// A one-word persisted workspace flag, one file per key, beside the theme
@@ -90,20 +84,31 @@ fn flag_path(key: &str) -> Option<PathBuf> {
 }
 
 pub(super) fn load_flag(key: &str) -> Option<bool> {
-    std::fs::read_to_string(flag_path(key)?)
-        .ok()
-        .map(|value| value.trim() == "true")
+    read_setting(&flag_path(key)?).map(|value| value.trim() == "true")
+}
+
+/// A one-word setting: a regular file of at most a few bytes (see
+/// `app_store::read_config_file`), anything else reads as unset.
+fn read_setting(path: &std::path::Path) -> Option<String> {
+    let bytes = ember::app_store::read_config_file(path, 64).ok()??;
+    String::from_utf8(bytes).ok()
+}
+
+/// Replace a setting file by rename, so a symlink planted in its place is
+/// replaced rather than followed and its target truncated.
+fn write_setting(path: &std::path::Path, value: &str) {
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_ok()
+    {
+        let _ = ember::atomic_file::atomic_write(path, value.as_bytes());
+    }
 }
 
 pub(super) fn persist_flag(key: &str, value: bool) {
     let Some(path) = flag_path(key) else {
         return;
     };
-    if let Some(parent) = path.parent()
-        && std::fs::create_dir_all(parent).is_ok()
-    {
-        let _ = std::fs::write(path, if value { "true" } else { "false" });
-    }
+    write_setting(&path, if value { "true" } else { "false" });
 }
 
 /// Semantic colors. Layout code names the role it needs instead of selecting

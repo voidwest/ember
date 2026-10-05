@@ -915,7 +915,10 @@ impl Console {
     /// control or a real fact about where state lives; nothing here is a
     /// toggle that toggles nothing.
     fn settings_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let store_path = app_store::store_path().display().to_string();
+        let store_path = app_store::store_path().map_or_else(
+            || "(not saved)".to_string(),
+            |path| path.display().to_string(),
+        );
 
         div()
             .flex()

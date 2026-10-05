@@ -590,8 +590,20 @@ impl Console {
                 // Unit tests drive the real console; they must neither read nor
                 // write the developer's own history.
                 (AppStore::default(), None, None)
+            } else if let (Some(path), Some(legacy)) =
+                (app_store::store_path(), app_store::legacy_store_path())
+            {
+                open_store(path, &legacy)
             } else {
-                open_store(app_store::store_path(), &app_store::legacy_store_path())
+                (
+                    AppStore::default(),
+                    Some(
+                        "no private configuration directory (HOME unset and the temp directory \
+                         is not usable) -- history is not saved this session"
+                            .to_string(),
+                    ),
+                    None,
+                )
             };
         let colors = if appearance.is_dark(system_dark) {
             theme::dark()

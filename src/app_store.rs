@@ -325,6 +325,9 @@ pub const MAX_RUNS: usize = 500;
 /// store through [`MAX_RUNS`], so forgetting its tombstone cannot revive it.
 pub const MAX_TOMBSTONES: usize = 2 * MAX_RUNS;
 
+/// Bound on remembered models, the most recently used kept.
+pub const MAX_MODELS: usize = 256;
+
 /// Keep the [`MAX_TOMBSTONES`] most recent keys.
 fn bound_keys(keys: &mut BTreeSet<RunKey>) {
     if keys.len() <= MAX_TOMBSTONES {
@@ -604,6 +607,22 @@ impl AppStore {
     /// issued. Models are unioned; the draft is taken only when `migrating`
     /// (no store of this format existed yet) and none is held. Returns how
     /// many runs were imported.
+    /// Apply the retention bounds a write applies, to a store just read: a
+    /// file written elsewhere need not respect them, and every later scan
+    /// (legacy import, merges, the Runs table) is linear in these lists.
+    fn enforce_bounds(&mut self) {
+        self.runs
+            .sort_by_key(|run| std::cmp::Reverse((run.finished_at, run.number)));
+        self.runs.truncate(MAX_RUNS);
+        bound_keys(&mut self.deleted_runs);
+        bound_keys(&mut self.legacy_imported);
+        if self.models.len() > MAX_MODELS {
+            self.models
+                .sort_by_key(|model| std::cmp::Reverse(model.last_used_at));
+            self.models.truncate(MAX_MODELS);
+        }
+    }
+
     pub fn import_legacy(&mut self, legacy: &AppStore, migrating: bool) -> usize {
         self.last_run_number = self.last_run_number.max(legacy.last_run_number);
         let mut imported = 0;
@@ -731,16 +750,46 @@ fn lock_store(path: &Path) -> std::io::Result<StoreLock> {
         .ok_or_else(|| std::io::Error::other(format!("{} has no filename", path.display())))?
         .to_os_string();
     name.push(".lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path.with_file_name(name))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    // A planted symlink must not redirect the lock file (it is created and
+    // opened for writing).
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)?;
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+    }
+    let file = options.open(path.with_file_name(name))?;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        // Bounded: the store is opened on the UI thread, and a process that
+        // holds the lock indefinitely (a stopped console mid-save) must not
+        // freeze startup or quit. The caller reports the failure.
+        let deadline = std::time::Instant::now() + LOCK_WAIT;
+        loop {
+            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => break,
+                Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(rustix::io::Errno::WOULDBLOCK) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "the app store is locked by another ember process",
+                    ));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
     Ok(StoreLock { _file: file })
 }
+
+/// How long a store open or save waits for another process's lock.
+#[cfg(not(test))]
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+#[cfg(test)]
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(600);
 
 /// Why a store could not be read.
 ///
@@ -780,11 +829,9 @@ impl std::error::Error for StoreError {}
 /// a corrupted store as a fresh install.
 pub fn load(path: impl AsRef<Path>) -> Result<AppStore, StoreError> {
     let path = path.as_ref();
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(AppStore::default());
-        }
+    let bytes = match read_config_file(path, MAX_STORE_BYTES) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Ok(AppStore::default()),
         Err(source) => {
             return Err(StoreError::Io {
                 path: path.to_path_buf(),
@@ -812,32 +859,101 @@ pub fn load(path: impl AsRef<Path>) -> Result<AppStore, StoreError> {
             ),
         });
     }
+    let mut parsed = parsed;
+    parsed.enforce_bounds();
     Ok(parsed)
 }
 
+/// Upper bound on a store file: 500 runs with their kept results fit in a
+/// few megabytes.
+const MAX_STORE_BYTES: u64 = 64 << 20;
+
+/// Read a small configuration file, or `None` if it does not exist.
+///
+/// The file is opened without blocking and must be a regular file (a link to
+/// one is fine), and at most `cap` bytes are read: a FIFO, a device or a
+/// huge file in the config directory fails instead of hanging or exhausting
+/// memory on every launch.
+pub fn read_config_file(path: &Path, cap: u64) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(cap + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > cap {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("larger than the {cap}-byte limit"),
+        ));
+    }
+    Ok(Some(bytes))
+}
+
 /// Ember's per-user configuration directory: `$XDG_CONFIG_HOME/ember`, then
-/// `~/.config/ember`, then the temp directory so a sandboxed or read-only home
-/// still works. Shared by the store and the console's appearance settings.
-pub fn config_dir() -> PathBuf {
-    if let Some(root) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(root).join("ember");
+/// `~/.config/ember` (each only when absolute; a relative value would read
+/// state from whatever directory the console was started in), then a private
+/// directory in the temp directory so a sandboxed home still works. Shared by
+/// the store and the console's appearance settings. `None` when no private
+/// location exists: nothing is then read or persisted.
+pub fn config_dir() -> Option<PathBuf> {
+    let absolute = |name: &str| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    if let Some(root) = absolute("XDG_CONFIG_HOME") {
+        return Some(root.join("ember"));
     }
-    if let Some(root) = std::env::var_os("HOME") {
-        return PathBuf::from(root).join(".config/ember");
+    if let Some(home) = absolute("HOME") {
+        return Some(home.join(".config/ember"));
     }
-    std::env::temp_dir().join("ember")
+    private_temp_config_dir()
+}
+
+/// `<temp>/ember-<uid>`, created mode 0700, and used only if it is a real
+/// directory owned by this user and closed to others: on a shared `/tmp`
+/// another user could otherwise plant the state the console loads.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn private_temp_config_dir() -> Option<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
+    let uid = rustix::process::getuid().as_raw();
+    let dir = std::env::temp_dir().join(format!("ember-{uid}"));
+    let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+    let metadata = std::fs::symlink_metadata(&dir).ok()?;
+    (metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o077 == 0).then_some(dir)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn private_temp_config_dir() -> Option<PathBuf> {
+    Some(std::env::temp_dir().join("ember"))
 }
 
 /// Where the store lives, inside [`config_dir`]. A different name from the
 /// legacy file on purpose: see the module docs.
-pub fn store_path() -> PathBuf {
-    config_dir().join("app-state.v2.json")
+pub fn store_path() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("app-state.v2.json"))
 }
 
 /// Where builds before the v2 file kept history, inside [`config_dir`].
 /// Read-only for this build.
-pub fn legacy_store_path() -> PathBuf {
-    config_dir().join("app-state.json")
+pub fn legacy_store_path() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("app-state.json"))
 }
 
 /// A store opened with the legacy file folded in.
@@ -1093,8 +1209,9 @@ mod tests {
 
     #[test]
     fn store_paths_are_separate() {
-        assert_ne!(store_path(), legacy_store_path());
-        assert_eq!(store_path().parent(), legacy_store_path().parent());
+        let (store, legacy) = (store_path().unwrap(), legacy_store_path().unwrap());
+        assert_ne!(store, legacy);
+        assert_eq!(store.parent(), legacy.parent());
     }
 
     #[test]
@@ -1520,5 +1637,44 @@ mod tests {
         writer.join().unwrap();
         assert_eq!(load(&path).unwrap().runs.len(), 1);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_lock_held_past_the_wait_fails_instead_of_hanging() {
+        let path = temp_path("held-lock");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let _held = lock_store(&path).unwrap();
+        let start = std::time::Instant::now();
+        let error = std::thread::spawn({
+            let path = path.clone();
+            move || {
+                let mut store = AppStore::default();
+                store.push_run(run(1, 1, false));
+                store.save_merged(&path).unwrap_err()
+            }
+        })
+        .join()
+        .unwrap();
+        assert!(error.to_string().contains("locked"), "{error}");
+        assert!(start.elapsed() < LOCK_WAIT * 4);
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_lock_file_is_not_followed_through_a_symlink() {
+        let path = temp_path("lock-link");
+        let dir = path.parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        let mut lock = path.file_name().unwrap().to_os_string();
+        lock.push(".lock");
+        std::os::unix::fs::symlink(&victim, dir.join(lock)).unwrap();
+        assert!(lock_store(&path).is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
