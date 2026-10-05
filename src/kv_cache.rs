@@ -206,13 +206,27 @@ impl KVCache {
         len: usize,
         layers: Option<Vec<LayerAllocation>>,
     ) -> Result<Self, String> {
+        // A zeroed allocation (calloc) rather than reserve + fill: the OS
+        // hands out zero pages lazily, so a long-context cache neither
+        // writes nor commits every page before the first token.
         let allocate_f16 = |name: &str| -> Result<Vec<f16>, String> {
-            let mut values = Vec::new();
-            values.try_reserve_exact(len).map_err(|error| {
-                format!("cannot allocate {name} KV payload ({len} f16): {error}")
-            })?;
-            values.resize(len, f16::ZERO);
-            Ok(values)
+            if len == 0 {
+                return Ok(Vec::new());
+            }
+            let failed = || format!("cannot allocate {name} KV payload ({len} f16)");
+            let layout = std::alloc::Layout::array::<f16>(len).map_err(|_| failed())?;
+            // SAFETY: `layout` has a non-zero size (`len > 0`, f16 is two
+            // bytes). The pointer is checked for null, comes from the global
+            // allocator with exactly the layout `Vec<f16>` uses for capacity
+            // `len`, and its `len` elements are initialized: all-zero bits are
+            // `f16::ZERO`.
+            unsafe {
+                let ptr = std::alloc::alloc_zeroed(layout).cast::<f16>();
+                if ptr.is_null() {
+                    return Err(failed());
+                }
+                Ok(Vec::from_raw_parts(ptr, len, len))
+            }
         };
         let mut qk_scratch = Vec::new();
         qk_scratch.try_reserve_exact(max_seq_len).map_err(|error| {
