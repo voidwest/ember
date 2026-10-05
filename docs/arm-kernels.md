@@ -64,7 +64,9 @@ model, the uncached experiment added approximately 266 MiB of peak RSS and
 50 ms of packing work; the dedicated decode comparison improved by about 2%
 at four workers. Cache validation and numerical parity apply to the packed
 bytes as well as the original row layout. `EMBER_PACKED_CACHE=0` disables disk
-caching, not the in-memory layout.
+caching, not the in-memory layout. Runs that record the model's SHA-256
+(probes, dumps, captures, run manifests) never read the cache: they pack from
+the hashed model file, so their provenance names the weights they ran.
 
 For this machine and these models, start with `RAYON_NUM_THREADS=4` for Q8_0
 and `RAYON_NUM_THREADS=10` for Q4_K_M. The fastest tested Q8 route uses

@@ -703,6 +703,23 @@ impl From<TokenPositionArg> for ember::extraction::TokenPositionMode {
     }
 }
 
+/// The packed-layout cache for a top-level run, unless the run records the
+/// model's SHA-256 (probes, dumps, captures, run manifests). The cache holds
+/// derived bytes whose payload is not content-hashed by default, so such a
+/// run packs from the hashed model file instead: the weights it executes are
+/// then exactly the ones its provenance names. Verifying the cache would
+/// cost more than the repack on ARM (see `packed_cache`).
+fn provenance_safe_packed_cache(
+    args: &Args,
+    loader: &ember::loader::GgufLoader,
+    run_metadata: &RunMetadata,
+) -> Option<ember::packed_cache::PackedCache> {
+    if run_metadata.model_sha256.is_some() {
+        return None;
+    }
+    ember::packed_cache::PackedCache::for_loader(std::path::Path::new(&args.model), loader)
+}
+
 pub(crate) struct RunMetadata {
     gguf_metadata: serde_json::Value,
     model_file_size_bytes: Option<u64>,
@@ -1047,11 +1064,9 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
             use ember::llama::Llama;
             // Default on (EMBER_PACKED_CACHE=0 disables): reuse the packed
             // Q8_0 decode layout from disk instead of repacking it on every
-            // process start.
-            let packed_cache = ember::packed_cache::PackedCache::for_loader(
-                std::path::Path::new(&args.model),
-                &loader,
-            );
+            // process start. Not for runs that record the model's SHA-256:
+            // see `provenance_safe_packed_cache`.
+            let packed_cache = provenance_safe_packed_cache(&args, &loader, &run_metadata);
             let model = Llama::from_loader_with_max_seq_len_cached(
                 loader,
                 args.max_seq_len,
@@ -1141,10 +1156,7 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
             use ember::gemma4::Gemma4;
             // Default on (EMBER_PACKED_CACHE=0 disables): the gate/up Q8_0
             // VNNI layouts are cached like the llama-family projections.
-            let packed_cache = ember::packed_cache::PackedCache::for_loader(
-                std::path::Path::new(&args.model),
-                &loader,
-            );
+            let packed_cache = provenance_safe_packed_cache(&args, &loader, &run_metadata);
             let model = Gemma4::from_loader_cached(loader, packed_cache.as_ref())?;
             validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);

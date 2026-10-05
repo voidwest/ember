@@ -16,9 +16,12 @@
 //! header digest, entry bounds, expected shapes and lengths) runs on every
 //! read. A full payload digest is stored and checked only when
 //! `EMBER_PACKED_CACHE_VERIFY=1`, because hashing a ~1 GiB payload costs
-//! roughly the repack it would save — the same trust the model file itself
-//! receives (no content hash). Torn writes cannot be observed: the payload is
-//! streamed into a sibling temporary file and published by rename.
+//! roughly the repack it would save (on ARM, hashing the ~280 MB interleaved
+//! head costs more than repacking it). Runs that record the model's SHA-256
+//! therefore do not consult the cache at all: they pack from the hashed file,
+//! so the weights they execute are the ones their provenance names. Torn
+//! writes cannot be observed: the payload is synced, then published by
+//! rename.
 //!
 //! The first run for a model writes the cache (roughly the size of the
 //! packed tensors; ~1.3 GiB for a 1B Q8_0 model). After each successful
