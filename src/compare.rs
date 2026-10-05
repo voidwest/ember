@@ -347,8 +347,19 @@ fn load_record_values(manifest_path: &str, record: &CaptureRecord) -> Result<Loa
     let path = path
         .to_str()
         .ok_or_else(|| format!("record path is not valid UTF-8: {}", path.display()))?;
-    let (shape, values) =
-        crate::npy::read_npy_2d(path).map_err(|e| format!("failed to read '{}': {e}", path))?;
+    // Hash the bytes actually compared: the manifest was validated earlier,
+    // and a file replaced since then must not be compared unchecked.
+    let bytes = crate::npy::read_npy_file_bytes(path)
+        .map_err(|e| format!("failed to read '{path}': {e}"))?;
+    let actual_sha = crate::extraction::sha256_bytes(&bytes);
+    if !actual_sha.eq_ignore_ascii_case(&record.sha256) {
+        return Err(format!(
+            "'{path}' changed after validation: manifest SHA-256 {}, read {actual_sha}",
+            record.sha256
+        ));
+    }
+    let (shape, values) = crate::npy::read_npy_2d_bytes_named(&bytes, path)
+        .map_err(|e| format!("failed to read '{path}': {e}"))?;
     Ok(LoadedRecord { shape, values })
 }
 

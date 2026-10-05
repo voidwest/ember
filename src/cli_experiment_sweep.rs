@@ -20,9 +20,9 @@ use ember::plan::ExecutionMode;
 use ember::quant_k::KStrategy;
 use ember::v05::spec::ExperimentSpecV1;
 use ember::v05::sweep::{
-    compare_sweeps, point_metrics, verify_sweep, DerivedSpec, SweepBundleRef, SweepDefinition,
-    SweepManifest, SweepPointRecord, SweepVerification, SWEEP_CSV_FILE, SWEEP_MANIFEST_FILE,
-    SWEEP_RUNTIME_FILE, SWEEP_SCHEMA_V1, SWEEP_SPEC_FILE,
+    point_metrics, verify_sweep, DerivedSpec, SweepBundleRef, SweepDefinition, SweepManifest,
+    SweepPointRecord, SweepVerification, SWEEP_CSV_FILE, SWEEP_MANIFEST_FILE, SWEEP_RUNTIME_FILE,
+    SWEEP_SCHEMA_V1, SWEEP_SPEC_FILE,
 };
 use ember::v05::verify::{load_bundle_for_source, VerifyOptions};
 use std::path::{Path, PathBuf};
@@ -464,19 +464,8 @@ pub(crate) fn run_compare_sweeps(
         a.display(),
         b.display()
     );
-    for (dir, expected) in [(a, expect_a), (b, expect_b)] {
-        if let Some(expected) = expected {
-            let manifest = ember::v05::sweep::read_manifest(dir).map_err(anyhow::Error::msg)?;
-            anyhow::ensure!(
-                manifest.sweep_hash == expected,
-                "sweep '{}' has hash {} but {} was expected",
-                dir.display(),
-                manifest.sweep_hash,
-                expected
-            );
-        }
-    }
-    let result = compare_sweeps(a, b).map_err(anyhow::Error::msg)?;
+    let result = ember::v05::sweep::compare_anchored_sweeps(a, b, expect_a, expect_b)
+        .map_err(anyhow::Error::msg)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
         return Ok(());
@@ -646,7 +635,12 @@ kind = "prompt-final"
             false,
         )
         .unwrap();
-        let comparison = compare_sweeps(&out, &again).unwrap();
+        let comparison = ember::v05::sweep::compare_sweeps(&out, &again).unwrap();
+        // An anchor is checked in the same verification pass.
+        let error =
+            ember::v05::sweep::compare_anchored_sweeps(&out, &again, Some(&"0".repeat(64)), None)
+                .unwrap_err();
+        assert!(error.contains("sweep hash anchor"), "{error}");
         assert_eq!(comparison.verdict, "exact");
         assert!(comparison.sweep_hash_equal);
 

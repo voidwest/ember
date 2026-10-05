@@ -748,9 +748,22 @@ pub fn is_sweep_dir(dir: &Path) -> bool {
     dir.join(SWEEP_MANIFEST_FILE).is_file()
 }
 
+/// Read a sweep-level file, refusing symlinks and special files like the
+/// bundle verifier does: what is verified must be the directory's own file.
+fn read_sweep_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "not a regular file",
+        ));
+    }
+    std::fs::read(path)
+}
+
 /// Read and parse `sweep.json`.
 pub fn read_manifest(dir: &Path) -> Result<SweepManifest, String> {
-    let bytes = std::fs::read(dir.join(SWEEP_MANIFEST_FILE))
+    let bytes = read_sweep_file(&dir.join(SWEEP_MANIFEST_FILE))
         .map_err(|error| format!("cannot read {SWEEP_MANIFEST_FILE}: {error}"))?;
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("malformed {SWEEP_MANIFEST_FILE}: {error}"))
@@ -761,6 +774,15 @@ pub fn read_manifest(dir: &Path) -> Result<SweepManifest, String> {
 /// point bundle is exactly the experiment the sweep spec derives for it, and
 /// that the recorded metrics are what the bundles give.
 pub fn verify_sweep(dir: &Path, options: &VerifyOptions) -> Result<SweepVerification, String> {
+    verify_and_load_sweep(dir, options).map(|(report, _)| report)
+}
+
+/// [`verify_sweep`], also returning the manifest that was verified so
+/// callers never re-read `sweep.json` after verification.
+fn verify_and_load_sweep(
+    dir: &Path,
+    options: &VerifyOptions,
+) -> Result<(SweepVerification, SweepManifest), String> {
     let manifest = read_manifest(dir)?;
     let mut report = SweepVerification {
         schema: SWEEP_SCHEMA_V1.to_string(),
@@ -790,7 +812,11 @@ pub fn verify_sweep(dir: &Path, options: &VerifyOptions) -> Result<SweepVerifica
 
     // The sweep spec and what it derives.
     let spec_path = inside(dir, &manifest.spec_file)?;
-    let spec_text = std::fs::read_to_string(&spec_path)
+    let spec_text = read_sweep_file(&spec_path)
+        .and_then(|bytes| {
+            String::from_utf8(bytes)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+        })
         .map_err(|error| format!("cannot read {}: {error}", manifest.spec_file))?;
     let spec_sha = sha256_hex(spec_text.as_bytes());
     report.check(
@@ -844,7 +870,7 @@ pub fn verify_sweep(dir: &Path, options: &VerifyOptions) -> Result<SweepVerifica
         Ok(bundle) => bundle,
         Err(error) => {
             report.check("baseline bundle", false, error);
-            return Ok(report);
+            return Ok((report, manifest));
         }
     };
     report.bundles += 1;
@@ -938,15 +964,15 @@ pub fn verify_sweep(dir: &Path, options: &VerifyOptions) -> Result<SweepVerifica
         }
     }
     // The CSV is a view of the manifest.
-    match std::fs::read_to_string(dir.join(SWEEP_CSV_FILE)) {
+    match read_sweep_file(&dir.join(SWEEP_CSV_FILE)) {
         Ok(csv) => report.check(
             "sweep csv",
-            csv == manifest.to_csv(),
+            csv == manifest.to_csv().as_bytes(),
             "sweep.csv is the manifest's table",
         ),
         Err(error) => report.check("sweep csv", false, error.to_string()),
     }
-    Ok(report)
+    Ok((report, manifest))
 }
 
 /// One point (or the baseline) compared across two sweeps.
@@ -975,8 +1001,25 @@ pub struct SweepComparison {
 
 /// Compare two sweep directories (each verified first).
 pub fn compare_sweeps(a: &Path, b: &Path) -> Result<SweepComparison, String> {
-    for dir in [a, b] {
-        let report = verify_sweep(dir, &VerifyOptions::default())?;
+    compare_anchored_sweeps(a, b, None, None)
+}
+
+/// [`compare_sweeps`] with optional expected sweep hashes, checked in the
+/// same verification pass whose manifests are compared.
+pub fn compare_anchored_sweeps(
+    a: &Path,
+    b: &Path,
+    expect_a: Option<&str>,
+    expect_b: Option<&str>,
+) -> Result<SweepComparison, String> {
+    let mut manifests = Vec::with_capacity(2);
+    for (dir, expected) in [(a, expect_a), (b, expect_b)] {
+        let options = VerifyOptions {
+            expected_semantic_hash: expected.map(str::to_string),
+            ..VerifyOptions::default()
+        };
+        let (report, manifest) = verify_and_load_sweep(dir, &options)?;
+        manifests.push(manifest);
         if !report.ok {
             let failed: Vec<String> = report
                 .checks
@@ -991,7 +1034,7 @@ pub fn compare_sweeps(a: &Path, b: &Path) -> Result<SweepComparison, String> {
             ));
         }
     }
-    let (ma, mb) = (read_manifest(a)?, read_manifest(b)?);
+    let (mb, ma) = (manifests.pop().expect("two"), manifests.pop().expect("two"));
     let mut points = vec![SweepPointComparison {
         id: "baseline".into(),
         present_in_a: true,
