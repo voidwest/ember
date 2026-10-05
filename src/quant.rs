@@ -525,6 +525,8 @@ impl QuantizedWeightInterleaved {
         out_features: usize,
         in_features: usize,
     ) -> Result<Self, alloc::string::String> {
+        check_mapped_range(&mmap, &quants)?;
+        check_mapped_range(&mmap, &scales)?;
         let blocks_per_row = Self::validate_parts(
             quants.end - quants.start,
             scales.end - scales.start,
@@ -572,6 +574,21 @@ pub(crate) enum PackedStorage {
         mmap: alloc::sync::Arc<memmap2::Mmap>,
         range: core::ops::Range<usize>,
     },
+}
+
+/// A mapped view must lie inside its mapping; `PackedStorage::as_slice`
+/// would otherwise panic on first use instead of the entry being rejected.
+fn check_mapped_range(
+    mmap: &memmap2::Mmap,
+    range: &core::ops::Range<usize>,
+) -> Result<(), alloc::string::String> {
+    if range.start > range.end || range.end > mmap.len() {
+        return Err(alloc::format!(
+            "mapped range {range:?} lies outside the {}-byte mapping",
+            mmap.len()
+        ));
+    }
+    Ok(())
 }
 
 impl PackedStorage {
@@ -722,6 +739,7 @@ impl QuantizedWeightVnni {
         out_features: usize,
         in_features: usize,
     ) -> Result<Self, alloc::string::String> {
+        check_mapped_range(&mmap, &range)?;
         let blocks_per_row =
             Self::validate_packed_len(range.end - range.start, out_features, in_features)?;
         Ok(Self {
