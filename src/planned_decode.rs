@@ -905,10 +905,29 @@ pub(crate) fn planned_causal_attention(
         }
     };
     if crate::backend::should_parallel_attention(n_heads, 1, total_seq_len, head_dim) {
-        out.par_chunks_mut(head_dim)
-            .zip(scores[..n_heads * total_seq_len].par_chunks_mut(total_seq_len))
-            .enumerate()
-            .for_each(|(h, (head_out, score_row))| compute_head(h, score_row, head_out));
+        // One head per chunk on the decode team, which is already spinning
+        // between the surrounding matvec regions (as in the backend's
+        // single-token attention); Rayon would wake a second set of threads
+        // to compete with it.
+        let heads = crate::decode_pool::SharedMut::new(out);
+        let rows = crate::decode_pool::SharedMut::new(&mut scores[..n_heads * total_seq_len]);
+        let ran = crate::decode_pool::run(n_heads, &|h| {
+            // SAFETY: each chunk index is a distinct head, so its output
+            // slice and score row are disjoint from every other chunk's.
+            let (head_out, score_row) = unsafe {
+                (
+                    heads.range(h * head_dim, head_dim),
+                    rows.range(h * total_seq_len, total_seq_len),
+                )
+            };
+            compute_head(h, score_row, head_out);
+        });
+        if !ran {
+            out.par_chunks_mut(head_dim)
+                .zip(scores[..n_heads * total_seq_len].par_chunks_mut(total_seq_len))
+                .enumerate()
+                .for_each(|(h, (head_out, score_row))| compute_head(h, score_row, head_out));
+        }
     } else {
         for (h, (head_out, score_row)) in out
             .chunks_mut(head_dim)
