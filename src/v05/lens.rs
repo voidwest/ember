@@ -752,7 +752,7 @@ mod tests {
         for tied in [false, true] {
             let n_layers = 3;
             let model = load_tiny_llama(n_layers, tied);
-            assert_eq!(model.head_tied, tied);
+            assert_eq!(model.head_tied(), tied);
             let embed_dim = model.config.embed_dim;
             let backend = CpuBackend;
             let observed = Arc::new(Mutex::new(Observed::default()));

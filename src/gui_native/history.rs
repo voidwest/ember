@@ -256,12 +256,16 @@ pub(super) fn record_view(
         }
         _ => ("history".to_string(), "history".to_string()),
     };
+    // History keeps only token counts; the ids are placeholders. The count
+    // comes from the store file, so cap it (above any supported context) to
+    // keep a crafted record from allocating gigabytes.
+    const MAX_HISTORY_TOKENS: u32 = 1 << 18;
     let output = |text: String, tokens: Option<u32>, bundle_dir: String| RunOutput {
         text,
-        generated_token_ids: (1..=tokens.unwrap_or(0)).collect(),
+        generated_token_ids: (1..=tokens.unwrap_or(0).min(MAX_HISTORY_TOKENS)).collect(),
         generated_token_texts: Vec::new(),
         prompt_tokens: 0,
-        generated_tokens: tokens.unwrap_or(0) as usize,
+        generated_tokens: tokens.unwrap_or(0).min(MAX_HISTORY_TOKENS) as usize,
         bundle_dir,
         semantic_hash: "0000000000000000".to_string(),
         payload_hash: "00000000".to_string(),

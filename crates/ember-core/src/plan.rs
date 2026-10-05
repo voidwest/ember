@@ -15,7 +15,6 @@
 //!
 //! Contract: `docs/v04-execution-contract.md` (frozen 2026-08-04), section 10.
 
-use crate::v05::manifest::hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1233,7 +1232,8 @@ pub fn plan_hash(plan: &ExecutionPlan) -> String {
 /// feature swaps serde_json's default sorted `Map` for an insertion-ordered
 /// one and is enabled transitively by some dependencies (gpui); the v0.5
 /// canonical-JSON contract requires sorted keys, so sort explicitly here.
-pub(crate) fn sort_value_keys(value: &mut serde_json::Value) {
+#[doc(hidden)]
+pub fn sort_value_keys(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             let mut entries: Vec<(String, serde_json::Value)> =
@@ -1261,43 +1261,24 @@ fn short_sha(sha: &str) -> String {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Bytes as lowercase hex (no separator); the encoding of every plan hash.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
+/// Plan fixtures shared by this crate's tests and `ember`'s (test builds
+/// only, see `llama::testkit`). Not API.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub mod testkit {
     use super::*;
 
-    #[test]
-    fn decode_arena_rejects_misaligned_or_overlapping_regions() {
-        let region = |name: &str, offset: usize, size: usize| ScratchRegion {
-            name: name.into(),
-            offset,
-            size,
-            alignment: 4,
-            first_op: 0,
-            last_op: 0,
-            shared_with: None,
-        };
-        let scratch = ScratchPlan {
-            total_bytes: 256,
-            alignment: 6,
-            seq_capacity: 1,
-            regions: vec![
-                region("a", 0, 64),
-                region("b", 2, 16),
-                region("c", 32, 64),
-                region("d", 128, 64),
-            ],
-            tensor_regions: BTreeMap::new(),
-        };
-        let mut arena = DecodeArena::new(&scratch);
-        let a = arena.region_f32(0).unwrap();
-        assert_eq!(a.as_ptr() as usize % 4, 0);
-        assert!(arena.region_f32(1).unwrap_err().contains("f32-aligned"));
-        assert!(arena.regions_f32([0, 1]).is_err());
-        assert!(arena.regions_f32([0, 2]).unwrap_err().contains("overlap"));
-        assert!(arena.regions_f32([0, 3]).is_ok());
-    }
-
-    pub(crate) fn sample_plan(execution: ExecutionMode, hook: HookMode) -> ExecutionPlan {
+    pub fn sample_plan(execution: ExecutionMode, hook: HookMode) -> ExecutionPlan {
         ExecutionPlan {
             schema_version: PLAN_SCHEMA_VERSION,
             kernel_revision: PLAN_KERNEL_REVISION,
@@ -1431,6 +1412,45 @@ pub(crate) mod tests {
             plan_hash: String::new(),
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_arena_rejects_misaligned_or_overlapping_regions() {
+        let region = |name: &str, offset: usize, size: usize| ScratchRegion {
+            name: name.into(),
+            offset,
+            size,
+            alignment: 4,
+            first_op: 0,
+            last_op: 0,
+            shared_with: None,
+        };
+        let scratch = ScratchPlan {
+            total_bytes: 256,
+            alignment: 6,
+            seq_capacity: 1,
+            regions: vec![
+                region("a", 0, 64),
+                region("b", 2, 16),
+                region("c", 32, 64),
+                region("d", 128, 64),
+            ],
+            tensor_regions: BTreeMap::new(),
+        };
+        let mut arena = DecodeArena::new(&scratch);
+        let a = arena.region_f32(0).unwrap();
+        assert_eq!(a.as_ptr() as usize % 4, 0);
+        assert!(arena.region_f32(1).unwrap_err().contains("f32-aligned"));
+        assert!(arena.regions_f32([0, 1]).is_err());
+        assert!(arena.regions_f32([0, 2]).unwrap_err().contains("overlap"));
+        assert!(arena.regions_f32([0, 3]).is_ok());
+    }
+
+    pub(crate) use super::testkit::sample_plan;
 
     #[test]
     fn serialization_is_deterministic() {

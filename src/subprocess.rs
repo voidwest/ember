@@ -20,12 +20,13 @@
 //! [`std::os::unix::process::ExitStatusExt`] is available. Windows has no
 //! signals; abnormal termination surfaces as a nonzero exit code and maps to
 //! `ProcessCrash` only when the status reports neither success nor a code.
-//! Child-tree termination (grandchildren that outlive a kill) is **not**
-//! attempted: killing a process group is not portable (and is dangerous when
-//! Ember shares the group with the user's shell), so a runtime that
-//! double-forks helpers may leave orphans. Adapter binaries must therefore
-//! be single-process harnesses — the same constraint `run_eval.py` relies
-//! on via `os.wait4` + `proc.kill()`.
+//! On Unix each child leads its own process group, so it never shares the
+//! user's shell's group (terminal Ctrl-C does not reach it) and the whole
+//! tree can be killed: on timeout before the child is reaped, and after a
+//! normal exit when descendants still hold its pipes (the group id cannot be
+//! reused while they live). A helper that moves itself into a new session
+//! escapes this; adapter binaries should still be single-process
+//! harnesses. Elsewhere only the child itself is killed.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -51,16 +52,22 @@ pub struct SupervisedCommand {
     /// never searched implicitly here beyond what [`Command`] itself does
     /// with a bare name + PATH.
     pub program: PathBuf,
-    /// Arguments passed verbatim (no shell, no joining, no quoting).
-    pub argv: Vec<String>,
+    /// Arguments passed verbatim (no shell, no joining, no quoting), as OS
+    /// strings so non-UTF-8 paths arrive unaltered.
+    pub argv: Vec<std::ffi::OsString>,
     /// Hard deadline for the whole execution (spawn to reap).
     pub timeout: Duration,
 }
 
 impl SupervisedCommand {
-    /// Build a command with a timeout. The child inherits the parent's working
-    /// directory and environment.
-    pub fn new(program: impl Into<PathBuf>, argv: Vec<String>, timeout: Duration) -> Self {
+    /// Build a command with a timeout. The child runs in the temp directory
+    /// with an allowlisted environment (see [`run_supervised`]), so pass
+    /// absolute paths.
+    pub fn new(
+        program: impl Into<PathBuf>,
+        argv: Vec<std::ffi::OsString>,
+        timeout: Duration,
+    ) -> Self {
         Self {
             program: program.into(),
             argv,
@@ -238,7 +245,21 @@ pub fn run_supervised(command: &SupervisedCommand) -> Result<SupervisedResult, H
         .args(&command.argv)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // These children parse hostile inputs. Keep the caller's secrets
+        // (API keys, tokens in the environment) out of a process that may be
+        // compromised, and keep core dumps and stray files out of whatever
+        // directory the caller runs in.
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(key, _)| inherited_env(key)))
+        .current_dir(std::env::temp_dir());
+    // Its own process group, so (a) a timeout can kill the whole tree: a
+    // wrapper script's child would otherwise survive the kill, keep the
+    // pipes open and block the drain threads forever; and (b) Ctrl-C at the
+    // terminal does not reach the child, which would otherwise die by
+    // SIGINT and be recorded as a crash.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut child_cmd, 0);
     let mut child = child_cmd
         .spawn()
         .map_err(|error| classify_spawn_error(&command.program, error))?;
@@ -263,6 +284,18 @@ pub fn run_supervised(command: &SupervisedCommand) -> Result<SupervisedResult, H
     let start = Instant::now();
     let (termination, killed_by_harness) = wait_bounded(&mut child, command.timeout)?;
     let elapsed = start.elapsed();
+    // A descendant that outlives the child (a wrapper script's real binary)
+    // keeps the pipes open, and the drain threads read until EOF. Give it a
+    // moment, then kill the group: while a member lives, the group id
+    // cannot have been reused.
+    let drained = || stdout_handle.is_finished() && stderr_handle.is_finished();
+    let linger = Instant::now() + Duration::from_millis(500);
+    while !drained() && Instant::now() < linger {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if !drained() {
+        kill_process_group(&child);
+    }
 
     let stdout = stdout_handle
         .join()
@@ -285,6 +318,42 @@ pub fn run_supervised(command: &SupervisedCommand) -> Result<SupervisedResult, H
     })
 }
 
+/// Environment a supervised child keeps: what a runtime or its wrapper needs
+/// to start (search paths, temp dirs, locale, dynamic-library paths), nothing
+/// else.
+fn inherited_env(key: &std::ffi::OsStr) -> bool {
+    const KEEP: [&str; 13] = [
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "LANGUAGE",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "SYSTEMROOT",
+        "RUST_BACKTRACE",
+        "RUST_MIN_STACK",
+    ];
+    key.to_str()
+        .is_some_and(|key| KEEP.contains(&key) || key.starts_with("LC_"))
+}
+
+/// SIGKILL the child's process group (the child leads it, see
+/// `run_supervised`); an already empty group is not an error.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn kill_process_group(child: &std::process::Child) {
+    let _ = rustix::process::kill_process_group(
+        rustix::process::Pid::from_child(child),
+        rustix::process::Signal::KILL,
+    );
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn kill_process_group(_: &std::process::Child) {}
+
 /// Wait up to `timeout`, then kill + reap. Returns the termination and
 /// whether the harness performed the kill.
 fn wait_bounded(
@@ -304,6 +373,9 @@ fn wait_bounded(
                     // Deadline expired: kill, then REAP. A kill without a
                     // blocking wait leaves a zombie; the blocking wait
                     // below is what reaps.
+                    // The whole group, before reaping (the group id is
+                    // still this child's), then the child itself.
+                    kill_process_group(child);
                     let _ = child.kill();
                     let status = child
                         .wait()
@@ -349,7 +421,7 @@ mod tests {
     fn cmd(program: &str, args: &[&str], timeout: Duration) -> SupervisedCommand {
         SupervisedCommand::new(
             PathBuf::from(program),
-            args.iter().map(|arg| arg.to_string()).collect(),
+            args.iter().map(std::ffi::OsString::from).collect(),
             timeout,
         )
     }
@@ -443,6 +515,75 @@ mod tests {
         // If a shell had interpreted argv, `;`, `|`, `$()` or backticks
         // would have split or vanished the payload.
         assert!(result.stdout.tail_lossy(usize::MAX).contains(payload));
+    }
+
+    /// A wrapper that runs the real program without `exec`: killing only the
+    /// wrapper left the grandchild holding the pipes, and the harness waited
+    /// for it. The whole group goes.
+    #[cfg(unix)]
+    #[test]
+    fn a_timed_out_wrapper_takes_its_children_with_it() {
+        let command = cmd(
+            "/bin/sh",
+            &["-c", "sleep 60; true"],
+            Duration::from_millis(300),
+        );
+        let start = Instant::now();
+        let result = run_supervised(&command).unwrap();
+        assert_eq!(result.termination, Termination::Timeout);
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            start.elapsed()
+        );
+    }
+
+    /// Only allowlisted variables reach the child, which starts in the temp
+    /// directory.
+    #[cfg(unix)]
+    #[test]
+    fn children_get_an_allowlisted_environment_and_a_neutral_directory() {
+        let command = cmd(
+            "/bin/sh",
+            &["-c", "env; echo cwd=$(pwd -P)"],
+            Duration::from_secs(10),
+        );
+        let result = run_supervised(&command).unwrap();
+        let out = result.stdout.tail_lossy(usize::MAX);
+        assert!(out.contains("PATH="), "{out}");
+        for line in out
+            .lines()
+            .filter(|line| line.contains('=') && !line.starts_with("cwd="))
+        {
+            let key = line.split('=').next().unwrap();
+            assert!(
+                inherited_env(std::ffi::OsStr::new(key))
+                    || ["PWD", "SHLVL", "_", "OLDPWD"].contains(&key),
+                "{key} leaked"
+            );
+        }
+        let temp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        assert!(out.contains(&format!("cwd={}", temp.display())), "{out}");
+    }
+
+    /// The child exits but leaves a background process on its stdout.
+    #[cfg(unix)]
+    #[test]
+    fn a_lingering_grandchild_cannot_hold_the_result() {
+        let command = cmd(
+            "/bin/sh",
+            &["-c", "sleep 60 & echo done"],
+            Duration::from_secs(30),
+        );
+        let start = Instant::now();
+        let result = run_supervised(&command).unwrap();
+        assert_eq!(result.termination, Termination::Success);
+        assert!(result.stdout.tail_lossy(usize::MAX).contains("done"));
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     /// A hung child is killed, reaped (no zombie), and reported as Timeout.

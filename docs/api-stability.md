@@ -35,7 +35,10 @@ commitment; it does not by itself assert that a release has been tagged.
 This policy covers:
 
 - Rust source APIs (modules, types, traits, functions, constants, and feature
-  flags);
+  flags) of the `ember` crate. Its kernels, models and hook framework are
+  built in the `ember-core` workspace crate and re-exported by `ember` at their
+  established paths; `ember-core` is unpublished, and its own crate paths are
+  an implementation detail covered only through those re-exports;
 - the command-line interface documented in `README.md` and `docs/usage.md`;
 - the optional Python binding (`bindings/python`): the
   `inspect`/`plan`/`diff`/`diff_corpus` function signatures and their returned

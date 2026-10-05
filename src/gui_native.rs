@@ -556,6 +556,11 @@ struct Console {
     rebundle: Option<u64>,
     /// The outcome of the last export action, shown in the strip.
     export_note: Option<String>,
+    /// Render caches for filesystem facts about persisted paths: rendering
+    /// runs every frame, and a stored path on a slow or unreachable mount
+    /// must not stall each one. Keyed by what they were computed from.
+    export_cache: std::cell::RefCell<Option<export::ExportCache>>,
+    bundle_dir_check: std::cell::RefCell<Option<(String, bool)>>,
 }
 
 impl Console {
@@ -590,8 +595,20 @@ impl Console {
                 // Unit tests drive the real console; they must neither read nor
                 // write the developer's own history.
                 (AppStore::default(), None, None)
+            } else if let (Some(path), Some(legacy)) =
+                (app_store::store_path(), app_store::legacy_store_path())
+            {
+                open_store(path, &legacy)
             } else {
-                open_store(app_store::store_path(), &app_store::legacy_store_path())
+                (
+                    AppStore::default(),
+                    Some(
+                        "no private configuration directory (HOME unset and the temp directory \
+                         is not usable) -- history is not saved this session"
+                            .to_string(),
+                    ),
+                    None,
+                )
             };
         let colors = if appearance.is_dark(system_dark) {
             theme::dark()
@@ -825,6 +842,8 @@ impl Console {
             export_run: None,
             rebundle: None,
             export_note: None,
+            export_cache: std::cell::RefCell::new(None),
+            bundle_dir_check: std::cell::RefCell::new(None),
         }
     }
 
@@ -1449,6 +1468,20 @@ impl Console {
 
     /// Put a finished comparison on the Review page without running anything.
     /// Shared by the sample and by History; `saved_run` says which it is.
+    /// Whether a bundle directory exists, checked once per path (see
+    /// `bundle_dir_check`).
+    pub(super) fn bundle_dir_on_disk(&self, path: &str) -> bool {
+        let mut check = self.bundle_dir_check.borrow_mut();
+        if let Some((checked, on_disk)) = check.as_ref()
+            && checked == path
+        {
+            return *on_disk;
+        }
+        let on_disk = std::path::Path::new(path).is_dir();
+        *check = Some((path.to_string(), on_disk));
+        on_disk
+    }
+
     fn show_result(
         &mut self,
         baseline: RunOutput,
@@ -1657,7 +1690,7 @@ impl Console {
             (self.layer.parse::<i64>(), self.source_layer.parse::<i64>())
             && source > target
         {
-            self.source_layer = (target - 1).max(0).to_string();
+            self.source_layer = target.saturating_sub(1).max(0).to_string();
             self.inputs.source_layer.update(cx, |input, cx| {
                 input.set_value(self.source_layer.clone(), cx)
             });

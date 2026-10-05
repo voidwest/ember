@@ -159,7 +159,7 @@ docs/screenshots/console-shell/
 /nextsteps.md
 
 # Local agent worktrees, backups and private research material in the main
-# checkout. Never published; also keeps build.rs from flagging every local
+# checkout. Never published; also keeps the build script from flagging every local
 # build as dirty.
 /.claude/worktrees/
 /.claude/untracked-backup-*/

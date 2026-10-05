@@ -342,7 +342,8 @@ pub(crate) fn check_f32_dequantization_size(
 /// Require a model builder's mandatory tensor inventory before allocating
 /// metadata-sized derived state (for example, RoPE tables). This is a cheap
 /// fail-closed gate for malformed or truncated model inputs.
-pub(crate) fn require_tensors(loader: &GgufLoader, names: &[String]) -> Result<()> {
+#[doc(hidden)]
+pub fn require_tensors(loader: &GgufLoader, names: &[String]) -> Result<()> {
     let mut missing = Vec::new();
     for name in names {
         if !loader.tensors.contains_key(name) {
@@ -360,11 +361,13 @@ pub(crate) fn require_tensors(loader: &GgufLoader, names: &[String]) -> Result<(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testkit"))]
 impl GgufLoader {
     /// In-memory loader for synthetic test models: eager K strategy, no
-    /// K decisions or tensor records.
-    pub(crate) fn for_test(
+    /// K decisions or tensor records, and none of the parser's hostile-input
+    /// limits. Test builds only (`testkit`); not API.
+    #[doc(hidden)]
+    pub fn for_test(
         metadata: HashMap<String, GgufValue>,
         tensors: HashMap<String, LoadedTensor>,
     ) -> Self {
@@ -385,7 +388,8 @@ impl GgufLoader {
             .ok_or_else(|| LoaderError::malformed(format!("Missing tensor: {name}")))
     }
 
-    pub(crate) fn take_f32(&mut self, name: &str) -> Result<CpuTensor> {
+    #[doc(hidden)]
+    pub fn take_f32(&mut self, name: &str) -> Result<CpuTensor> {
         match self.take_tensor(name)? {
             LoadedTensor::F32(tensor) => Ok(tensor),
             LoadedTensor::Half(weight) => Ok(weight.to_f32_tensor()),
@@ -400,7 +404,8 @@ impl GgufLoader {
         }
     }
 
-    pub(crate) fn take_optional_f32(&mut self, names: &[String]) -> Result<Option<CpuTensor>> {
+    #[doc(hidden)]
+    pub fn take_optional_f32(&mut self, names: &[String]) -> Result<Option<CpuTensor>> {
         let Some(name) = names
             .iter()
             .find(|name| self.tensors.contains_key(name.as_str()))
@@ -446,7 +451,8 @@ impl GgufLoader {
     /// are passed through `take_f32` by the builders.
     /// Check a boundary (such as a vision/audio mmproj) whose builder
     /// materializes every compressed tensor through `take_f32`.
-    pub(crate) fn check_all_f32_dequantization_budget(&self) -> Result<()> {
+    #[doc(hidden)]
+    pub fn check_all_f32_dequantization_budget(&self) -> Result<()> {
         let mut total = 0u64;
         for (name, tensor) in &self.tensors {
             let (out_features, in_features) = match tensor {
@@ -691,7 +697,8 @@ fn load_gguf_mapped<P: AsRef<Path>>(
 /// rejects symlinks and non-regular files, caps the streamed bytes at the
 /// GGUF limit, and verifies the path still resolves to the same file after
 /// reading (metadata identity on all platforms, device/inode on unix).
-pub(crate) fn gguf_content_identity(path: &Path) -> anyhow::Result<u64> {
+#[doc(hidden)]
+pub fn gguf_content_identity(path: &Path) -> anyhow::Result<u64> {
     use sha2::{Digest, Sha256};
 
     let path_metadata = std::fs::symlink_metadata(path)
@@ -2754,7 +2761,7 @@ mod tests {
         assert_eq!(weight.byte_len(), 128 * crate::quant_k::Q4_K_BLOCK_BYTES);
         assert!(!weight.is_mapped(), "reader loads are owned");
 
-        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+        let inventory = crate::execution_inventory::ExecutionInventory::from_loader(&loader);
         assert_eq!(inventory.requested_strategy, "compressed-scalar");
         assert_eq!(inventory.tensors.len(), 1);
         let tensor = &inventory.tensors[0];
@@ -2808,7 +2815,7 @@ mod tests {
             Some(LoadedTensor::F32(_))
         ));
 
-        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+        let inventory = crate::execution_inventory::ExecutionInventory::from_loader(&loader);
         assert_eq!(inventory.requested_strategy, "auto");
         let tensor = &inventory.tensors[0];
         assert_eq!(tensor.resident, "f32");
@@ -2856,7 +2863,7 @@ mod tests {
             crate::quant_k::KExecution::CompressedX86
         );
         assert!(decision.fallback_reason.is_none());
-        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+        let inventory = crate::execution_inventory::ExecutionInventory::from_loader(&loader);
         assert_eq!(inventory.tensors[0].kernel, "q6-k-q8-k-avx2");
         assert_eq!(
             inventory.tensors[0].kernel_revision,
@@ -2979,7 +2986,7 @@ mod tests {
                 crate::quant_k::KExecution::CompressedArm
             );
             assert!(decision.fallback_reason.is_none());
-            let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+            let inventory = crate::execution_inventory::ExecutionInventory::from_loader(&loader);
             assert_eq!(inventory.tensors[0].kernel, kernel);
             assert_eq!(inventory.tensors[0].strategy, "compressed-arm");
             assert_eq!(inventory.tensors[0].cpu_features, "neon+dotprod");

@@ -122,7 +122,7 @@ pub(super) fn metric_rows(left: &RunRecord, right: &RunRecord) -> Vec<MetricRow>
     };
     let layer_delta = match (lr.first_layer_divergence, rr.first_layer_divergence) {
         (Some(a), Some(b)) if a == b => "same layer".to_string(),
-        (Some(a), Some(b)) => format!("{:+} layers", b as i64 - a as i64),
+        (Some(a), Some(b)) => format!("{:+} layers", b as i128 - a as i128),
         _ => dash(),
     };
     let duration_delta = match (left.duration_ms, right.duration_ms) {
@@ -171,7 +171,7 @@ pub(super) fn metric_rows(left: &RunRecord, right: &RunRecord) -> Vec<MetricRow>
                 .diverged_at_step
                 .map_or_else(dash, |step| format!("step {step}")),
             delta: match (left.diverged_at_step, right.diverged_at_step) {
-                (Some(a), Some(b)) => format!("{:+} steps", b as i64 - a as i64),
+                (Some(a), Some(b)) => format!("{:+} steps", b as i128 - a as i128),
                 _ => dash(),
             },
         },

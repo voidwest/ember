@@ -26,10 +26,25 @@ Moved from the top-level README.
 
 ## architecture
 
-the crate is one library (`src/lib.rs`) plus the `ember` binary
-(`src/main.rs`). `main.rs` parses the command line and dispatches to the
-`cli_*.rs` modules. Those and the two consoles belong to the binary; the
-engine, kernels and research layer live in the library.
+the repository is a cargo workspace with two crates:
+
+- **`ember-core`** (`crates/ember-core/`): kernels, tensors, quantized
+  weights, the gguf loader, the llama/qwen and gemma 4 models, execution
+  plans, the kv cache, sampling, tokenization, tracing, and the hook
+  framework (`experiments`) the models fire.
+- **`ember`** (repository root): the research layers on top (bundles and
+  verification, experiments and capture, kv snapshots, multimodal, tts,
+  agent) as its library, plus the `ember` binary (`src/main.rs`), which
+  parses the command line and dispatches to the `cli_*.rs` modules and the
+  two consoles.
+
+`ember` re-exports every public `ember-core` module at its established path
+(`ember::llama`, `ember::backend`, ...), so tests, benches, the fuzz targets
+and the python bindings name one crate. the split is for build times: a
+change to the research layers, the cli or the gui no longer recompiles the
+kernels. `ember-core` depends on nothing in `ember`; the few records both
+sides share (`hook_types`, `execution_inventory`) live in core and are
+re-exported from `ember::artifact`.
 
 text generation goes through `cli_generation.rs` -> `generate()`, a generic
 `ForwardModel` path used by gpt-2, llama/qwen, and gemma 4. it runs a
@@ -38,15 +53,17 @@ two-phase loop:
 1. **prefill** - forward pass on the full prompt, populating the kv cache.
 2. **decode** - one token at a time, reading from the cache.
 
-shared model primitives live in `src/model.rs` (`ForwardModel`, `Linear`, and
-the gpt-2 blocks). llama/qwen lives in `src/llama.rs`, gemma 4 lives in
-`src/gemma4.rs`, tensors are `CpuTensor` in `src/tensor.rs`, and the gguf
-parser is `src/loader.rs`.
+shared model primitives live in `model.rs` (`ForwardModel`, `Linear`, and
+the gpt-2 blocks). llama/qwen lives in `llama.rs`, gemma 4 in `gemma4.rs`,
+tensors are `CpuTensor` in `tensor.rs`, and the gguf parser is `loader.rs`,
+all under `crates/ember-core/src/`.
 
 the modules group into layers. the list names the owning files, not every
 file; each module's own `//!` header is the authoritative description.
 
 ```text
+ember-core (crates/ember-core/src/)
+
 inference engine
   loader.rs            gguf v3 parser, mmap-backed weights, hostile-input limits
   model.rs             shared model primitives + gpt-2 transformer
@@ -72,12 +89,21 @@ planned execution (docs/v04-execution-contract.md)
   planned_decode.rs        the planned-decode interpreter
   runtime_schedule.rs      runtime-only schedule derived from a plan
 
+hook framework
+  experiments/         runner, hook traits and contexts the models fire, plus
+                       zero-layer-output and prefix resume
+  hook_types.rs, execution_inventory.rs   records shared with ember::artifact
+  quant_fault.rs       quantization fault injection (EmberSEC)
+
+ember (src/)
+
 research layer (docs/v05-research-contract.md)
   v05/                 experiment specs, hook sites, captures, interventions,
                        the runner, bundle writer and offline verifier, plus
                        sweeps, logit lens, steering, attribution and the
                        probe bridge
-  experiments/         execution hooks and the v0.2 capture/patch experiments
+  experiments/         the v0.2 capture writer, activation patch and stats
+                       experiments (re-exports the core hook framework)
   artifact/, compare.rs, extraction.rs   v0.2 activation artifacts
   kv_snapshot.rs, kv_compare.rs, kv_diagnostics.rs   kv-prefix snapshots
 
@@ -90,7 +116,7 @@ separate tracks (see the README's "related tools and research")
   agent/               tool protocols, approval gating and traces
   multimodal/, smolvlm.rs, smolvlm_video.rs, ultravox.rs   image/video/audio input
   tts/, duplex.rs      speech output and duplex audio (device i/o needs `audio`)
-  diff_corpus.rs, diff_outcome.rs, subprocess.rs, quant_fault.rs   EmberSEC harnesses
+  diff_corpus.rs, diff_outcome.rs, subprocess.rs   EmberSEC harnesses
 
 outside the crate
   probes/              python probe scripts (linear, cca, rsa, divergence)

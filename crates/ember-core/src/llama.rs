@@ -1,9 +1,9 @@
-use crate::artifact::DispatchPath;
 use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, CpuError, Module};
 use crate::experiments::{
     ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
     LayerHooks, SliceActivation,
 };
+use crate::hook_types::DispatchPath;
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::plan::{ExecutionMode, ExecutionPlan, HookMode};
 use crate::planned_decode::{
@@ -3313,7 +3313,8 @@ fn record_profiled_packed(
     );
 }
 
-pub(crate) fn llama_embed_tokens<B: Backend>(
+#[doc(hidden)]
+pub fn llama_embed_tokens<B: Backend>(
     backend: &B,
     table: &LlamaEmbedding<B>,
     token_ids: &[u32],
@@ -3358,6 +3359,20 @@ impl<B: Backend> Llama<B> {
 
     /// create a kv cache sized for this model's parameters.
     ///
+    /// Whether the LM head reuses the token embedding (no `output.weight`).
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
+    pub fn head_tied(&self) -> bool {
+        self.head_tied
+    }
+
+    /// Whether a planned decode session has been built (the planned path ran).
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
+    pub fn has_planned_session(&self) -> bool {
+        self.decode_state.borrow().is_some()
+    }
+
     /// The `rope_freqs.weight` factors applied to every RoPE frequency pair,
     /// or `None` when the model uses plain uniform-theta RoPE.
     pub fn rope_frequency_factors(&self) -> Option<&[f32]> {
@@ -3972,6 +3987,121 @@ impl Llama<CpuBackend> {
     }
 }
 
+/// Synthetic models shared by this crate's tests and the `ember` crate's
+/// (which cannot reach `Llama`'s private fields). Test builds only: the
+/// `testkit` feature, enabled by `ember`'s dev-dependency. Not API.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub mod testkit {
+    use super::*;
+    use crate::quant::{QuantizedWeight, Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
+
+    pub fn q8_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {
+        assert!(in_features.is_multiple_of(Q8_0_BLOCK_SIZE));
+        let blocks = out_features * in_features / Q8_0_BLOCK_SIZE;
+        let mut data = Vec::with_capacity(blocks * Q8_0_TYPE_SIZE);
+        for block in 0..blocks {
+            let scale = half::f16::from_f32(0.005 + (block % 7) as f32 * 0.001);
+            data.extend_from_slice(&scale.to_bits().to_le_bytes());
+            for index in 0..Q8_0_BLOCK_SIZE {
+                let quant = ((block * 17 + index * 13 + seed) % 31) as i8 - 15;
+                data.push(quant as u8);
+            }
+        }
+        Linear::new_q8_0(
+            QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap(),
+            None,
+        )
+    }
+
+    /// Synthetic Q8_0 Llama with two query heads of `embed_dim / 2` and one
+    /// KV head; `embed_dim / 2` must be a multiple of the Q8_0 block size.
+    pub fn q8_llama(n_layers: usize, embed_dim: usize, vocab_size: usize) -> Llama<CpuBackend> {
+        let head_dim = embed_dim / 2;
+        let n_heads = 2;
+        let n_kv_heads = 1;
+        let inter_dim = 2 * embed_dim;
+        let max_seq_len = 8;
+        let blocks = (0..n_layers)
+            .map(|layer| {
+                let seed = layer * 8 + 1;
+                let (rope_cos, rope_sin) =
+                    crate::tensor::compute_rope_freqs(max_seq_len, head_dim, 10_000.0, None);
+                let attention = LlamaAttention::new(
+                    q8_linear(embed_dim, embed_dim, seed),
+                    q8_linear(head_dim, embed_dim, seed + 1),
+                    q8_linear(head_dim, embed_dim, seed + 2),
+                    q8_linear(embed_dim, embed_dim, seed + 3),
+                    rope_cos,
+                    rope_sin,
+                    n_heads,
+                    n_kv_heads,
+                    head_dim,
+                    RopeLayout::AdjacentPair,
+                    QkNormOrder::AfterRope,
+                    None,
+                    None,
+                );
+                let mlp = LlamaMlp::new(
+                    q8_linear(inter_dim, embed_dim, seed + 4),
+                    q8_linear(inter_dim, embed_dim, seed + 5),
+                    q8_linear(embed_dim, inter_dim, seed + 6),
+                );
+                LlamaBlock::new(
+                    CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+                    attention,
+                    CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+                    mlp,
+                    1e-5,
+                )
+            })
+            .collect();
+        let embedding = (0..vocab_size * embed_dim)
+            .map(|index| ((index * 19 % 101) as f32 - 50.0) * 0.002)
+            .collect();
+        Llama {
+            embed_tokens: LlamaEmbedding::F32(CpuTensor::from_data(
+                vec![vocab_size, embed_dim],
+                embedding,
+            )),
+            blocks,
+            norm: CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+            head: q8_linear(vocab_size, embed_dim, 8),
+            config: LlamaConfig {
+                n_layers,
+                n_heads,
+                n_kv_heads,
+                embed_dim,
+                head_dim,
+                max_seq_len,
+                rope_theta: 10_000.0,
+                norm_eps: 1e-5,
+                rope_layout: RopeLayout::AdjacentPair,
+                qk_norm_order: QkNormOrder::AfterRope,
+                vocab_size,
+            },
+            fast_decode_inter_dim: Some(inter_dim),
+            plan_cache: OnceLock::new(),
+            plan_provenance: RefCell::new((None, None, None)),
+            k_decisions: BTreeMap::new(),
+            head_tied: false,
+            execution_mode: RefCell::new(ExecutionMode::Reference),
+            decode_state: RefCell::new(None),
+            packing_ns: 0,
+            packing_interleaved_ns: 0,
+            rope_frequency_factors: None,
+        }
+    }
+
+    /// [`q8_llama`] with the allocation-free Q8_0 fast path disabled, so
+    /// decode runs the selected execution mode.
+    pub fn q8_llama_without_fast_decode(n_layers: usize) -> Llama<CpuBackend> {
+        let mut model = q8_llama(n_layers, 32, 32);
+        model.fast_decode_inter_dim = None;
+        model
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4268,24 +4398,6 @@ mod tests {
         }
     }
 
-    fn test_q8_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {
-        assert!(in_features.is_multiple_of(Q8_0_BLOCK_SIZE));
-        let blocks = out_features * in_features / Q8_0_BLOCK_SIZE;
-        let mut data = Vec::with_capacity(blocks * Q8_0_TYPE_SIZE);
-        for block in 0..blocks {
-            let scale = half::f16::from_f32(0.005 + (block % 7) as f32 * 0.001);
-            data.extend_from_slice(&scale.to_bits().to_le_bytes());
-            for index in 0..Q8_0_BLOCK_SIZE {
-                let quant = ((block * 17 + index * 13 + seed) % 31) as i8 - 15;
-                data.push(quant as u8);
-            }
-        }
-        Linear::new_q8_0(
-            QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap(),
-            None,
-        )
-    }
-
     fn test_f32_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {
         let weights = (0..in_features * out_features)
             .map(|index| ((index * 17 + seed * 11) % 61) as f32 * 0.002 - 0.06)
@@ -4304,87 +4416,12 @@ mod tests {
         test_llama_model_with_dims(n_layers, 32, 32)
     }
 
-    /// Synthetic Q8_0 Llama with two query heads of `embed_dim / 2` and one
-    /// KV head; `embed_dim / 2` must be a multiple of the Q8_0 block size.
     fn test_llama_model_with_dims(
         n_layers: usize,
         embed_dim: usize,
         vocab_size: usize,
     ) -> Llama<CpuBackend> {
-        let head_dim = embed_dim / 2;
-        let n_heads = 2;
-        let n_kv_heads = 1;
-        let inter_dim = 2 * embed_dim;
-        let max_seq_len = 8;
-        let blocks = (0..n_layers)
-            .map(|layer| {
-                let seed = layer * 8 + 1;
-                let (rope_cos, rope_sin) =
-                    crate::tensor::compute_rope_freqs(max_seq_len, head_dim, 10_000.0, None);
-                let attention = LlamaAttention::new(
-                    test_q8_linear(embed_dim, embed_dim, seed),
-                    test_q8_linear(head_dim, embed_dim, seed + 1),
-                    test_q8_linear(head_dim, embed_dim, seed + 2),
-                    test_q8_linear(embed_dim, embed_dim, seed + 3),
-                    rope_cos,
-                    rope_sin,
-                    n_heads,
-                    n_kv_heads,
-                    head_dim,
-                    RopeLayout::AdjacentPair,
-                    QkNormOrder::AfterRope,
-                    None,
-                    None,
-                );
-                let mlp = LlamaMlp::new(
-                    test_q8_linear(inter_dim, embed_dim, seed + 4),
-                    test_q8_linear(inter_dim, embed_dim, seed + 5),
-                    test_q8_linear(embed_dim, inter_dim, seed + 6),
-                );
-                LlamaBlock::new(
-                    CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
-                    attention,
-                    CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
-                    mlp,
-                    1e-5,
-                )
-            })
-            .collect();
-        let embedding = (0..vocab_size * embed_dim)
-            .map(|index| ((index * 19 % 101) as f32 - 50.0) * 0.002)
-            .collect();
-        Llama {
-            embed_tokens: LlamaEmbedding::F32(CpuTensor::from_data(
-                vec![vocab_size, embed_dim],
-                embedding,
-            )),
-            blocks,
-            norm: CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
-            head: test_q8_linear(vocab_size, embed_dim, 8),
-            config: LlamaConfig {
-                n_layers,
-                n_heads,
-                n_kv_heads,
-                embed_dim,
-                head_dim,
-                max_seq_len,
-                rope_theta: 10_000.0,
-                norm_eps: 1e-5,
-                rope_layout: RopeLayout::AdjacentPair,
-                qk_norm_order: QkNormOrder::AfterRope,
-                vocab_size,
-            },
-            fast_decode_inter_dim: Some(inter_dim),
-            plan_cache: OnceLock::new(),
-            plan_provenance: RefCell::new((None, None, None)),
-            k_decisions: BTreeMap::new(),
-            head_tied: false,
-            execution_mode: RefCell::new(ExecutionMode::Reference),
-            decode_state: RefCell::new(None),
-            packing_ns: 0,
-            packing_interleaved_ns: 0,
-            rope_frequency_factors: None,
-        }
+        testkit::q8_llama(n_layers, embed_dim, vocab_size)
     }
 
     fn configure_as_test_qwen(model: &mut Llama<CpuBackend>) {
@@ -5352,274 +5389,6 @@ mod tests {
     }
 
     #[test]
-    fn kv_snapshot_same_model_replay_is_bit_exact() {
-        use crate::kv_snapshot::{KvCompatibilityTarget, KvSnapshot};
-
-        let mut model = test_llama_model_with_layers(2);
-        model.fast_decode_inter_dim = None;
-        model.set_execution_mode(ExecutionMode::Planned);
-        let backend = CpuBackend;
-        let capacity = 8;
-        let prompt = [3u32, 1, 7];
-        let model_hash = "aa".repeat(32);
-        let tokenizer_hash = "bb".repeat(32);
-        let plan = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                capacity,
-                Some(&model_hash),
-                Some(&tokenizer_hash),
-            )
-            .unwrap();
-        let target = KvCompatibilityTarget::from_execution_plan(&plan).unwrap();
-
-        // A: uninterrupted native path.
-        let mut native_cache = model.create_cache(&backend, capacity);
-        let mut native_logits = ForwardModel::forward_last_logits_with_cache(
-            &model,
-            &backend,
-            &prompt,
-            &mut native_cache,
-            0,
-        )
-        .unwrap();
-
-        // B: independent prefill, deterministic disk artifact, original cache
-        // dropped, then import into fresh owned storage.
-        let mut replay_source = model.create_cache(&backend, capacity);
-        let replay_prefill_logits = ForwardModel::forward_last_logits_with_cache(
-            &model,
-            &backend,
-            &prompt,
-            &mut replay_source,
-            0,
-        )
-        .unwrap();
-        assert_eq!(native_logits.data(), replay_prefill_logits.data());
-        let resume_token = crate::sampler::argmax_token(replay_prefill_logits.data()) as u32;
-        let exported = KvSnapshot::export_native(
-            &replay_source,
-            target.clone(),
-            Some(&prompt),
-            Some(resume_token),
-        )
-        .unwrap();
-        let snapshot_hash = exported.manifest().snapshot_hash.clone();
-        let root = std::env::temp_dir().join(format!(
-            "ember-kv-replay-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        exported.save_dir(&root, false).unwrap();
-        drop(replay_source);
-        let loaded = KvSnapshot::load_dir(&root).unwrap();
-        assert_eq!(loaded.manifest().snapshot_hash, snapshot_hash);
-        let mut replay_cache = loaded.import_cache(&target).unwrap();
-        assert_eq!(replay_cache.cursor(), prompt.len());
-        assert_eq!(native_cache.cursor(), replay_cache.cursor());
-        let imported_export = KvSnapshot::export_native(
-            &replay_cache,
-            target.clone(),
-            Some(&prompt),
-            Some(resume_token),
-        )
-        .unwrap();
-        assert_eq!(loaded.keys(), imported_export.keys());
-        assert_eq!(loaded.values(), imported_export.values());
-        assert_eq!(
-            loaded.manifest().snapshot_hash,
-            imported_export.manifest().snapshot_hash
-        );
-
-        let mut replay_logits = replay_prefill_logits;
-        let mut native_tokens = Vec::new();
-        let mut replay_tokens = Vec::new();
-        const CONTINUATION: usize = 4;
-        for step in 0..CONTINUATION {
-            assert_eq!(
-                native_logits.data(),
-                replay_logits.data(),
-                "replayed logits differ at continuation step {step}"
-            );
-            let native_token = crate::sampler::argmax_token(native_logits.data()) as u32;
-            let replay_token = crate::sampler::argmax_token(replay_logits.data()) as u32;
-            native_tokens.push(native_token);
-            replay_tokens.push(replay_token);
-            assert_eq!(native_token, replay_token);
-            if step + 1 < CONTINUATION {
-                let native_start = native_cache.cursor();
-                let replay_start = replay_cache.cursor();
-                assert_eq!(native_start, replay_start);
-                native_logits = ForwardModel::forward_last_logits_with_cache(
-                    &model,
-                    &backend,
-                    &[native_token],
-                    &mut native_cache,
-                    native_start,
-                )
-                .unwrap();
-                replay_logits = ForwardModel::forward_last_logits_with_cache(
-                    &model,
-                    &backend,
-                    &[replay_token],
-                    &mut replay_cache,
-                    replay_start,
-                )
-                .unwrap();
-            }
-        }
-        assert_eq!(native_tokens, replay_tokens);
-        assert_eq!(native_cache.cursor(), replay_cache.cursor());
-
-        // Snapshot import must not contaminate subsequent ordinary planned
-        // decode with checksum/metadata work or per-token allocations. The
-        // only permitted allocations are the existing logits CpuTensor's
-        // shape, strides, and data vectors (Gate E's bound of three).
-        let next_input = *replay_tokens.last().unwrap();
-        let replay_start = replay_cache.cursor();
-        assert!(crate::alloc_counter::counting_active());
-        let (result, allocations) = crate::alloc_counter::count_allocations(|| {
-            ForwardModel::forward_last_logits_with_cache(
-                &model,
-                &backend,
-                &[next_input],
-                &mut replay_cache,
-                replay_start,
-            )
-        });
-        result.unwrap();
-        assert!(
-            allocations <= 3,
-            "planned decode after snapshot import allocated {allocations} times"
-        );
-        assert!(
-            model.decode_state.borrow().is_some(),
-            "planned path did not run"
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn kv_continuation_diagnostics_duplicate_and_perturbed_control() {
-        use crate::experiments::ModelFamily;
-        use crate::kv_compare::{
-            prepare_diagnostic_perturbation, KvDiagnosticPerturbation, KvPerturbComponent,
-            KvPerturbOperation,
-        };
-        use crate::kv_diagnostics::{diagnose_continuation, KvContinuationCandidate};
-        use crate::kv_snapshot::{KvCompatibilityTarget, KvSnapshot};
-
-        let mut model = test_llama_model_with_layers(2);
-        model.fast_decode_inter_dim = None;
-        model.set_execution_mode(ExecutionMode::Planned);
-        let backend = CpuBackend;
-        let capacity = 6;
-        let prompt = [3u32, 1, 7];
-        let model_hash = "aa".repeat(32);
-        let tokenizer_hash = "bb".repeat(32);
-        let plan = model
-            .execution_plan(
-                ExecutionMode::Planned,
-                HookMode::Disabled,
-                &[],
-                capacity,
-                Some(&model_hash),
-                Some(&tokenizer_hash),
-            )
-            .unwrap();
-        let target = KvCompatibilityTarget::from_execution_plan(&plan).unwrap();
-        let mut cache = model.create_cache(&backend, capacity);
-        let boundary =
-            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
-                .unwrap();
-        let resume = crate::sampler::argmax_token(boundary.data()) as u32;
-        let snapshot =
-            KvSnapshot::export_native(&cache, target.clone(), Some(&prompt), Some(resume)).unwrap();
-
-        let control = diagnose_continuation(
-            &model,
-            &backend,
-            &snapshot,
-            KvContinuationCandidate::Snapshot(&snapshot),
-            &target,
-            ModelFamily::Llama,
-            resume,
-            4,
-            None,
-        )
-        .unwrap();
-        assert!(control.forced_top1_all_agree);
-        assert!(control.greedy_sequences_match);
-        assert_eq!(control.final_logit_cosine, Some(1.0));
-        assert!(control
-            .attention_by_layer
-            .iter()
-            .all(|layer| layer.metrics.cosine_similarity == Some(1.0)));
-        assert_eq!(control.forced_input_token_ids.len(), 3);
-        assert_eq!(
-            control
-                .forced_steps
-                .iter()
-                .map(|step| (
-                    step.evaluation_index,
-                    step.absolute_input_position,
-                    step.predicted_continuation_index,
-                ))
-                .collect::<Vec<_>>(),
-            vec![(0, 3, 1), (1, 4, 2), (2, 5, 3)]
-        );
-
-        let alteration = prepare_diagnostic_perturbation(
-            &snapshot,
-            KvDiagnosticPerturbation {
-                layer: 0,
-                head: 0,
-                component: KvPerturbComponent::Both,
-                operation: KvPerturbOperation::Zero,
-            },
-        )
-        .unwrap();
-        let altered = diagnose_continuation(
-            &model,
-            &backend,
-            &snapshot,
-            KvContinuationCandidate::Diagnostic {
-                source: &snapshot,
-                alteration: &alteration,
-            },
-            &target,
-            ModelFamily::Llama,
-            resume,
-            4,
-            None,
-        )
-        .unwrap();
-        assert_eq!(
-            altered
-                .diagnostic_perturbation
-                .as_ref()
-                .unwrap()
-                .source_snapshot_hash,
-            snapshot.manifest().snapshot_hash
-        );
-        assert_eq!(
-            altered.forced_input_token_ids, control.forced_input_token_ids,
-            "altered candidate must not choose its own teacher-forced inputs"
-        );
-        assert!(altered
-            .forced_steps
-            .iter()
-            .flat_map(|step| &step.attention_by_layer)
-            .any(|layer| layer.metrics.max_abs_error > 0.0));
-        snapshot.verify().unwrap();
-    }
-
-    #[test]
     fn planned_decode_multi_token_uses_generic_path() {
         // Multi-token (prefill) calls are outside the single-token planned
         // scope; they must produce the generic reference output.
@@ -6058,7 +5827,7 @@ mod tests {
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     fn retained_reference_rope_matches_reference_and_planned_layouts() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/rope-reference/llama-q6-position15.json"
+            "../../../tests/fixtures/rope-reference/llama-q6-position15.json"
         ))
         .unwrap();
         let position = fixture["position"].as_u64().unwrap() as usize;
@@ -6072,10 +5841,10 @@ mod tests {
         );
         for layout in [RopeLayout::AdjacentPair, RopeLayout::SplitHalf] {
             let attention = LlamaAttention::new(
-                test_q8_linear(dim, dim, 1),
-                test_q8_linear(dim, dim, 2),
-                test_q8_linear(dim, dim, 3),
-                test_q8_linear(dim, dim, 4),
+                testkit::q8_linear(dim, dim, 1),
+                testkit::q8_linear(dim, dim, 2),
+                testkit::q8_linear(dim, dim, 3),
+                testkit::q8_linear(dim, dim, 4),
                 cos.clone(),
                 sin.clone(),
                 1,
@@ -6470,7 +6239,9 @@ mod reference_rope_diagnostic {
     fn diagnose_reference_input_rope() {
         let model = std::env::var("EMBER_PARITY_MODEL").expect("model required");
         assert_eq!(
-            crate::extraction::sha256_file_result(&model).unwrap(),
+            crate::plan::hex(&<sha2::Sha256 as sha2::Digest>::digest(
+                std::fs::read(&model).unwrap()
+            )),
             "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3"
         );
         let source = std::env::var("EMBER_PARITY_REFERENCE_TENSORS").unwrap();

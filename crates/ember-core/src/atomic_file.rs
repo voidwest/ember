@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn create_sibling_temp(path: &Path) -> io::Result<(PathBuf, File)> {
+#[doc(hidden)]
+pub fn create_sibling_temp(path: &Path) -> io::Result<(PathBuf, File)> {
     let filename = path.file_name().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,

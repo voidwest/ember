@@ -41,8 +41,8 @@
 
 ## K-quant or kernel change
 
-<!-- Complete for changes touching src/k_quant_matmul.rs, src/k_matmul.rs,
-     src/quant_k.rs, loader dispatch, or shared SIMD code. Otherwise write N/A. -->
+<!-- Complete for changes touching crates/ember-core/src/k_quant_matmul.rs, crates/ember-core/src/k_matmul.rs,
+     crates/ember-core/src/quant_k.rs, loader dispatch, or shared SIMD code. Otherwise write N/A. -->
 
 - [ ] Scalar oracle and Q4_K/Q6_K edge cases are covered.
 - [ ] x86 target-feature gates and `# Safety` contracts were reviewed; scalar

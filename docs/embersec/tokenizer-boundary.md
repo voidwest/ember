@@ -6,7 +6,7 @@
 > have evolved. Read this as the published Phase I evidence record.
 
 Status: audit + hardening of the tokenizer-file trust boundary
-(EmberTokenizer in src/tokenizer.rs, `tokenizers` crate 0.20.4).
+(EmberTokenizer in crates/ember-core/src/tokenizer.rs, `tokenizers` crate 0.20.4).
 
 ## 1. Dataflow
 

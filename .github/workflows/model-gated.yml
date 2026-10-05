@@ -98,8 +98,9 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       # Caches ~/.cargo and target/ without the workspace's own build
-      # products, keyed by job, toolchain and Cargo.lock.
-      - uses: Swatinem/rust-cache@v2
+      # products, keyed by job, toolchain and Cargo.lock. Third-party action:
+      # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: run model-gated suites (fail-closed)
         env:

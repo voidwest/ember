@@ -530,11 +530,19 @@ pub(crate) fn prepare_run(
 /// What identifies a model file on disk. The SHA-256 and the weights come
 /// from separate opens (the hash runs beside the load); a file replaced or
 /// rewritten in between would otherwise be used under the recorded hash.
+///
+/// On Unix this includes the inode change time, which the kernel updates on
+/// every write, rename or chmod and an unprivileged process cannot set back
+/// (unlike the modification time), so an in-place rewrite that restores
+/// size and mtime is still caught. It does not cover a writer that keeps
+/// modifying the file after loading: the weights are memory-mapped.
 pub(crate) struct ModelFileIdentity {
     len: u64,
     modified: Option<std::time::SystemTime>,
     #[cfg(unix)]
     inode: (u64, u64),
+    #[cfg(unix)]
+    changed: (i64, i64),
 }
 
 impl ModelFileIdentity {
@@ -549,6 +557,11 @@ impl ModelFileIdentity {
                 use std::os::unix::fs::MetadataExt as _;
                 (metadata.dev(), metadata.ino())
             },
+            #[cfg(unix)]
+            changed: {
+                use std::os::unix::fs::MetadataExt as _;
+                (metadata.ctime(), metadata.ctime_nsec())
+            },
         })
     }
 
@@ -556,7 +569,7 @@ impl ModelFileIdentity {
         let now = Self::of(path)?;
         let same = now.len == self.len && now.modified == self.modified;
         #[cfg(unix)]
-        let same = same && now.inode == self.inode;
+        let same = same && now.inode == self.inode && now.changed == self.changed;
         anyhow::ensure!(
             same,
             "model '{}' changed while it was being hashed and loaded; its recorded SHA-256 \
@@ -910,6 +923,9 @@ pub(crate) fn activate_spec(
             let loaded =
                 load_bundle_source(intervention, source, model_sha, tokenizer_sha, n_layers)
                     .map_err(anyhow::Error::msg)?;
+            for warning in &loaded.warnings {
+                log::warn!("{warning}");
+            }
             bundle_sources.push(loaded);
         }
     }
@@ -2361,6 +2377,23 @@ mod tests {
         let replacement = dir.join("other.gguf");
         std::fs::write(&replacement, b"WEIGHTS").unwrap();
         std::fs::rename(&replacement, &model).unwrap();
+        assert!(identity.ensure_unchanged(&model).is_err());
+
+        // Rewritten in place with its size and modification time restored.
+        let identity = super::ModelFileIdentity::of(&model).unwrap();
+        let modified = std::fs::metadata(&model).unwrap().modified().unwrap();
+        std::fs::write(&model, b"wEIGHTS").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&model)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(&model).unwrap().modified().unwrap(),
+            modified
+        );
+        #[cfg(unix)]
         assert!(identity.ensure_unchanged(&model).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }

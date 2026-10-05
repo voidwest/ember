@@ -139,7 +139,7 @@ impl HostProfile {
             env,
             build: BuildProfile {
                 ember_version: env!("CARGO_PKG_VERSION").to_string(),
-                git_commit: option_env!("EMBER_GIT_COMMIT")
+                git_commit: crate::build_info::GIT_COMMIT
                     .unwrap_or("unknown")
                     .to_string(),
                 profile: if cfg!(debug_assertions) {
@@ -148,13 +148,13 @@ impl HostProfile {
                     "release"
                 }
                 .to_string(),
-                opt_level: option_env!("EMBER_OPT_LEVEL")
+                opt_level: crate::build_info::OPT_LEVEL
                     .unwrap_or("unknown")
                     .to_string(),
-                rustc: option_env!("EMBER_RUSTC_VERSION")
+                rustc: crate::build_info::RUSTC_VERSION
                     .unwrap_or("unknown")
                     .to_string(),
-                target: option_env!("EMBER_TARGET").unwrap_or("unknown").to_string(),
+                target: crate::build_info::TARGET.unwrap_or("unknown").to_string(),
                 compiled_target_features: compiled_target_features(),
             },
         }

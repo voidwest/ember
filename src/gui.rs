@@ -2100,7 +2100,12 @@ pub(crate) fn discover_models_in(root: &Path) -> Vec<String> {
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 continue;
             };
-            if path.is_dir() {
+            // `file_type` does not follow links: a symlinked directory (a
+            // link to `.` or `/`) would otherwise multiply or widen the walk.
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
                 // Hidden directories (.git, .venv, .cache, ...) included.
                 if name.starts_with('.') || skipped.contains(&name.as_str()) {
                     continue;

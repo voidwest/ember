@@ -47,8 +47,9 @@ jobs:
           rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
 
       # Caches ~/.cargo and target/ without the workspace's own build
-      # products, keyed by job, toolchain and Cargo.lock.
-      - uses: Swatinem/rust-cache@v2
+      # products, keyed by job, toolchain and Cargo.lock. Third-party action:
+      # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: install X11 system libraries (gpui native GUI)
         run: |
@@ -162,8 +163,9 @@ jobs:
           rustup override set 1.92.0
 
       # Caches ~/.cargo and target/ without the workspace's own build
-      # products, keyed by job, toolchain and Cargo.lock.
-      - uses: Swatinem/rust-cache@v2
+      # products, keyed by job, toolchain and Cargo.lock. Third-party action:
+      # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: build (headless)
         run: cargo build --locked --no-default-features --all-targets
@@ -210,8 +212,9 @@ jobs:
           cargo --version
 
       # Caches ~/.cargo and target/ without the workspace's own build
-      # products, keyed by job, toolchain and Cargo.lock.
-      - uses: Swatinem/rust-cache@v2
+      # products, keyed by job, toolchain and Cargo.lock. Third-party action:
+      # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.label }}
 
@@ -265,8 +268,9 @@ jobs:
           python-version: "3.12"
 
       # Caches ~/.cargo and target/ without the workspace's own build
-      # products, keyed by job, toolchain and Cargo.lock.
-      - uses: Swatinem/rust-cache@v2
+      # products, keyed by job, toolchain and Cargo.lock. Third-party action:
+      # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: cache the pinned model
         # Keyed by the model's pinned SHA-256; download_models.sh re-checks it.

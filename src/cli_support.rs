@@ -393,10 +393,10 @@ pub(crate) fn execution_identity_canonical(
     canonical.insert(
         "binary".to_string(),
         serde_json::json!({
-            "git_commit": option_env!("EMBER_GIT_COMMIT"),
-            "git_dirty": option_env!("EMBER_GIT_DIRTY"),
-            "rustc": option_env!("EMBER_RUSTC_VERSION"),
-            "target": option_env!("EMBER_TARGET"),
+            "git_commit": ember::build_info::GIT_COMMIT,
+            "git_dirty": ember::build_info::GIT_DIRTY,
+            "rustc": ember::build_info::RUSTC_VERSION,
+            "target": ember::build_info::TARGET,
         }),
     );
     canonical.insert(
@@ -563,10 +563,10 @@ pub(crate) fn build_run_manifest(
             "canonical": identity_canonical,
         },
         "binary": {
-            "git_commit": option_env!("EMBER_GIT_COMMIT"),
-            "git_dirty": option_env!("EMBER_GIT_DIRTY"),
-            "rustc_version": option_env!("EMBER_RUSTC_VERSION"),
-            "target": option_env!("EMBER_TARGET"),
+            "git_commit": ember::build_info::GIT_COMMIT,
+            "git_dirty": ember::build_info::GIT_DIRTY,
+            "rustc_version": ember::build_info::RUSTC_VERSION,
+            "target": ember::build_info::TARGET,
         },
         "source": {
             "git_commit": git_commit(),

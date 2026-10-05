@@ -66,9 +66,71 @@ pub struct VitsConfig {
     pub ln_eps: f32,
 }
 
+/// Most mel frames one synthesis may expand to. Durations come from the
+/// model's weights, and HiFi-GAN peaks at ~8192 f32 per frame, so this
+/// keeps one request near 1 GiB (~8.7 min at 16 kHz with hop 256).
+pub const MAX_SYNTH_FRAMES: usize = 1 << 15;
+
 impl VitsConfig {
     fn head_dim(&self) -> usize {
         self.hidden_size / self.num_heads
+    }
+
+    /// Reject metadata synthesis cannot run with (zero heads or kernel,
+    /// absurd sizes, non-finite constants) before anything is sized by it.
+    fn validate(&self) -> Result<()> {
+        use crate::loader::limits::{
+            MAX_EMBED_DIM, MAX_HEADS, MAX_HEAD_DIM, MAX_INTERMEDIATE_DIM, MAX_LAYERS,
+            MAX_VOCAB_SIZE,
+        };
+        for (name, value, min, max) in [
+            ("vocab_size", self.vocab_size, 1, MAX_VOCAB_SIZE),
+            ("hidden_size", self.hidden_size, 1, MAX_EMBED_DIM),
+            ("num_layers", self.num_layers, 1, MAX_LAYERS),
+            ("num_heads", self.num_heads, 1, MAX_HEADS),
+            ("window_size", self.window_size, 0, MAX_HEAD_DIM),
+            ("ffn_dim", self.ffn_dim, 1, MAX_INTERMEDIATE_DIM),
+            ("ffn_kernel_size", self.ffn_kernel_size, 1, MAX_HEAD_DIM),
+            ("flow_size", self.flow_size, 1, MAX_EMBED_DIM),
+            ("wavenet_layers", self.wavenet_layers, 0, MAX_LAYERS),
+            ("prior_flows", self.prior_flows, 0, MAX_LAYERS),
+            ("dp_dds_layers", self.dp_dds_layers, 0, MAX_LAYERS),
+            ("dp_flows", self.dp_flows, 0, MAX_LAYERS),
+            ("dp_bins", self.dp_bins, 1, MAX_HEAD_DIM),
+            ("hop_length", self.hop_length, 1, MAX_INTERMEDIATE_DIM),
+        ] {
+            ensure!(
+                (min..=max).contains(&value),
+                "vits {name} {value} must be in {min}..={max}"
+            );
+        }
+        ensure!(
+            self.hidden_size.is_multiple_of(self.num_heads) && self.head_dim() <= MAX_HEAD_DIM,
+            "vits hidden size {} does not split into {} heads of at most {MAX_HEAD_DIM}",
+            self.hidden_size,
+            self.num_heads
+        );
+        ensure!(
+            self.ffn_kernel_size % 2 == 1,
+            "vits ffn kernel size {} must be odd to keep the frame count",
+            self.ffn_kernel_size
+        );
+        ensure!(self.sample_rate > 0, "vits sample rate must be non-zero");
+        ensure!(
+            self.dp_tail_bound.is_finite() && self.dp_tail_bound > 0.0,
+            "vits dp_tail_bound must be finite and positive, got {}",
+            self.dp_tail_bound
+        );
+        ensure!(
+            self.leaky_relu_slope.is_finite(),
+            "vits leaky_relu_slope must be finite"
+        );
+        ensure!(
+            self.ln_eps.is_finite() && self.ln_eps >= 0.0,
+            "vits ln_eps must be finite and non-negative, got {}",
+            self.ln_eps
+        );
+        Ok(())
     }
 }
 
@@ -236,6 +298,7 @@ impl MmsVits {
             leaky_relu_slope: get_f32(&loader, "vits.leaky_relu_slope")?,
             ln_eps: get_f32(&loader, "vits.ln_eps")?,
         };
+        config.validate()?;
 
         fn take_vec(l: &mut crate::loader::GgufLoader, name: &str) -> Result<CpuTensor> {
             l.take_f32(name)
@@ -269,12 +332,30 @@ impl MmsVits {
         }
         fn take_dense(l: &mut crate::loader::GgufLoader, name: &str) -> Result<DenseConv1d> {
             let w = gguf_to_hf(&take_vec(l, &format!("{name}.w"))?);
+            ensure!(
+                w.shape().len() == 3,
+                "{name}: expected conv [out, in, k], got {:?}",
+                w.shape()
+            );
             let b = take_flat(l, &format!("{name}.b"))?;
+            ensure!(
+                b.len() == w.shape()[0],
+                "{name}: bias {} != out {}",
+                b.len(),
+                w.shape()[0]
+            );
             Ok(DenseConv1d::from_hf_weight(&w, b))
         }
 
         // text encoder ------------------------------------------------------
         let embed = take_flat(&mut loader, "v.embed")?;
+        ensure!(
+            Some(embed.len()) == config.vocab_size.checked_mul(config.hidden_size),
+            "vits embedding has {} values, expected {} x {}",
+            embed.len(),
+            config.vocab_size,
+            config.hidden_size
+        );
         let hd = config.head_dim();
         let mut layers = Vec::with_capacity(config.num_layers);
         for i in 0..config.num_layers {
@@ -425,6 +506,14 @@ impl MmsVits {
             char_to_id.len() >= 20,
             "suspiciously small vocab parsed ({})",
             char_to_id.len()
+        );
+        // token ids index the embedding rows directly
+        ensure!(
+            char_to_id
+                .values()
+                .all(|&id| (id as usize) < config.vocab_size),
+            "vits.vocab lists more entries than the {} embedding rows",
+            config.vocab_size
         );
         // Declared pad_token (VitsTokenizer added token). Older GGUFs lack
         // the metadata; fall back to the first vocab entry, which is what
@@ -1646,14 +1735,20 @@ impl MmsVits {
         timings.generate_ms =
             t_all.elapsed().as_secs_f64() * 1e3 - timings.prompt_ms - timings.prefill_ms;
 
-        // durations: ceil(exp(log_d)); monotonic expansion
+        // durations: ceil(exp(log_d)); monotonic expansion. Durations come
+        // from the weights, so their sum is bounded before it sizes
+        // anything (an infinite log-duration saturates to i64::MAX).
         let mut durations = vec![1i64; t];
         let mut total_s: i64 = 0;
         for (i, &ld) in log_duration.iter().enumerate() {
             durations[i] = (ld.exp()).ceil() as i64;
-            total_s += durations[i];
+            total_s = total_s.saturating_add(durations[i].max(0));
         }
         let s_len = total_s.max(1) as usize;
+        ensure!(
+            s_len <= MAX_SYNTH_FRAMES,
+            "synthesis would expand to {s_len} frames, over the {MAX_SYNTH_FRAMES}-frame limit; split the text"
+        );
 
         let mut expanded_hidden = vec![0.0f32; s_len * h];
         // channel-major [F, S]: this buffer feeds the flow stack and
@@ -1748,6 +1843,7 @@ impl MmsVits {
         on_token: impl FnMut(u32) -> bool,
     ) -> Result<(Vec<f32>, Vec<u32>, TtsTimings)> {
         let _ = (max_frames_hint, on_token);
+        ensure!(chunk_frames > 0, "chunk_frames must be positive");
         let synth_start = Instant::now();
         let full = self.synthesize(backend, text, false)?;
         let sr = self.config.sample_rate;
@@ -1816,4 +1912,59 @@ pub(crate) fn dump_npy(dir: &std::path::Path, name: &str, data: &[f32]) {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     let _ = std::fs::write(dir.join(format!("{name}.npy")), bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// facebook/mms-tts-* geometry.
+    fn mms() -> VitsConfig {
+        VitsConfig {
+            vocab_size: 40,
+            hidden_size: 192,
+            num_layers: 6,
+            num_heads: 2,
+            window_size: 4,
+            ffn_dim: 768,
+            ffn_kernel_size: 3,
+            flow_size: 192,
+            wavenet_layers: 4,
+            prior_flows: 4,
+            dp_dds_layers: 3,
+            dp_flows: 4,
+            dp_bins: 10,
+            dp_tail_bound: 5.0,
+            sample_rate: 16_000,
+            hop_length: 256,
+            leaky_relu_slope: 0.1,
+            ln_eps: 1e-5,
+        }
+    }
+
+    #[test]
+    fn mms_config_is_accepted() {
+        mms().validate().unwrap();
+    }
+
+    type Mutation = fn(&mut VitsConfig);
+
+    #[test]
+    fn hostile_metadata_is_an_error_not_a_panic() {
+        let cases: [(&str, Mutation); 7] = [
+            ("num_heads", |c| c.num_heads = 0),
+            ("heads", |c| c.num_heads = 5),
+            ("num_layers", |c| c.num_layers = 0),
+            ("ffn_kernel_size", |c| c.ffn_kernel_size = 0),
+            ("odd", |c| c.ffn_kernel_size = 4),
+            ("hidden_size", |c| c.hidden_size = usize::MAX),
+            ("dp_tail_bound", |c| c.dp_tail_bound = f32::INFINITY),
+        ];
+        for (needle, mutate) in cases {
+            let mut config = mms();
+            mutate(&mut config);
+            let err = config.validate().expect_err(needle).to_string();
+            assert!(err.contains(needle), "{needle}: {err}");
+        }
+    }
 }

@@ -116,8 +116,8 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
   shape fuzz against `preprocess`/`to_mono_16k`/encoder entry points.
 - **VAL-6 · Unsafe reachability after media decode.** Enabled decoders (png 0.18, zune-jpeg 0.5) are pure
   Rust: no C/FFI in the decode path. The only `unsafe` reachable downstream are `matrixmultiply::sgemm`
-  (`src/tensor.rs:197-214, 262-279`, guarded by shape asserts + contiguous-layout invariants) and the
-  AVX2 `fast_exp_raw` (`src/simd.rs:1544-1608`, length-checked wrappers). No unsafe/FFI finding.
+  (`crates/ember-core/src/tensor.rs:197-214, 262-279`, guarded by shape asserts + contiguous-layout invariants) and the
+  AVX2 `fast_exp_raw` (`crates/ember-core/src/simd.rs:1544-1608`, length-checked wrappers). No unsafe/FFI finding.
 
 ---
 
@@ -171,8 +171,29 @@ pushed to `origin/main`:
   gemma4 parity, loader/npy/tokenizer/kv hardening, fuzz harness, docs),
 - `75183e67`: audio/vision hardening delta (WAV panic/amplification fixes,
   encoder shape checks, validated audio seam + duration/segment caps, tests).
-The pre-existing unstaged leftovers (`src/quant.rs`, the deleted
+The pre-existing unstaged leftovers (`crates/ember-core/src/quant.rs`, the deleted
 `data/test_*.npy`, and the two untracked files) were left untouched.
 
 Deferred: VAL-2 (cache-key width), VAL-4 (tile-grid mirror dedup), and the
 remaining encoder pub-API hardening beyond the shape checks above.
+
+## 5. Follow-up review (2026-10-05)
+
+A second pass over the same surfaces plus the TTS codecs found paths that
+bypassed or preceded the limits above. Each is fixed with a regression
+test.
+
+| Finding | Fix | Where |
+|---|---|---|
+| Duration checked only after resampling (a 22 KB WAV at 1 Hz resampled to ~176M samples first); CLI and `Session::attach_static_audio` skipped `ValidatedAudioInput` | `to_mono_16k` refuses >`MAX_AUDIO_SECONDS` at the source rate, before resampling; `AudioStream::push_pcm` enforces the same limit | `src/multimodal/audio.rs`, `src/multimodal/stream.rs` |
+| Extensible-WAV GUID read two bytes early; PCM/float chosen by bit depth; `fmt ` chunks over 16 bytes shifted the chunk walk | `fmt ` parsed within its own length; subformat tag read from the GUID | `src/multimodal/audio.rs` |
+| `FixedFps` spun forever on an infinite rate/timestamp and stepped ~ts/step times on huge rates | finite rate and timestamps required; sparse gaps crossed arithmetically | `src/multimodal/video.rs` |
+| `MAX_VIDEO_FRAMES` enforced only by the CLI; `number_words` panicked at 2000+ frames | cap applied to what `SmolVlmVideo` samples; num2words-compatible thousands | `src/smolvlm_video.rs` |
+| FIFO frame paths hung `decode_rgb`; rank-2 pixels and `tile_size: Some(0)` panicked | capped non-blocking regular-file read; rank, empty-dimension and tile checks | `src/multimodal/image.rs`, `src/smolvlm_video.rs` |
+| mmproj `image_size` uncapped (video upsamples to 4x it) and patch count capped only at 2M (attention is patches² per head) | `MAX_VISION_IMAGE_SIZE` 2048, `MAX_VISION_PATCHES` 16384 | `src/multimodal/vision.rs` |
+| Every request image (up to 1 GiB f32 each) decoded before any was preprocessed; `ember video` decoded every frame before sampling | one decoded image alive at a time; `FrameSampling::select_indices` lets the CLI decode only sampled frames, within a 4 GiB budget | `src/smolvlm.rs`, `src/cli_video.rs` |
+| WavTokenizer and VITS trusted codec metadata and tensor shapes (zero heads/groups/kernels, `hop > n_fft`, unbounded durations) | configs range-checked at load, tensors checked against them, decode/expansion frame caps | `src/tts/wavtokenizer.rs`, `src/tts/vits.rs` |
+| TTS `--out` followed a planted symlink; RIFF sizes wrapped past 4 GiB | atomic rename publish; checked header fields | `src/cli_tts.rs` |
+
+`ember video` still orders frames by file name, as the reference script
+does: zero-pad frame numbers.

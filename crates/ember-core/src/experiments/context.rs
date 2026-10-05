@@ -31,13 +31,20 @@ pub enum ExecutionPhase {
     Decode,
 }
 
-impl core::fmt::Display for ExecutionPhase {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let name = match self {
+impl ExecutionPhase {
+    /// `prefill` or `decode`, as recorded in artifacts and selections.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
             Self::Prefill => "prefill",
             Self::Decode => "decode",
-        };
-        formatter.write_str(name)
+        }
+    }
+}
+
+impl core::fmt::Display for ExecutionPhase {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(self.name())
     }
 }
 
@@ -53,6 +60,15 @@ impl TracingState {
     #[must_use]
     pub const fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled)
+    }
+
+    /// `disabled` or `enabled`, as recorded in capture manifests.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Enabled => "enabled",
+        }
     }
 }
 
@@ -253,7 +269,8 @@ pub struct TensorAccess<'a> {
 }
 
 impl<'a> TensorAccess<'a> {
-    pub(crate) fn new(rows: usize, columns: usize, values: &'a mut [f32]) -> Self {
+    #[doc(hidden)]
+    pub fn new(rows: usize, columns: usize, values: &'a mut [f32]) -> Self {
         assert_eq!(
             rows.checked_mul(columns)
                 .expect("activation tensor shape product overflow"),

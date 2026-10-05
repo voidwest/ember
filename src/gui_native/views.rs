@@ -915,7 +915,10 @@ impl Console {
     /// control or a real fact about where state lives; nothing here is a
     /// toggle that toggles nothing.
     fn settings_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let store_path = app_store::store_path().display().to_string();
+        let store_path = app_store::store_path().map_or_else(
+            || "(not saved)".to_string(),
+            |path| path.display().to_string(),
+        );
 
         div()
             .flex()
@@ -2351,9 +2354,10 @@ impl Console {
                     // result, or a reopened run whose bundle was kept.
                     .when(
                         has_results
-                            && self.intervention.as_ref().is_some_and(|output| {
-                                std::path::Path::new(&output.bundle_dir).is_dir()
-                            }),
+                            && self
+                                .intervention
+                                .as_ref()
+                                .is_some_and(|output| self.bundle_dir_on_disk(&output.bundle_dir)),
                         |header| {
                             let dir = self
                                 .intervention
@@ -2869,6 +2873,15 @@ fn fmt_tps(tps: Option<f64>) -> String {
 /// One command per platform, spawned detached: the file manager is not ours
 /// to wait on, and a failure is a banner, not a crash.
 pub(super) fn reveal_in_finder(path: &str) -> Result<(), String> {
+    // A stored path that starts with `-` must not reach the opener as an
+    // option.
+    let anchored;
+    let path = if path.starts_with('-') {
+        anchored = format!("./{path}");
+        anchored.as_str()
+    } else {
+        path
+    };
     let result = if cfg!(target_os = "macos") {
         std::process::Command::new("open")
             .arg("-R")

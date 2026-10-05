@@ -137,9 +137,15 @@ pub fn decode_rgb_bytes(bytes: &[u8]) -> Result<CpuTensor> {
 
 /// Decode an image file (PNG/JPEG) and return RGB pixels as f32
 /// `[3, height, width]` with values in 0..255 (channels-first).
+///
+/// The path must name a regular file of at most [`MAX_IMAGE_DECODE_BYTES`]:
+/// it is read without blocking, so a FIFO or device fails instead of
+/// hanging or streaming forever, and then decoded from memory under the
+/// same limits as [`decode_rgb_bytes`].
 pub fn decode_rgb(path: &Path) -> Result<CpuTensor> {
-    let mut reader = image::ImageReader::open(path)
-        .map_err(|e| anyhow!("failed to open image {}: {e}", path.display()))?;
+    let bytes = crate::bounded_read::read_existing_regular_file(path, MAX_IMAGE_DECODE_BYTES)
+        .map_err(|e| anyhow!("failed to read image {}: {e}", path.display()))?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
     reader.limits(image_decode_limits());
     let img = reader
         .with_guessed_format()
@@ -176,8 +182,13 @@ fn rgb8_to_tensor(img: &image::RgbImage) -> CpuTensor {
 pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<PreprocessedImage> {
     let t0 = std::time::Instant::now();
     anyhow::ensure!(
-        image.shape() == [3, image.shape()[1], image.shape()[2]] && image.ndim() == 3,
-        "preprocess expects CHW [3, h, w] RGB pixels"
+        image.ndim() == 3 && image.shape()[0] == 3,
+        "preprocess expects CHW [3, h, w] RGB pixels, got {:?}",
+        image.shape()
+    );
+    anyhow::ensure!(
+        config.tile_size != Some(0),
+        "preprocess tile_size must be positive"
     );
     let original_dims = (image.shape()[1], image.shape()[2]);
 
@@ -387,6 +398,17 @@ pub fn resize(
         "resize expects CHW RGB"
     );
     let (in_h, in_w) = (image.shape()[1], image.shape()[2]);
+    anyhow::ensure!(
+        in_h > 0 && in_w > 0 && out_h > 0 && out_w > 0,
+        "resize needs non-empty images, got {in_h}x{in_w} -> {out_h}x{out_w}"
+    );
+    anyhow::ensure!(
+        out_w
+            .checked_mul(in_h.max(out_h))
+            .and_then(|n| n.checked_mul(3))
+            .is_some(),
+        "resize to {out_h}x{out_w} overflows"
+    );
     let (filter, support) = match resample {
         Resample::Lanczos => (lanczos as fn(f64) -> f64, 3.0),
         Resample::Bicubic => (bicubic as fn(f64) -> f64, 2.0),

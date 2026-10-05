@@ -696,3 +696,126 @@ mod tests {
         assert!(float_metrics(&[f32::NAN], &[0.0]).is_err());
     }
 }
+
+/// Moved from `llama`'s unit tests when the models moved to `ember-core`:
+/// they exercise this module against a real (synthetic Q8_0) model.
+#[cfg(test)]
+mod llama_model_tests {
+    use crate::backend::CpuBackend;
+    use crate::model::ForwardModel;
+    use crate::plan::{ExecutionMode, HookMode};
+
+    #[test]
+    fn kv_continuation_diagnostics_duplicate_and_perturbed_control() {
+        use crate::experiments::ModelFamily;
+        use crate::kv_compare::{
+            prepare_diagnostic_perturbation, KvDiagnosticPerturbation, KvPerturbComponent,
+            KvPerturbOperation,
+        };
+        use crate::kv_diagnostics::{diagnose_continuation, KvContinuationCandidate};
+        use crate::kv_snapshot::{KvCompatibilityTarget, KvSnapshot};
+
+        let model = crate::llama::testkit::q8_llama_without_fast_decode(2);
+        model.set_execution_mode(ExecutionMode::Planned);
+        let backend = CpuBackend;
+        let capacity = 6;
+        let prompt = [3u32, 1, 7];
+        let model_hash = "aa".repeat(32);
+        let tokenizer_hash = "bb".repeat(32);
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                capacity,
+                Some(&model_hash),
+                Some(&tokenizer_hash),
+            )
+            .unwrap();
+        let target = KvCompatibilityTarget::from_execution_plan(&plan).unwrap();
+        let mut cache = model.create_cache(&backend, capacity);
+        let boundary =
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
+                .unwrap();
+        let resume = crate::sampler::argmax_token(boundary.data()) as u32;
+        let snapshot =
+            KvSnapshot::export_native(&cache, target.clone(), Some(&prompt), Some(resume)).unwrap();
+
+        let control = diagnose_continuation(
+            &model,
+            &backend,
+            &snapshot,
+            KvContinuationCandidate::Snapshot(&snapshot),
+            &target,
+            ModelFamily::Llama,
+            resume,
+            4,
+            None,
+        )
+        .unwrap();
+        assert!(control.forced_top1_all_agree);
+        assert!(control.greedy_sequences_match);
+        assert_eq!(control.final_logit_cosine, Some(1.0));
+        assert!(control
+            .attention_by_layer
+            .iter()
+            .all(|layer| layer.metrics.cosine_similarity == Some(1.0)));
+        assert_eq!(control.forced_input_token_ids.len(), 3);
+        assert_eq!(
+            control
+                .forced_steps
+                .iter()
+                .map(|step| (
+                    step.evaluation_index,
+                    step.absolute_input_position,
+                    step.predicted_continuation_index,
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, 3, 1), (1, 4, 2), (2, 5, 3)]
+        );
+
+        let alteration = prepare_diagnostic_perturbation(
+            &snapshot,
+            KvDiagnosticPerturbation {
+                layer: 0,
+                head: 0,
+                component: KvPerturbComponent::Both,
+                operation: KvPerturbOperation::Zero,
+            },
+        )
+        .unwrap();
+        let altered = diagnose_continuation(
+            &model,
+            &backend,
+            &snapshot,
+            KvContinuationCandidate::Diagnostic {
+                source: &snapshot,
+                alteration: &alteration,
+            },
+            &target,
+            ModelFamily::Llama,
+            resume,
+            4,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            altered
+                .diagnostic_perturbation
+                .as_ref()
+                .unwrap()
+                .source_snapshot_hash,
+            snapshot.manifest().snapshot_hash
+        );
+        assert_eq!(
+            altered.forced_input_token_ids, control.forced_input_token_ids,
+            "altered candidate must not choose its own teacher-forced inputs"
+        );
+        assert!(altered
+            .forced_steps
+            .iter()
+            .flat_map(|step| &step.attention_by_layer)
+            .any(|layer| layer.metrics.max_abs_error > 0.0));
+        snapshot.verify().unwrap();
+    }
+}

@@ -1,4 +1,4 @@
-use crate::artifact::DispatchPath;
+use crate::hook_types::DispatchPath;
 /// Shared rejection message: gemma4's K-quant path is not implemented.
 const NO_K_QUANT: &str = "gemma4 does not support compressed K-quant tensors in v0.3";
 /// Gemma widens f16/bf16 tensors on entry (`materialize_half_tensors`), so

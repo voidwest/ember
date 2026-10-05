@@ -421,9 +421,9 @@ impl<'e> AgentSession<'e> {
             .collect();
         let data = serde_json::json!({
             "ember_version": env!("CARGO_PKG_VERSION"),
-            "git_commit": option_env!("EMBER_GIT_COMMIT"),
-            "rustc": option_env!("EMBER_RUSTC_VERSION"),
-            "target": option_env!("EMBER_TARGET"),
+            "git_commit": crate::build_info::GIT_COMMIT,
+            "rustc": crate::build_info::RUSTC_VERSION,
+            "target": crate::build_info::TARGET,
             "model": self.engine.identity(),
             "protocol_id": self.protocol.id(),
             "tools": schemas,

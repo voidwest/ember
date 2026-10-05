@@ -1,8 +1,8 @@
 [workspace]
 # Optional PyO3 layer; never built by root cargo commands (default-members)
 # and never required for the CLI/headless install path.
-members = ["bindings/python"]
-default-members = ["."]
+members = ["crates/ember-core", "bindings/python"]
+default-members = [".", "crates/ember-core"]
 # Standalone nested projects that predate this workspace and must keep their
 # own toolchains/lockfiles (fuzz is a cargo-fuzz project on a pinned nightly;
 # the others are frozen artifacts). Without this they resolve the root
@@ -13,9 +13,14 @@ exclude = [
     "research/embersec/comparative/reference/candle",
 ]
 
+# One version for ember and ember-core: both bake CARGO_PKG_VERSION into
+# execution-plan provenance and the packed-cache key.
+[workspace.package]
+version = "1.0.0"
+
 [package]
 name = "ember"
-version = "1.0.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -25,20 +30,27 @@ homepage = "https://voidwest.dev/ember"
 readme = "README.md"
 keywords = ["gguf", "llm", "inference", "interpretability", "research"]
 categories = ["command-line-utilities", "science"]
+# What a source package (`cargo package`, or the Python binding's sdist,
+# which packages this path dependency) needs to build: not the docs site,
+# research data, artifacts or local files.
+include = [
+    "/src/**",
+    "/benches/**",
+    "/docs/api-stability.md",
+    "/tokenizer.json",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
 
 [dependencies]
-# Only what Ember uses: loading tokenizer.json, encode/decode, and the
-# pre-tokenizer/normalizer regexes (`onig`, the default regex engine, kept so
-# encodings stay byte-identical). The default `progressbar` (indicatif ->
-# unmaintained number_prefix) and `esaxx_fast` (C++ suffix arrays for Unigram
-# *training*) features are not needed.
-tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+# Kernels, models, plans and the hook framework; every module is re-exported
+# from this crate at its established `ember::` path.
+ember-core = { path = "crates/ember-core", version = "1.0.0" }
 thiserror = "1"
 anyhow = "1"
-memmap2 = "0.9"
 libm = "0.2.16"
 half = "2.7.1"
-matrixmultiply = "0.3.10"
 clap = { version = "4", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
@@ -50,7 +62,7 @@ rayon = "1"
 rtrb = "0.3"  # lock-free SPSC rings for the duplex audio queues (pure rust)
 tiny_http = "0.12"
 # Minimal cross-platform Ctrl-C handling for cooperative cancellation
-# (src/cancel.rs + cli_support::install_sigint_cancel).
+# (crates/ember-core/src/cancel.rs + cli_support::install_sigint_cancel).
 ctrlc = "3"
 # GPUI Kit console. Optional so headless builds retain Rust 1.92 support.
 # GUI builds use the pinned Rust 1.98.1 development toolchain. Embedded Noto
@@ -106,15 +118,19 @@ harness = false
 name = "multimodal_batch"
 harness = false
 
+[lints]
+workspace = true
+
 # Mirror CI's clippy posture so local `cargo clippy` matches `cargo clippy
 # --all-targets --all-features -- -D warnings` on GitHub Actions.
-[lints.clippy]
+[workspace.lints.clippy]
 all = "warn"
 # Every `unsafe` block and `unsafe impl` carries a `// SAFETY:` comment (the
 # unsafe-hygiene contract in src/lib.rs); CI's `-D warnings` enforces it.
 undocumented_unsafe_blocks = "warn"
 
 [dev-dependencies]
+ember-core = { path = "crates/ember-core", version = "1.0.0", features = ["testkit"] }
 # Compress historical metadata without changing the frozen bundle bytes.
 flate2 = "1.1.9"
 proptest = "1.11"
@@ -127,4 +143,4 @@ proptest = "1.11"
 sha2 = { version = "0.10", features = ["asm-aarch64"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-rustix = { version = "1.1.4", features = ["fs"] }
+rustix = { version = "1.1.4", features = ["fs", "process"] }

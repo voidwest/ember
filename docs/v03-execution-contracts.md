@@ -53,7 +53,7 @@ Out of scope (hard constraints):
 ## 3. Current eager-f32 K-quant behavior
 
 Today dtypes 10..=14 (Q2_K..Q6_K) are dequantized to f32 at load time in
-`src/loader.rs` (`load_gguf_from_reader_impl`, dtype arm 10..=14):
+`crates/ember-core/src/loader.rs` (`load_gguf_from_reader_impl`, dtype arm 10..=14):
 raw bytes are read, `quant_k::dequant_tensor` materializes the full f32
 tensor, and model builders consume `LoadedTensor::F32`. Consequences:
 
@@ -67,10 +67,10 @@ tensor, and model builders consume `LoadedTensor::F32`. Consequences:
 
 ## 4. Target representation
 
-New `KQuantWeight` in `src/quant_k.rs`, mirroring `QuantizedWeight`:
+New `KQuantWeight` in `crates/ember-core/src/quant_k.rs`, mirroring `QuantizedWeight`:
 
 - `data: QuantizedData`: the existing owned/mmap storage enum from
-  `src/quant.rs` (made crate-visible); mmap-backed by default through
+  `crates/ember-core/src/quant.rs` (made crate-visible); mmap-backed by default through
   `load_gguf`, owned fallback for reader loads;
 - `shape: [usize; 2]`: `[out_features, in_features]`, reversed from
   GGUF, same convention as Q8_0 so blocks are contiguous per output row;

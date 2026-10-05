@@ -11,7 +11,7 @@
 //! memory and hashed + written at generation completion — no file I/O in the
 //! inference hot path.
 
-use super::{ExperimentError, GenerationContext, ModelContext, TensorAccess, TracingState};
+use super::{ExperimentError, GenerationContext, ModelContext, TensorAccess};
 use crate::artifact::{
     record_file_name, ActivationManifest, ActivationStage, CaptureRecord, CaptureSelection,
     DispatchObservation, DispatchPath, ManifestExperiment, ManifestModel, ManifestRun,
@@ -60,6 +60,90 @@ pub struct CaptureSink {
     /// v0.3 execution provenance (per-tensor K-family decisions), attached
     /// to the artifact when the run loaded with an explicit strategy.
     execution: Option<crate::artifact::ExecutionInventory>,
+}
+
+impl super::ActivationCapture for CaptureSink {
+    fn selects_site(
+        &self,
+        stage: ActivationStage,
+        layer: Option<usize>,
+        phase: super::ExecutionPhase,
+    ) -> bool {
+        self.selection.phase.includes(phase.name())
+            && self.selection.stages.contains(&stage)
+            && layer.is_none_or(|layer| self.selection.layers.contains(&layer))
+    }
+
+    fn on_model_loaded(&mut self, ctx: &ModelContext<'_>) -> Result<(), ExperimentError> {
+        CaptureSink::on_model_loaded(self, ctx)
+    }
+
+    fn before_layer(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::before_layer(self, execution, layer, tensor, dispatch)
+    }
+
+    fn after_attention(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::after_attention(self, execution, layer, tensor, dispatch)
+    }
+
+    fn after_mlp(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::after_mlp(self, execution, layer, tensor, dispatch)
+    }
+
+    fn after_layer(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::after_layer(self, execution, layer, tensor, dispatch)
+    }
+
+    fn before_logits(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::before_logits(self, execution, tensor, dispatch)
+    }
+
+    fn after_logits(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::after_logits(self, execution, tensor, dispatch)
+    }
+
+    fn finalize(
+        &mut self,
+        generation: &GenerationContext<'_>,
+        experiment: ManifestExperiment,
+        dispatch_observations: Vec<DispatchObservation>,
+    ) -> Result<std::path::PathBuf, ExperimentError> {
+        CaptureSink::finalize(self, generation, experiment, dispatch_observations)
+    }
 }
 
 impl CaptureSink {
@@ -442,10 +526,7 @@ impl CaptureSink {
                 input_token_ids: generation.input_token_ids.to_vec(),
                 generated_token_ids: generation.generated_token_ids.to_vec(),
                 thread_count: self.thread_count,
-                tracing: match generation.tracing {
-                    TracingState::Disabled => "disabled".to_string(),
-                    TracingState::Enabled => "enabled".to_string(),
-                },
+                tracing: generation.tracing.name().to_string(),
                 cpu: self.cpu_metadata.clone(),
                 dispatch_observations,
                 k_strategy: self
@@ -503,10 +584,7 @@ impl CaptureSink {
 }
 
 fn phase_name(phase: super::ExecutionPhase) -> &'static str {
-    match phase {
-        super::ExecutionPhase::Prefill => "prefill",
-        super::ExecutionPhase::Decode => "decode",
-    }
+    phase.name()
 }
 
 fn tensor_stats(values: &[f32]) -> (f64, f32) {
@@ -523,7 +601,9 @@ fn tensor_stats(values: &[f32]) -> (f64, f32) {
 mod tests {
     use super::*;
     use crate::artifact::CapturePhase;
-    use crate::experiments::{ExecutionContext, ExecutionPhase, ModelContext, ModelFamily};
+    use crate::experiments::{
+        ExecutionContext, ExecutionPhase, ModelContext, ModelFamily, TracingState,
+    };
 
     fn model_context(layer_count: usize, hidden: usize) -> ModelContext<'static> {
         ModelContext::new(

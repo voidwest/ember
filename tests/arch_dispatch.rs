@@ -233,7 +233,7 @@ fn dispatch_sites_never_use_the_permissive_accessor() {
     // so guarding only the latter would protect the version nobody ships.
     for file in [
         "src/diff_outcome.rs",
-        "src/loader.rs",
+        "crates/ember-core/src/loader.rs",
         "src/cli_commands.rs",
         "src/main.rs",
         "research/embersec/comparative/harness/_embersec_harness.rs",
@@ -260,7 +260,7 @@ fn dispatch_sites_never_use_the_permissive_accessor() {
 /// { ... _ => "llama" }`. Reading the key directly is the shape of the bug,
 /// so the harness must not do it at all.
 ///
-/// `src/loader.rs` is deliberately excluded: it legitimately inspects the key
+/// `crates/ember-core/src/loader.rs` is deliberately excluded: it legitimately inspects the key
 /// for the GPT-2 dequantization budget, which is not a dispatch decision.
 #[test]
 fn harness_sites_never_read_the_architecture_key_directly() {
@@ -294,7 +294,7 @@ fn harness_sites_never_read_the_architecture_key_directly() {
 /// [`resolve_engine_family`] is the only way to read the declaration.
 #[test]
 fn permissive_accessor_has_been_deleted() {
-    let text = source("src/support.rs");
+    let text = source("crates/ember-core/src/support.rs");
     assert!(
         !text.contains("fn declared_architecture"),
         "declared_architecture must not be reintroduced: it returns Option and \

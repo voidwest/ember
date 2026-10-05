@@ -142,7 +142,7 @@ impl<'a> Cursor<'a> {
     }
     fn read_bytes(&mut self, n: usize) -> Result<&'a [u8]> {
         ensure!(
-            self.pos + n <= self.data.len(),
+            n <= self.data.len() - self.pos,
             "WAV truncated: wanted {n} bytes at offset {}",
             self.pos
         );
@@ -294,32 +294,41 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
         let chunk_size = cur.read_u32()? as usize;
         match chunk_id {
             b"fmt " => {
-                format_tag = cur.read_u16()?;
-                channels = cur.read_u16()?;
-                sample_rate = cur.read_u32()?;
-                let _byte_rate = cur.read_u32()?;
-                let _block_align = cur.read_u16()?;
-                bits_per_sample = cur.read_u16()?;
+                // Parse inside the chunk so a longer `fmt ` (cbSize, or the
+                // extensible extension) never shifts the chunk walk.
+                ensure!(
+                    chunk_size >= 16,
+                    "WAV fmt chunk is {chunk_size} bytes; at least 16 are required"
+                );
+                let mut fmt = Cursor::new(cur.read_bytes(chunk_size)?);
+                if chunk_size % 2 == 1 {
+                    cur.skip(1).ok();
+                }
+                format_tag = fmt.read_u16()?;
+                channels = fmt.read_u16()?;
+                sample_rate = fmt.read_u32()?;
+                let _byte_rate = fmt.read_u32()?;
+                let _block_align = fmt.read_u16()?;
+                bits_per_sample = fmt.read_u16()?;
                 if format_tag == 0xFFFE {
                     // WAVE_FORMAT_EXTENSIBLE: cbSize, valid bits, channel mask,
                     // then a 16-byte subformat GUID whose first 2 bytes carry
-                    // the real format tag
-                    let cb = cur.read_u16()? as usize;
+                    // the real format tag (KSDATAFORMAT_SUBTYPE_PCM = 1,
+                    // _IEEE_FLOAT = 3) and whose other 14 are fixed
+                    let cb = fmt.read_u16()? as usize;
                     ensure!(cb >= 22, "extensible fmt too small");
-                    cur.skip(2)?; // valid bits
-                    cur.skip(4)?; // channel mask
-                    let guid = cur.read_bytes(14)?.to_vec();
-                    cur.skip(cb - 20)?;
+                    fmt.skip(2)?; // valid bits
+                    fmt.skip(4)?; // channel mask
+                    let subformat = fmt.read_u16()?;
                     ensure!(
-                        guid[..14]
+                        fmt.read_bytes(14)?
                             == [
                                 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00,
                                 0x38, 0x9B, 0x71
                             ],
                         "unsupported extensible subformat"
                     );
-                    // KSDATAFORMAT_SUBTYPE_PCM or _IEEE_FLOAT both supported;
-                    // distinguish by bits
+                    format_tag = subformat;
                 }
             }
             b"data" => {
@@ -346,17 +355,6 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
     ensure!(channels > 0, "WAV has zero channels");
     ensure!(sample_rate > 0, "WAV sample rate must be non-zero");
 
-    // resolve the effective format: raw tag or the extensible GUID mapping
-    let effective_tag = if format_tag == 0xFFFE {
-        // PCM if integer bit depth, float if 32/64-bit IEEE payload
-        match bits_per_sample {
-            32 | 64 => 3, // IEEE float
-            _ => 1,       // PCM integer
-        }
-    } else {
-        format_tag
-    };
-
     let bytes_per_sample = (bits_per_sample / 8) as usize;
     ensure!(
         bytes_per_sample > 0 && data.len().is_multiple_of(bytes_per_sample),
@@ -369,7 +367,7 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
     let read_one = |frame: usize, ch: usize| -> Result<f32> {
         let off = (frame * channels as usize + ch) * bytes_per_sample;
         let b = &data[off..off + bytes_per_sample];
-        match (effective_tag, bits_per_sample) {
+        match (format_tag, bits_per_sample) {
             (1, 8) => Ok((b[0] as f32 - 128.0) / 128.0), // unsigned 8-bit
             (1, 16) => Ok(i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0),
             (1, 24) => {
@@ -382,7 +380,7 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
                 Ok(f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32)
             }
             _ => Err(anyhow!(
-                "unsupported wav format tag {effective_tag} at {bits_per_sample} bits"
+                "unsupported wav format tag {format_tag} at {bits_per_sample} bits"
             )),
         }
     };
@@ -477,9 +475,25 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Result<Vec<f32
     Ok(out)
 }
 
+/// Reject `samples` at `sample_rate` Hz longer than [`MAX_AUDIO_SECONDS`].
+/// Checked at the *source* rate, before resampling: the rate is attacker-
+/// controlled, so a small WAV declaring a 1 Hz rate would otherwise force
+/// a resample of hundreds of millions of output samples before any
+/// post-resample duration check could refuse it.
+pub(crate) fn ensure_admissible_duration(samples: usize, sample_rate: u32) -> Result<()> {
+    ensure!(sample_rate > 0, "audio sample rate must be non-zero");
+    let duration_s = samples as f64 / f64::from(sample_rate);
+    ensure!(
+        duration_s <= MAX_AUDIO_SECONDS,
+        "audio duration {duration_s:.1}s exceeds the {MAX_AUDIO_SECONDS:.0}s admission limit"
+    );
+    Ok(())
+}
+
 /// Normalize any [`AudioInput`] to mono f32 at 16 kHz: decode, mean-of-
 /// channels, resample. This is the single entry point the model wrapper
-/// uses for all sources.
+/// uses for all sources; inputs longer than [`MAX_AUDIO_SECONDS`] are
+/// refused before resampling.
 pub fn to_mono_16k(input: &AudioInput) -> Result<DecodedAudio> {
     let decoded = match input {
         AudioInput::File(p) => decode_wav(p)?,
@@ -489,6 +503,7 @@ pub fn to_mono_16k(input: &AudioInput) -> Result<DecodedAudio> {
             sample_rate: *sample_rate,
         },
     };
+    ensure_admissible_duration(decoded.samples.len(), decoded.sample_rate)?;
     if decoded.sample_rate == TARGET_SAMPLE_RATE as u32 {
         return Ok(decoded);
     }

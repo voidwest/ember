@@ -731,6 +731,33 @@ fn sampling_is_deterministic_and_fails_closed() {
     .is_err());
 }
 
+#[test]
+fn fixed_fps_sampling_terminates_on_hostile_rates_and_timestamps() {
+    use ember::multimodal::FrameSampling;
+
+    let fixed = |fps| FrameSampling::FixedFps { fps, max_frames: 4 };
+    // non-finite rates and timestamps fail closed instead of spinning
+    for fps in [f64::INFINITY, f64::NAN] {
+        assert!(fixed(fps).sample(&fake_video(10)).is_err(), "{fps}");
+    }
+    let mut vid = fake_video(3);
+    vid.timestamps_ms[2] = f64::INFINITY;
+    assert!(fixed(1.0).sample(&vid).is_err());
+
+    // a huge-but-finite rate against a distant timestamp jumps instead of
+    // stepping ~1e15 times, and samples the same frames as a sane rate
+    let mut vid = fake_video(3);
+    vid.timestamps_ms = vec![0.0, 5.0e9, 9.0e9];
+    let start = std::time::Instant::now();
+    let fast = fixed(1.0e6).sample(&vid).expect("finite inputs sample");
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(fast.source_indices, vec![0, 1, 2]);
+    assert_eq!(
+        fixed(1.0).sample(&vid).unwrap().source_indices,
+        vec![0, 1, 2]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Track G: encoded-media feature cache
 // ---------------------------------------------------------------------------
@@ -1070,6 +1097,97 @@ fn wav_unsupported_format_tag_is_error_not_panic() {
     assert!(err.to_string().contains("unsupported wav format"), "{err}");
 }
 
+/// RIFF/WAVE bytes around an arbitrary `fmt ` chunk body.
+fn wav_with_fmt(fmt: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(b"WAVE");
+    body.extend_from_slice(b"fmt ");
+    body.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+    body.extend_from_slice(fmt);
+    if fmt.len() % 2 == 1 {
+        body.push(0);
+    }
+    body.extend_from_slice(b"data");
+    body.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    body.extend_from_slice(data);
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+/// The 16-byte `fmt ` fields shared by every layout.
+fn fmt_base(format_tag: u16, bits: u16, channels: u16, rate: u32) -> Vec<u8> {
+    let block_align = channels * bits / 8;
+    let mut fmt = Vec::new();
+    fmt.extend_from_slice(&format_tag.to_le_bytes());
+    fmt.extend_from_slice(&channels.to_le_bytes());
+    fmt.extend_from_slice(&rate.to_le_bytes());
+    fmt.extend_from_slice(&(rate * u32::from(block_align)).to_le_bytes());
+    fmt.extend_from_slice(&block_align.to_le_bytes());
+    fmt.extend_from_slice(&bits.to_le_bytes());
+    fmt
+}
+
+fn extensible_fmt(subformat: u16, bits: u16, rate: u32) -> Vec<u8> {
+    let mut fmt = fmt_base(0xFFFE, bits, 1, rate);
+    fmt.extend_from_slice(&22u16.to_le_bytes()); // cbSize
+    fmt.extend_from_slice(&bits.to_le_bytes()); // valid bits
+    fmt.extend_from_slice(&4u32.to_le_bytes()); // channel mask
+    fmt.extend_from_slice(&subformat.to_le_bytes());
+    fmt.extend_from_slice(&[
+        0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+    ]);
+    fmt
+}
+
+#[test]
+fn wav_extensible_subformat_selects_pcm_or_float() {
+    use ember::multimodal::audio::decode_wav_bytes;
+    // KSDATAFORMAT_SUBTYPE_PCM, 16-bit: half scale
+    let pcm = decode_wav_bytes(&wav_with_fmt(
+        &extensible_fmt(1, 16, 16_000),
+        &16_384i16.to_le_bytes(),
+    ))
+    .expect("extensible PCM decodes");
+    assert_eq!(pcm.samples, vec![0.5]);
+    // 32-bit integer PCM must not be read as float just because of its width
+    let pcm32 = decode_wav_bytes(&wav_with_fmt(
+        &extensible_fmt(1, 32, 16_000),
+        &(1i32 << 30).to_le_bytes(),
+    ))
+    .expect("extensible 32-bit PCM decodes");
+    assert_eq!(pcm32.samples, vec![0.5]);
+    let float = decode_wav_bytes(&wav_with_fmt(
+        &extensible_fmt(3, 32, 16_000),
+        &0.25f32.to_le_bytes(),
+    ))
+    .expect("extensible float decodes");
+    assert_eq!(float.samples, vec![0.25]);
+    // another subformat GUID is refused, not guessed from the bit depth
+    let mut odd = extensible_fmt(1, 16, 16_000);
+    *odd.last_mut().unwrap() ^= 1;
+    let err = decode_wav_bytes(&wav_with_fmt(&odd, &[0, 0])).expect_err("unknown GUID");
+    assert!(err.to_string().contains("extensible subformat"), "{err}");
+}
+
+#[test]
+fn wav_fmt_chunk_length_is_respected() {
+    use ember::multimodal::audio::decode_wav_bytes;
+    // An 18-byte PCM fmt (cbSize = 0) is common; its tail must not be read
+    // as the next chunk header.
+    let mut fmt = fmt_base(1, 16, 1, 16_000);
+    fmt.extend_from_slice(&0u16.to_le_bytes());
+    let decoded = decode_wav_bytes(&wav_with_fmt(&fmt, &16_384i16.to_le_bytes()))
+        .expect("18-byte fmt decodes");
+    assert_eq!(decoded.samples, vec![0.5]);
+    assert_eq!(decoded.sample_rate, 16_000);
+    // a short fmt chunk cannot borrow bytes from the chunk after it
+    let short = &fmt_base(1, 16, 1, 16_000)[..14];
+    let err = decode_wav_bytes(&wav_with_fmt(short, &[0, 0])).expect_err("short fmt");
+    assert!(err.to_string().contains("fmt chunk"), "{err}");
+}
+
 #[test]
 fn wav_zero_sample_rate_is_rejected() {
     use ember::multimodal::audio::decode_wav_bytes;
@@ -1124,7 +1242,58 @@ fn validated_audio_input_rejects_oversized_duration() {
     assert_eq!(v.samples.len(), 16_000);
 }
 
+#[test]
+fn low_rate_wav_is_refused_before_resampling() {
+    use ember::multimodal::audio::{to_mono_16k, AudioInput, ValidatedAudioInput};
+    // 22 KB of 16-bit samples declared at 1 Hz is ~3 hours of "audio" that
+    // used to resample to ~176M samples before the duration check ran.
+    let bytes = wav_bytes(1, 16, 1, 1, &[0u8; 22_000]);
+    let start = std::time::Instant::now();
+    for result in [
+        to_mono_16k(&AudioInput::Bytes(bytes.clone())).map(|_| ()),
+        ValidatedAudioInput::from_audio_input(&AudioInput::Bytes(bytes)).map(|_| ()),
+    ] {
+        let err = result.expect_err("over-long low-rate audio must be refused");
+        assert!(err.to_string().contains("admission limit"), "{err}");
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
 // --- image decode limits ---------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn decode_rgb_refuses_a_fifo_instead_of_blocking() {
+    let dir = std::env::temp_dir().join(format!("ember-fifo-frame-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fifo = dir.join("frame_0000.png");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let err = decode_rgb(&fifo).expect_err("a FIFO is not an image file");
+    assert!(err.to_string().contains("regular file"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn malformed_pixels_and_tile_size_are_errors_not_panics() {
+    let config = ImagePreprocessConfig::default();
+    let flat = CpuTensor::from_data(vec![12], vec![0.0; 12]);
+    assert!(preprocess(&flat, &config).is_err());
+    assert!(resize(&flat, 2, 2, Resample::Lanczos).is_err());
+    let empty = CpuTensor::from_data(vec![3, 0, 4], vec![]);
+    assert!(resize(&empty, 2, 2, Resample::Lanczos).is_err());
+    let rgb = CpuTensor::from_data(vec![3, 2, 2], vec![0.0; 12]);
+    let zero_tile = ImagePreprocessConfig {
+        tile_size: Some(0),
+        ..ImagePreprocessConfig::default()
+    };
+    let err = preprocess(&rgb, &zero_tile).expect_err("tile size 0");
+    assert!(err.to_string().contains("tile_size"), "{err}");
+}
 
 fn crc32_ieee(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;

@@ -54,7 +54,8 @@ pub(crate) struct TtsCommand {
     tokens: usize,
 
     /// stream PCM in chunks while generating; prints time-to-first-audio
-    /// and per-chunk cadence instead of single-shot timings
+    /// and per-chunk cadence instead of single-shot timings, and also
+    /// writes the raw chunk concatenation to `<out>.streamed.wav`
     #[arg(long, default_value_t = false)]
     stream: bool,
 
@@ -323,27 +324,40 @@ fn codec_selftest(
     Ok(())
 }
 
+/// Write 16-bit mono PCM. The file is published by rename, so an existing
+/// symlink at `path` is replaced rather than followed, and sizes that do
+/// not fit the RIFF header's 32-bit fields are refused instead of wrapping.
 fn write_wav(path: &std::path::Path, pcm: &[f32], sample_rate: u32) -> Result<()> {
+    let data_len = pcm
+        .len()
+        .checked_mul(2)
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n <= u32::MAX - 36)
+        .ok_or_else(|| anyhow::anyhow!("{} samples do not fit a WAV file", pcm.len()))?;
+    let byte_rate = sample_rate
+        .checked_mul(2)
+        .ok_or_else(|| anyhow::anyhow!("sample rate {sample_rate} does not fit a WAV header"))?;
     let mut bytes = Vec::with_capacity(44 + pcm.len() * 2);
     bytes.extend_from_slice(b"RIFF");
-    bytes.extend_from_slice(&((36 + pcm.len() * 2) as u32).to_le_bytes());
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
     bytes.extend_from_slice(b"WAVE");
     bytes.extend_from_slice(b"fmt ");
     bytes.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
     bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
     bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
     bytes.extend_from_slice(&sample_rate.to_le_bytes());
-    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+    bytes.extend_from_slice(&byte_rate.to_le_bytes());
     bytes.extend_from_slice(&2u16.to_le_bytes()); // block align
     bytes.extend_from_slice(&16u16.to_le_bytes()); // bits
     bytes.extend_from_slice(b"data");
-    bytes.extend_from_slice(&(pcm.len() as u32 * 2).to_le_bytes());
+    bytes.extend_from_slice(&data_len.to_le_bytes());
     for &s in pcm {
         let clamped = s.clamp(-1.0, 1.0);
         let v = (clamped * 32767.0) as i16;
         bytes.extend_from_slice(&v.to_le_bytes());
     }
-    std::fs::write(path, &bytes)?;
+    ember::atomic_file::atomic_write(path, &bytes)
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
@@ -485,4 +499,34 @@ fn vits_synthesize(command: &TtsCommand, vits_path: &str) -> Result<()> {
         println!("dumped ladder artifacts to {}", dir.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_wav;
+    use crate::experiment_testutil::temp_dir;
+
+    #[cfg(unix)]
+    #[test]
+    fn write_wav_replaces_a_planted_symlink_instead_of_following_it() {
+        let dir = temp_dir("tts-wav-symlink");
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        let out = dir.join("ember-tts.wav");
+        std::os::unix::fs::symlink(&victim, &out).unwrap();
+
+        write_wav(&out, &[0.5, -0.5], 16_000).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&out).unwrap().is_file());
+        let decoded = ember::multimodal::audio::decode_wav(&out).unwrap();
+        assert_eq!((decoded.samples.len(), decoded.sample_rate), (2, 16_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_wav_refuses_rates_the_header_cannot_hold() {
+        let dir = temp_dir("tts-wav-rate");
+        assert!(write_wav(&dir.join("x.wav"), &[0.0], u32::MAX).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

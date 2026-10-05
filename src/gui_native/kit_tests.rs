@@ -989,7 +989,7 @@ async fn any_history_row_exports_markdown_and_its_bundle(cx: &mut TestAppContext
     assert!(copied.contains("Run #7, from history"));
     assert!(copied.contains("## Divergence by layer"));
     assert!(copied.contains(&format!(
-        "ember experiment verify '{}'",
+        "ember experiment verify -- '{}'",
         kept_base.display()
     )));
     cx.update_window(handle, |_, window, cx| {

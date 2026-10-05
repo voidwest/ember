@@ -9,6 +9,7 @@
 //! agent run down.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -176,11 +177,33 @@ impl ToolInvocation {
     }
 }
 
+/// Timed-out tool calls whose workers are still running. Threads cannot be
+/// stopped safely, so each one holds its thread and memory until the tool
+/// returns; past this many, further watchdogged calls fail instead of piling
+/// up more (a model repeatedly calling a hanging tool).
+pub const MAX_DETACHED_TOOL_WORKERS: usize = 4;
+
+static DETACHED_TOOL_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+/// Per-call handshake between the watchdog and its worker, so exactly one of
+/// them accounts for a detached worker.
+const WORKER_RUNNING: u8 = 0;
+const WORKER_DONE: u8 = 1;
+const WORKER_DETACHED: u8 = 2;
+
+/// Number of timed-out tool workers still running in this process.
+pub fn detached_tool_workers() -> usize {
+    DETACHED_TOOL_WORKERS.load(Ordering::SeqCst)
+}
+
 /// Execute one validated call.
 ///
 /// - deadline <= now (or expiry while waiting): [`ToolFailureKind::Timeout`];
 ///   the tool body keeps running on a detached worker and its eventual
-///   result is discarded — documented cooperative-preemption caveat.
+///   result is discarded — documented cooperative-preemption caveat. Tools
+///   that can run long should stop when [`ToolContext::remaining`] reaches
+///   zero; at most [`MAX_DETACHED_TOOL_WORKERS`] timed-out workers may be
+///   outstanding before new watchdogged calls are refused.
 /// - panics are contained and reported as [`ToolFailureKind::Panicked`].
 /// - cancellation is NOT checked here on purpose: if the run is cancelled
 ///   while a tool executes, the side effect still happened and the caller
@@ -219,6 +242,17 @@ pub fn execute_tool(invocation: &ToolInvocation) -> ToolOutcome {
         cancel: invocation.cancel.clone(),
         artifacts: Arc::clone(&invocation.artifacts),
     };
+    if detached_tool_workers() >= MAX_DETACHED_TOOL_WORKERS {
+        return Err(ToolFailure {
+            kind: ToolFailureKind::Execution,
+            message: format!(
+                "`{name}` not started: {MAX_DETACHED_TOOL_WORKERS} timed-out tool calls are \
+                 still running"
+            ),
+        });
+    }
+    let state = Arc::new(AtomicU8::new(WORKER_RUNNING));
+    let worker_state = Arc::clone(&state);
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = std::thread::Builder::new()
         .name(format!("ember-tool-{name}"))
@@ -230,11 +264,42 @@ pub fn execute_tool(invocation: &ToolInvocation) -> ToolOutcome {
                     .execute(&worker_invocation.args, &ctx)
             });
             let _ = tx.send(outcome);
+            if worker_state
+                .compare_exchange(
+                    WORKER_RUNNING,
+                    WORKER_DONE,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_err()
+            {
+                // The watchdog gave up on this call and counted it.
+                DETACHED_TOOL_WORKERS.fetch_sub(1, Ordering::SeqCst);
+            }
         });
     match handle {
         Ok(_worker) => match rx.recv_timeout(remaining) {
             Ok(outcome) => outcome,
             Err(_) => {
+                // Count first, so the worker's decrement (which needs the
+                // DETACHED state) can never precede it.
+                DETACHED_TOOL_WORKERS.fetch_add(1, Ordering::SeqCst);
+                if state
+                    .compare_exchange(
+                        WORKER_RUNNING,
+                        WORKER_DETACHED,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_err()
+                {
+                    // Finished right at the deadline: it sent its result
+                    // before marking itself done, so use it.
+                    DETACHED_TOOL_WORKERS.fetch_sub(1, Ordering::SeqCst);
+                    if let Ok(outcome) = rx.recv() {
+                        return outcome;
+                    }
+                }
                 // Detach: the worker finishes whenever it finishes; its
                 // result goes nowhere. This is the documented cost of
                 // synchronous tools under a hard deadline.
@@ -359,5 +424,78 @@ impl ToolRegistry {
     /// the trace provenance and the model prompt.
     pub fn schemas(&self) -> Vec<ToolSchema> {
         self.tools.values().map(|t| t.schema()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::schema::ToolEffect;
+    use std::sync::atomic::AtomicBool;
+
+    /// Blocks until `release` is set, ignoring its deadline.
+    struct Stuck {
+        release: Arc<AtomicBool>,
+    }
+
+    impl Tool for Stuck {
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new("stuck", "never returns on time").effect(ToolEffect::ReadOnly)
+        }
+
+        fn execute(&self, _args: &ValidatedArguments, _ctx: &ToolContext<'_>) -> ToolOutcome {
+            while !self.release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Ok(ToolOutput::text("late"))
+        }
+    }
+
+    #[test]
+    fn timed_out_workers_are_bounded_and_released() {
+        let release = Arc::new(AtomicBool::new(false));
+        let tool: Arc<dyn Tool> = Arc::new(Stuck {
+            release: Arc::clone(&release),
+        });
+        let dir = std::env::temp_dir().join(format!("ember-tool-bound-{}", std::process::id()));
+        let artifacts = Arc::new(Mutex::new(ArtifactStore::open(&dir, "r").unwrap()));
+        let invocation = || ToolInvocation {
+            tool: Arc::clone(&tool),
+            args: ValidatedArguments::parse(&tool.schema(), "{}").unwrap(),
+            run_id: "r".into(),
+            step_id: "s".into(),
+            call_seq: 1,
+            deadline: Instant::now() + Duration::from_millis(20),
+            cancel: CancelFlag::new(),
+            artifacts: Arc::clone(&artifacts),
+        };
+        for _ in 0..MAX_DETACHED_TOOL_WORKERS {
+            let failure = invocation().execute().unwrap_err();
+            assert_eq!(
+                failure.kind,
+                ToolFailureKind::Timeout,
+                "{}",
+                failure.message
+            );
+        }
+        assert_eq!(detached_tool_workers(), MAX_DETACHED_TOOL_WORKERS);
+        let refused = invocation().execute().unwrap_err();
+        assert_eq!(refused.kind, ToolFailureKind::Execution);
+        assert!(
+            refused.message.contains("still running"),
+            "{}",
+            refused.message
+        );
+
+        release.store(true, Ordering::SeqCst);
+        let start = Instant::now();
+        while detached_tool_workers() != 0 {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "workers never accounted"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

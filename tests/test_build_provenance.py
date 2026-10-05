@@ -29,7 +29,7 @@ def test_provenance_tracks_loose_packed_detached_and_worktree_heads(tmp_path):
     (repo / "src").mkdir()
     (repo / "src/main.rs").write_text('fn main() { println!("{}", env!("EMBER_GIT_COMMIT")); }\n')
     (repo / ".gitignore").write_text("/Cargo.lock\n")
-    script = (ROOT / "build.rs").read_text()
+    script = (ROOT / "crates/ember-core/build.rs").read_text()
     # Count actual build-script executions, including reruns of a cached binary.
     marker = '''
     use std::io::Write;

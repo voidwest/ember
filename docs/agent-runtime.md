@@ -36,7 +36,9 @@ unsafe code.
   self-contained HTML report
 - deterministic built-in tools: `calculate`, `lookup`, `echo`,
   `write_artifact`, `image_fixture`, `fail`, sandboxed
-  `read_text_file` / `search_text`
+  `read_text_file` / `search_text` (regular files under `--sandbox-root`
+  only, at most 1 MiB; symbolic links are never followed, on Linux and
+  macOS not even ones that stay inside the root)
 
 ## quick start
 
@@ -183,7 +185,11 @@ verifies against.
 
 Timeout enforcement detaches the worker thread on expiry and discards its
 eventual result; synchronous tools cannot be preempted safely, and that
-trade-off is documented rather than hidden.
+trade-off is documented rather than hidden. Tools that can run long should
+return once `ToolContext::remaining()` reaches zero. At most four timed-out
+calls may still be running in a process; further calls that need the
+watchdog fail (`execution`) until one finishes, so a hanging tool cannot
+accumulate threads without bound.
 
 ## testing and performance
 

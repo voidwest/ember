@@ -19,6 +19,13 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- Workspace: kernels, models, execution plans, the KV cache and the hook
+  framework moved into the `ember-core` crate (`crates/ember-core/`), which
+  `ember` re-exports at every established `ember::` path. Research, CLI and
+  console changes no longer recompile the kernels. `ExperimentRunner`'s
+  capture is now any `ActivationCapture` (implemented by `CaptureSink`; call
+  sites are unchanged), and `ExecutionPhase::name`/`TracingState::name`
+  replace exhaustive matches outside the core crate.
 - Provenance: bundles, probe artifacts, backend metadata and the
   console now record the commit the binary was built from. They used to ask
   `git` in the working directory, so the same binary recorded a different

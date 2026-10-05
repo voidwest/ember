@@ -90,6 +90,10 @@ pub struct SideReport {
     pub stderr_truncated: bool,
     /// Harness-level detail when `outcome == HarnessError`, else None.
     pub harness_detail: Option<String>,
+    /// The external runtime binary that ran (resolved, absolute), so the
+    /// evidence names the program behind an outcome.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
 }
 
 /// Map a supervised execution onto the comparative taxonomy.
@@ -186,10 +190,23 @@ pub enum BinaryResolution {
 pub fn resolve_runtime_binary(runtime: ExternalRuntime) -> Result<BinaryResolution, HarnessError> {
     if let Some(configured) = std::env::var_os(runtime.env_override()) {
         let path = PathBuf::from(configured);
-        if !path.exists() {
-            return Err(HarnessError::BinaryNotFound { program: path });
+        // Absolute only: a bare name was checked against the working
+        // directory but then searched on PATH by the spawn, so the file
+        // checked and the file run could differ. Canonical, so the report
+        // names the real program.
+        if !path.is_absolute() {
+            return Err(HarnessError::BinaryNotFound {
+                program: PathBuf::from(format!(
+                    "{} (set {} to an absolute path)",
+                    path.display(),
+                    runtime.env_override()
+                )),
+            });
         }
-        return Ok(BinaryResolution::Configured(path));
+        return match std::fs::canonicalize(&path) {
+            Ok(real) if real.is_file() => Ok(BinaryResolution::Configured(real)),
+            _ => Err(HarnessError::BinaryNotFound { program: path }),
+        };
     }
     let filename = runtime.default_binary();
     if let Some(found) = search_path(filename) {
@@ -281,11 +298,11 @@ pub fn adapter_command(
     timeout: Duration,
 ) -> SupervisedCommand {
     let _ = runtime;
-    SupervisedCommand::new(
-        binary.to_path_buf(),
-        vec![file.to_string_lossy().into_owned()],
-        timeout,
-    )
+    // Absolute (the child runs in a neutral directory, see
+    // `run_supervised`) and passed as the OS string, so a non-UTF-8 path
+    // reaches the runtime unaltered.
+    let file = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf());
+    SupervisedCommand::new(binary.to_path_buf(), vec![file.into_os_string()], timeout)
 }
 
 /// Evaluate one file against one external runtime: resolve, run, classify.
@@ -303,6 +320,7 @@ pub fn evaluate_external(runtime: ExternalRuntime, file: &Path, timeout: Duratio
                 stdout_truncated: false,
                 stderr_truncated: false,
                 harness_detail: Some(format!("{} runtime not found: {error}", runtime.name())),
+                binary: None,
             };
         }
     };
@@ -319,6 +337,7 @@ pub fn evaluate_external(runtime: ExternalRuntime, file: &Path, timeout: Duratio
                 stdout_truncated: result.stdout.truncated,
                 stderr_truncated: result.stderr.truncated,
                 harness_detail: None,
+                binary: Some(binary.display().to_string()),
             }
         }
         Err(error) => SideReport {
@@ -330,6 +349,7 @@ pub fn evaluate_external(runtime: ExternalRuntime, file: &Path, timeout: Duratio
             stdout_truncated: false,
             stderr_truncated: false,
             harness_detail: Some(error.to_string()),
+            binary: Some(binary.display().to_string()),
         },
     }
 }
@@ -341,7 +361,13 @@ pub fn evaluate_external(runtime: ExternalRuntime, file: &Path, timeout: Duratio
 pub fn evaluate_ember(file: &Path) -> SideReport {
     let outcome: DiffOutcome;
     let start = std::time::Instant::now();
-    let bytes = match std::fs::read(file) {
+    // A regular file within the loader's own size cap, read without
+    // blocking: `diff` is for hostile inputs, and a device, FIFO or huge
+    // file must fail here rather than hang or exhaust memory.
+    let bytes = match crate::bounded_read::read_existing_regular_file(
+        file,
+        crate::loader::limits::MAX_GGUF_FILE_BYTES,
+    ) {
         Ok(bytes) => bytes,
         Err(error) => {
             return SideReport {
@@ -353,6 +379,7 @@ pub fn evaluate_ember(file: &Path) -> SideReport {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 harness_detail: Some(format!("harness could not read file: {error}")),
+                binary: None,
             };
         }
     };
@@ -408,6 +435,7 @@ fn ember_report(
         stdout_truncated: false,
         stderr_truncated: false,
         harness_detail: None,
+        binary: None,
     }
 }
 
@@ -477,8 +505,36 @@ fn agreement(ember: &SideReport, externals: &[SideReport]) -> Agreement {
 /// and report — no shared mutable state — so the scope is sound; a panicking
 /// worker propagates via join (evaluators never panic by contract, but scope
 /// makes even that a loud failure, not a silent hang).
+/// [`evaluate_ember`] with a panic classified as `Panic` instead of
+/// unwinding into the caller (from Python, a `PanicException` that an
+/// `except Exception` does not catch). Evaluators must not panic; this
+/// makes a violation a finding rather than a dead run.
+pub fn evaluate_ember_contained(file: &Path) -> SideReport {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| evaluate_ember(file))) {
+        Ok(report) => report,
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            SideReport {
+                runtime: "ember".to_string(),
+                outcome: DiffOutcome::Panic,
+                termination: Some("panicked(unwound-by-harness)".to_string()),
+                wall_ms: None,
+                stderr_tail: message.chars().take(400).collect(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+                harness_detail: None,
+                binary: None,
+            }
+        }
+    }
+}
+
 pub fn evaluate_diff(file: &Path, runtimes: &[ExternalRuntime], timeout: Duration) -> DiffReport {
-    let ember = evaluate_ember(file);
+    let ember = evaluate_ember_contained(file);
     let externals = std::thread::scope(|scope| {
         runtimes
             .iter()
@@ -665,6 +721,7 @@ mod tests {
             stdout_truncated: false,
             stderr_truncated: false,
             harness_detail: None,
+            binary: None,
         }
     }
 

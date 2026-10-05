@@ -56,14 +56,29 @@ impl FrameSampling {
     /// Apply this policy to decoded frames. Deterministic; fails closed on
     /// empty input or inconsistent metadata.
     pub fn sample(&self, input: &VideoFrames) -> Result<SampledVideo> {
-        ensure!(!input.frames.is_empty(), "video input has no frames");
         ensure!(
             input.timestamps_ms.len() == input.frames.len(),
             "video frames/timestamps length mismatch: {} vs {}",
             input.timestamps_ms.len(),
             input.frames.len()
         );
-        let total = input.frames.len();
+        let indices = self.select_indices(&input.timestamps_ms)?;
+        Ok(SampledVideo {
+            frames: indices.iter().map(|&i| input.frames[i].clone()).collect(),
+            timestamps_ms: indices.iter().map(|&i| input.timestamps_ms[i]).collect(),
+            source_indices: indices,
+            total_source_frames: input.frames.len(),
+            source_fps: input.source_fps,
+            source_duration_s: input.source_duration_s,
+        })
+    }
+
+    /// The source indices [`Self::sample`] selects for frames at
+    /// `timestamps_ms`. Needs no pixels, so a caller that decodes frames
+    /// itself can decode only the ones that will be used.
+    pub fn select_indices(&self, timestamps_ms: &[f64]) -> Result<Vec<usize>> {
+        ensure!(!timestamps_ms.is_empty(), "video input has no frames");
+        let total = timestamps_ms.len();
         let indices: Vec<usize> = match *self {
             FrameSampling::Uniform { max_frames } => {
                 let k = max_frames.min(total);
@@ -80,11 +95,18 @@ impl FrameSampling {
                 }
             }
             FrameSampling::FixedFps { fps, max_frames } => {
-                ensure!(fps > 0.0, "FixedFps requires fps > 0");
+                ensure!(
+                    fps.is_finite() && fps > 0.0,
+                    "FixedFps requires a finite fps > 0, got {fps}"
+                );
+                ensure!(
+                    timestamps_ms.iter().all(|ts| ts.is_finite()),
+                    "FixedFps requires finite frame timestamps"
+                );
                 let step_ms = 1000.0 / fps;
                 let mut out = Vec::new();
                 let mut window = 0.0f64;
-                for (i, &ts) in input.timestamps_ms.iter().enumerate() {
+                for (i, &ts) in timestamps_ms.iter().enumerate() {
                     if out.len() >= max_frames {
                         break;
                     }
@@ -92,7 +114,7 @@ impl FrameSampling {
                     if ts >= window && ts < window + step_ms {
                         let mut last_in_window = i;
                         while last_in_window + 1 < total
-                            && input.timestamps_ms[last_in_window + 1] < window + step_ms
+                            && timestamps_ms[last_in_window + 1] < window + step_ms
                         {
                             last_in_window += 1;
                             if out.len() + 1 > max_frames {
@@ -102,9 +124,21 @@ impl FrameSampling {
                         out.push(last_in_window);
                         window += step_ms;
                     } else if ts >= window + step_ms {
-                        // sparse timestamps: advance windows until covered
-                        while ts >= window + step_ms && out.len() < max_frames {
-                            window += step_ms;
+                        // sparse timestamps: advance to the window holding
+                        // `ts`. Jump all but the last whole step at once
+                        // (stepping took ~ts/step iterations: forever for a
+                        // huge fps), then settle one step at a time.
+                        let whole = ((ts - window) / step_ms).floor();
+                        if whole > 1.0 {
+                            window += (whole - 1.0) * step_ms;
+                        }
+                        while ts >= window + step_ms {
+                            let next = window + step_ms;
+                            ensure!(
+                                next > window,
+                                "FixedFps step {step_ms} ms is below timestamp precision at {ts} ms"
+                            );
+                            window = next;
                         }
                         out.push(i);
                         window += step_ms;
@@ -113,13 +147,6 @@ impl FrameSampling {
                 out
             }
         };
-        Ok(SampledVideo {
-            frames: indices.iter().map(|&i| input.frames[i].clone()).collect(),
-            timestamps_ms: indices.iter().map(|&i| input.timestamps_ms[i]).collect(),
-            source_indices: indices,
-            total_source_frames: total,
-            source_fps: input.source_fps,
-            source_duration_s: input.source_duration_s,
-        })
+        Ok(indices)
     }
 }
