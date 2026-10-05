@@ -1564,10 +1564,25 @@ pub(crate) fn forward_last_logits_planned_into(
                         crate::decode_profile::DecodeExecutionMode::Serial
                     });
                     // in-place silu: x / (1 + exp(-x)), matching the
-                    // reference `CpuTensor::silu` formula
-                    for x in data.iter_mut() {
-                        *x = *x / (1.0 + (-*x).exp());
-                    }
+                    // reference `CpuTensor::silu` formula. Elementwise, so
+                    // splitting it across the decode team (which otherwise
+                    // spins while this thread runs ~8k libm exps) leaves
+                    // every value bit-identical.
+                    let silu = |values: &mut [f32]| {
+                        for x in values.iter_mut() {
+                            *x = *x / (1.0 + (-*x).exp());
+                        }
+                    };
+                    const SILU_CHUNK: usize = 1024;
+                    let chunks = data.len().div_ceil(SILU_CHUNK);
+                    let len = data.len();
+                    let shared = crate::decode_pool::SharedMut::new(data);
+                    crate::decode_pool::run_or_serial(chunks, &|chunk| {
+                        let start = chunk * SILU_CHUNK;
+                        // SAFETY: each chunk index owns the distinct range
+                        // start..start + SILU_CHUNK (clamped to the end).
+                        silu(unsafe { shared.range(start, SILU_CHUNK.min(len - start)) });
+                    });
                 }
                 ResolvedOp::Elemul { a, b, out } => {
                     let (a_data, b_data, out_data) =
