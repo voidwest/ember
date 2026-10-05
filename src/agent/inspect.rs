@@ -567,9 +567,9 @@ pub fn render_html(events: &[serde_json::Value], summary: &TraceSummary) -> Stri
     body.push_str(&esc(&summary.run_id));
     body.push_str("</h1><p>");
     body.push_str(&format!(
-        "{} ({:?}, {}) &middot; protocol {}<br>status <span class=\"{}\">{}</span> &middot; steps {} &middot; tools {} &middot; rejected {} &middot; artifacts {}<br>",
+        "{} ({}, {}) &middot; protocol {}<br>status <span class=\"{}\">{}</span> &middot; steps {} &middot; tools {} &middot; rejected {} &middot; artifacts {}<br>",
         esc(summary.model_path.as_deref().unwrap_or("?")),
-        summary.quantization.as_deref().unwrap_or("?"),
+        esc(&format!("{:?}", summary.quantization.as_deref().unwrap_or("?"))),
         esc(summary.architecture.as_deref().unwrap_or("?")),
         esc(summary.protocol_id.as_deref().unwrap_or("?")),
         if summary.status.as_deref() == Some("completed") { "ok" } else { "err" },
