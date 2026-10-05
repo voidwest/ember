@@ -731,6 +731,33 @@ fn sampling_is_deterministic_and_fails_closed() {
     .is_err());
 }
 
+#[test]
+fn fixed_fps_sampling_terminates_on_hostile_rates_and_timestamps() {
+    use ember::multimodal::FrameSampling;
+
+    let fixed = |fps| FrameSampling::FixedFps { fps, max_frames: 4 };
+    // non-finite rates and timestamps fail closed instead of spinning
+    for fps in [f64::INFINITY, f64::NAN] {
+        assert!(fixed(fps).sample(&fake_video(10)).is_err(), "{fps}");
+    }
+    let mut vid = fake_video(3);
+    vid.timestamps_ms[2] = f64::INFINITY;
+    assert!(fixed(1.0).sample(&vid).is_err());
+
+    // a huge-but-finite rate against a distant timestamp jumps instead of
+    // stepping ~1e15 times, and samples the same frames as a sane rate
+    let mut vid = fake_video(3);
+    vid.timestamps_ms = vec![0.0, 5.0e9, 9.0e9];
+    let start = std::time::Instant::now();
+    let fast = fixed(1.0e6).sample(&vid).expect("finite inputs sample");
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(fast.source_indices, vec![0, 1, 2]);
+    assert_eq!(
+        fixed(1.0).sample(&vid).unwrap().source_indices,
+        vec![0, 1, 2]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Track G: encoded-media feature cache
 // ---------------------------------------------------------------------------

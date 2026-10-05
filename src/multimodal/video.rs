@@ -80,7 +80,14 @@ impl FrameSampling {
                 }
             }
             FrameSampling::FixedFps { fps, max_frames } => {
-                ensure!(fps > 0.0, "FixedFps requires fps > 0");
+                ensure!(
+                    fps.is_finite() && fps > 0.0,
+                    "FixedFps requires a finite fps > 0, got {fps}"
+                );
+                ensure!(
+                    input.timestamps_ms.iter().all(|ts| ts.is_finite()),
+                    "FixedFps requires finite frame timestamps"
+                );
                 let step_ms = 1000.0 / fps;
                 let mut out = Vec::new();
                 let mut window = 0.0f64;
@@ -102,9 +109,21 @@ impl FrameSampling {
                         out.push(last_in_window);
                         window += step_ms;
                     } else if ts >= window + step_ms {
-                        // sparse timestamps: advance windows until covered
-                        while ts >= window + step_ms && out.len() < max_frames {
-                            window += step_ms;
+                        // sparse timestamps: advance to the window holding
+                        // `ts`. Jump all but the last whole step at once
+                        // (stepping took ~ts/step iterations: forever for a
+                        // huge fps), then settle one step at a time.
+                        let whole = ((ts - window) / step_ms).floor();
+                        if whole > 1.0 {
+                            window += (whole - 1.0) * step_ms;
+                        }
+                        while ts >= window + step_ms {
+                            let next = window + step_ms;
+                            ensure!(
+                                next > window,
+                                "FixedFps step {step_ms} ms is below timestamp precision at {ts} ms"
+                            );
+                            window = next;
                         }
                         out.push(i);
                         window += step_ms;

@@ -127,6 +127,11 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
 /// Decode the numbered PNGs in `--frames-dir` (sorted by name), timestamped
 /// at `--source-fps`.
 fn load_video(command: &VideoCommand) -> Result<VideoInput> {
+    anyhow::ensure!(
+        command.source_fps.is_finite() && command.source_fps > 0.0,
+        "--source-fps must be a finite rate > 0, got {}",
+        command.source_fps
+    );
     let mut names: Vec<_> = std::fs::read_dir(&command.frames_dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())

@@ -32,7 +32,7 @@ use crate::llama::Llama;
 use crate::loader::load_gguf;
 use crate::multimodal::assembler::embed_and_scatter;
 use crate::multimodal::image::{preprocess, ImagePreprocessConfig, Resample};
-use crate::multimodal::request::{ContentPart, VideoInput};
+use crate::multimodal::request::{ContentPart, VideoInput, MAX_VIDEO_FRAMES};
 use crate::multimodal::video::{FrameSampling, SampledVideo};
 use crate::multimodal::vision::{VisionModel, VisionTrace};
 use crate::tensor::CpuTensor;
@@ -175,8 +175,8 @@ impl SmolVlmVideo {
 // reference prompt rendering
 // ---------------------------------------------------------------------------
 
-/// English number words for small counts (num2words-compatible for the
-/// range frame counts can reach).
+/// English number words, num2words-compatible below one million (frame
+/// counts stop at [`MAX_VIDEO_FRAMES`]).
 fn number_words(mut n: usize) -> String {
     const ONES: [&str; 20] = [
         "zero",
@@ -205,6 +205,16 @@ fn number_words(mut n: usize) -> String {
     ];
     if n < 20 {
         return ONES[n].to_string();
+    }
+    if n >= 1000 {
+        // num2words joins a sub-hundred remainder with "and", a larger
+        // one with ", " ("one thousand, one hundred and twenty-four")
+        let head = format!("{} thousand", number_words(n / 1000));
+        return match n % 1000 {
+            0 => head,
+            rest if rest < 100 => format!("{head} and {}", number_words(rest)),
+            rest => format!("{head}, {}", number_words(rest)),
+        };
     }
     let mut parts: Vec<String> = Vec::new();
     if n >= 100 {
@@ -331,9 +341,18 @@ impl SmolVlmVideo {
         }
         let t0 = Instant::now();
         let mut sampled_videos = Vec::with_capacity(raw_videos.len());
+        let mut total_frames = 0usize;
         for v in &raw_videos {
             let VideoInput::Frames(frames) = v;
-            sampled_videos.push(self.sampling.sample(frames)?);
+            let sampled = self.sampling.sample(frames)?;
+            // the admission cap applies to what is encoded, whatever the
+            // (public, caller-set) sampling policy asks for
+            total_frames = total_frames.saturating_add(sampled.n_frames());
+            ensure!(
+                total_frames <= MAX_VIDEO_FRAMES,
+                "{total_frames} sampled video frames exceed the {MAX_VIDEO_FRAMES}-frame admission limit"
+            );
+            sampled_videos.push(sampled);
         }
         let mut pixels_batches = Vec::with_capacity(sampled_videos.len());
         for s in &sampled_videos {
@@ -460,5 +479,30 @@ impl SmolVlmVideo {
         }
         let text = tokenizer.decode(&generated)?;
         Ok((generated, text, timings))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number_words;
+
+    #[test]
+    fn number_words_matches_num2words_through_the_frame_cap() {
+        for (n, words) in [
+            (0, "zero"),
+            (19, "nineteen"),
+            (64, "sixty-four"),
+            (100, "one hundred"),
+            (101, "one hundred and one"),
+            (999, "nine hundred and ninety-nine"),
+            (1000, "one thousand"),
+            (1001, "one thousand and one"),
+            (1024, "one thousand and twenty-four"),
+            (1100, "one thousand, one hundred"),
+            (1124, "one thousand, one hundred and twenty-four"),
+            (20_000, "twenty thousand"),
+        ] {
+            assert_eq!(number_words(n), words, "{n}");
+        }
     }
 }
