@@ -886,6 +886,23 @@ pub(crate) fn planned_causal_attention(
     let compute_head = |h: usize, score_row: &mut [f32], head_out: &mut [f32]| {
         let kv_h = h / n_repeat;
         let q_head = &q[h * head_dim..(h + 1) * head_dim];
+        // The register-tiled kernel computes exactly the loops below (same
+        // per-element arithmetic and order, see `attention_kernels`), with
+        // independent keys in separate vector lanes.
+        if crate::attention_kernels::cached_row_head(
+            q_head,
+            cached_k,
+            cached_v,
+            kv_h * cache_head_stride,
+            head_dim,
+            scale,
+            0,
+            total_seq_len - 1,
+            score_row,
+            head_out,
+        ) {
+            return;
+        }
         let k_head = &cached_k[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
         let v_head = &cached_v[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
         // scores: q · k_j for each cached position
