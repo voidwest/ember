@@ -376,37 +376,21 @@ fn resolve_under_root(
 
 /// Read a regular text file under `root`, at most `MAX_READ_BYTES`.
 ///
-/// The lexical check in `resolve_under_root` cannot see symlinks, so the
-/// resolved target must still lie under the canonical root and be a regular
-/// file: a link to a secret outside the sandbox, to `/dev/zero` (length 0,
-/// unbounded content) or to a FIFO (blocks forever) is refused. The read
-/// itself is bounded as well, so a file that grows after the size check
-/// cannot exhaust memory.
+/// The lexical check in `resolve_under_root` cannot see symlinks. On Unix the
+/// file is opened one path component at a time from the root with
+/// `O_NOFOLLOW`, so a symbolic link anywhere in the path is refused and
+/// nothing can be swapped in between a check and the open; the final open is
+/// non-blocking, so a FIFO is refused rather than hanging the tool, and the
+/// opened handle must be a regular file. The read itself is bounded, so a
+/// file that grows after the size check cannot exhaust memory.
 fn read_text_under_root(
     root: &std::path::Path,
     rel: &str,
     cap_name: &str,
 ) -> Result<(String, u64), ToolFailure> {
     let path = resolve_under_root(root, rel)?;
-    let canonical_root = std::fs::canonicalize(root).map_err(|e| {
-        fail(
-            ToolFailureKind::Execution,
-            format!("cannot resolve the sandbox root: {e}"),
-        )
-    })?;
-    let canonical = std::fs::canonicalize(&path).map_err(|e| {
-        fail(
-            ToolFailureKind::Execution,
-            format!("cannot stat `{rel}`: {e}"),
-        )
-    })?;
-    if !canonical.starts_with(&canonical_root) {
-        return Err(fail(
-            ToolFailureKind::Execution,
-            format!("`{rel}` resolves outside the sandbox root"),
-        ));
-    }
-    let meta = std::fs::metadata(&canonical).map_err(|e| {
+    let file = open_under_root(root, &path, rel)?;
+    let meta = file.metadata().map_err(|e| {
         fail(
             ToolFailureKind::Execution,
             format!("cannot stat `{rel}`: {e}"),
@@ -428,8 +412,8 @@ fn read_text_under_root(
         return Err(over_cap(meta.len()));
     }
     let mut text = String::new();
-    std::fs::File::open(&canonical)
-        .and_then(|f| f.take(MAX_READ_BYTES + 1).read_to_string(&mut text))
+    file.take(MAX_READ_BYTES + 1)
+        .read_to_string(&mut text)
         .map_err(|e| {
             fail(
                 ToolFailureKind::Execution,
@@ -441,6 +425,100 @@ fn read_text_under_root(
         return Err(over_cap(bytes));
     }
     Ok((text, bytes))
+}
+
+/// Open `path` (= `root` joined with the validated relative `rel`) without
+/// following any symbolic link below the root.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_under_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    rel: &str,
+) -> Result<std::fs::File, ToolFailure> {
+    use rustix::fs::{openat, Mode, OFlags, CWD};
+    let failed = |e: rustix::io::Errno| {
+        let reason = if e == rustix::io::Errno::LOOP || e == rustix::io::Errno::NOTDIR {
+            "is or passes through a symbolic link (not followed in the sandbox)".to_string()
+        } else {
+            std::io::Error::from(e).to_string()
+        };
+        fail(
+            ToolFailureKind::Execution,
+            format!("cannot open `{rel}`: {reason}"),
+        )
+    };
+    let relative = path.strip_prefix(root).map_err(|_| {
+        fail(
+            ToolFailureKind::Execution,
+            "path traversal is not allowed (only simple relative paths)",
+        )
+    })?;
+    let mut directory = openat(
+        CWD,
+        root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|e| {
+        fail(
+            ToolFailureKind::Execution,
+            format!("cannot open the sandbox root: {}", std::io::Error::from(e)),
+        )
+    })?;
+    let components: Vec<_> = relative.components().collect();
+    for (index, component) in components.iter().enumerate() {
+        let last = index + 1 == components.len();
+        let kind = if last {
+            OFlags::NONBLOCK
+        } else {
+            OFlags::DIRECTORY
+        };
+        let next = openat(
+            &directory,
+            component.as_os_str(),
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | kind,
+            Mode::empty(),
+        )
+        .map_err(failed)?;
+        if last {
+            return Ok(std::fs::File::from(next));
+        }
+        directory = next;
+    }
+    Err(fail(
+        ToolFailureKind::Execution,
+        "path traversal is not allowed (only simple relative paths)",
+    ))
+}
+
+/// Elsewhere: resolve links and require the target to stay under the root.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn open_under_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    rel: &str,
+) -> Result<std::fs::File, ToolFailure> {
+    let resolve = |p: &std::path::Path| {
+        std::fs::canonicalize(p).map_err(|e| {
+            fail(
+                ToolFailureKind::Execution,
+                format!("cannot open `{rel}`: {e}"),
+            )
+        })
+    };
+    let canonical = resolve(path)?;
+    if !canonical.starts_with(resolve(root)?) {
+        return Err(fail(
+            ToolFailureKind::Execution,
+            format!("`{rel}` resolves outside the sandbox root"),
+        ));
+    }
+    std::fs::File::open(&canonical).map_err(|e| {
+        fail(
+            ToolFailureKind::Execution,
+            format!("cannot open `{rel}`: {e}"),
+        )
+    })
 }
 
 /// Read a UTF-8 text file under a fixed root (1 MiB cap). ReadOnly.
@@ -740,68 +818,69 @@ mod tests {
         let _ = std::fs::remove_file(root.join("big.txt"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn file_tools_refuse_symlinks_out_of_the_root_and_special_files() {
+    fn file_tools_refuse_symlinks_and_special_files() {
         let root = unique_dir("ember-sb-links");
         let outside = unique_dir("ember-sb-outside");
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("secret.txt"), "secret").unwrap();
         std::fs::write(root.join("inside.txt"), "inside").unwrap();
+        std::fs::write(root.join("sub/nested.txt"), "nested").unwrap();
         std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("escape")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape_dir")).unwrap();
         std::os::unix::fs::symlink("/dev/zero", root.join("zero")).unwrap();
         std::os::unix::fs::symlink(root.join("inside.txt"), root.join("alias")).unwrap();
+        let fifo = root.join("pipe");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
         let store = store(&root, "r");
         let cancel = CancelFlag::new();
         let c = ctx(&store, &cancel);
         let read = ReadTextFileTool::new(&root);
         let search = SearchTextTool::new(&root);
         let (read_schema, search_schema) = (read.schema(), search.schema());
+        let read_err = |path: &str| {
+            read.execute(
+                &args_for(&read_schema, &format!(r#"{{"path":"{path}"}}"#)),
+                &c,
+            )
+            .unwrap_err()
+            .message
+        };
 
-        let err = read
-            .execute(&args_for(&read_schema, r#"{"path":"escape"}"#), &c)
-            .unwrap_err();
-        assert!(
-            err.message.contains("outside the sandbox"),
-            "{}",
-            err.message
-        );
+        // Links are never followed, wherever they point and wherever they
+        // sit in the path.
+        for path in ["escape", "zero", "alias", "escape_dir/secret.txt"] {
+            let message = read_err(path);
+            assert!(message.contains("symbolic link"), "{path}: {message}");
+        }
         let err = search
             .execute(
                 &args_for(&search_schema, r#"{"path":"escape","pattern":"s"}"#),
                 &c,
             )
             .unwrap_err();
-        assert!(
-            err.message.contains("outside the sandbox"),
-            "{}",
-            err.message
-        );
-        let err = read
-            .execute(&args_for(&read_schema, r#"{"path":"zero"}"#), &c)
-            .unwrap_err();
-        assert!(
-            err.message.contains("outside the sandbox"),
-            "{}",
-            err.message
-        );
-        std::fs::create_dir_all(root.join("sub")).unwrap();
-        let err = read
-            .execute(&args_for(&read_schema, r#"{"path":"sub"}"#), &c)
-            .unwrap_err();
-        assert!(
-            err.message.contains("not a regular file"),
-            "{}",
-            err.message
-        );
-        // A link that stays inside the root is still a plain file.
-        let ok = read
-            .execute(&args_for(&read_schema, r#"{"path":"alias"}"#), &c)
-            .unwrap();
-        match ok.payload {
-            ToolPayload::Json(v) => assert_eq!(v["content"], "inside"),
-            other => panic!("expected json, got {other:?}"),
+        assert!(err.message.contains("symbolic link"), "{}", err.message);
+        // A FIFO is refused at once instead of blocking the tool.
+        assert!(read_err("pipe").contains("not a regular file"));
+        assert!(read_err("sub").contains("not a regular file"));
+        // Plain files, including nested ones, still read.
+        for (path, content) in [("inside.txt", "inside"), ("sub/nested.txt", "nested")] {
+            let ok = read
+                .execute(
+                    &args_for(&read_schema, &format!(r#"{{"path":"{path}"}}"#)),
+                    &c,
+                )
+                .unwrap();
+            match ok.payload {
+                ToolPayload::Json(v) => assert_eq!(v["content"], content),
+                other => panic!("expected json, got {other:?}"),
+            }
         }
         std::fs::remove_dir_all(&root).ok();
         std::fs::remove_dir_all(&outside).ok();

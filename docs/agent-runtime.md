@@ -36,7 +36,9 @@ unsafe code.
   self-contained HTML report
 - deterministic built-in tools: `calculate`, `lookup`, `echo`,
   `write_artifact`, `image_fixture`, `fail`, sandboxed
-  `read_text_file` / `search_text`
+  `read_text_file` / `search_text` (regular files under `--sandbox-root`
+  only, at most 1 MiB; symbolic links are never followed, on Linux and
+  macOS not even ones that stay inside the root)
 
 ## quick start
 
