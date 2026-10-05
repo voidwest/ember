@@ -22,9 +22,7 @@ use ember::quant_k::KStrategy;
 use ember::tokenizer::EmberTokenizer;
 use ember::v05::compare::compare_loaded;
 use ember::v05::manifest::BundleIdentity;
-use ember::v05::run::{
-    write_bundle, BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta,
-};
+use ember::v05::run::{BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta};
 use ember::v05::runner::{
     load_bundle_source, BundleSource, InputResult, ModelFacts, V05Experiment,
 };
@@ -1199,9 +1197,11 @@ pub(crate) fn finish_bundle(
         runtime,
         artifacts,
     };
-    let (path, identity) =
-        write_bundle(&materials, target.retain_incomplete).map_err(anyhow::Error::msg)?;
-    let report = verify_bundle(&path, &VerifyOptions::default()).map_err(anyhow::Error::msg)?;
+    // The report of the verification that gated publication: the published
+    // bundle is a rename of exactly the verified staged bytes.
+    let (path, identity, report) =
+        ember::v05::run::write_verified_bundle(&materials, target.retain_incomplete)
+            .map_err(anyhow::Error::msg)?;
     Ok(RunOutcome {
         path,
         identity,

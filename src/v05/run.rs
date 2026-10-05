@@ -336,6 +336,22 @@ pub fn write_bundle(
     materials: &BundleMaterials,
     retain_incomplete: bool,
 ) -> Result<(std::path::PathBuf, BundleIdentity), String> {
+    write_verified_bundle(materials, retain_incomplete).map(|(path, identity, _)| (path, identity))
+}
+
+/// [`write_bundle`], also returning the report of the verification that
+/// gated publication (see [`BundleWriter::finalize_with_report`]).
+pub fn write_verified_bundle(
+    materials: &BundleMaterials,
+    retain_incomplete: bool,
+) -> Result<
+    (
+        std::path::PathBuf,
+        BundleIdentity,
+        crate::v05::verify::VerificationReport,
+    ),
+    String,
+> {
     let assembled = assemble_bundle(materials)?;
     let mut writer = BundleWriter::new(
         materials.resolved.output.directory.clone(),
@@ -345,7 +361,7 @@ pub fn write_bundle(
     for (relative, bytes) in assembled.files {
         writer.add(&relative, bytes);
     }
-    writer.finalize(assembled.semantic_manifest, assembled.runtime_json)
+    writer.finalize_with_report(assembled.semantic_manifest, assembled.runtime_json)
 }
 
 /// Assembled capture payload: file bytes, index entries, trace lines.
