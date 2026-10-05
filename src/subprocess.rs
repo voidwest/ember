@@ -52,16 +52,22 @@ pub struct SupervisedCommand {
     /// never searched implicitly here beyond what [`Command`] itself does
     /// with a bare name + PATH.
     pub program: PathBuf,
-    /// Arguments passed verbatim (no shell, no joining, no quoting).
-    pub argv: Vec<String>,
+    /// Arguments passed verbatim (no shell, no joining, no quoting), as OS
+    /// strings so non-UTF-8 paths arrive unaltered.
+    pub argv: Vec<std::ffi::OsString>,
     /// Hard deadline for the whole execution (spawn to reap).
     pub timeout: Duration,
 }
 
 impl SupervisedCommand {
-    /// Build a command with a timeout. The child inherits the parent's working
-    /// directory and environment.
-    pub fn new(program: impl Into<PathBuf>, argv: Vec<String>, timeout: Duration) -> Self {
+    /// Build a command with a timeout. The child runs in the temp directory
+    /// with an allowlisted environment (see [`run_supervised`]), so pass
+    /// absolute paths.
+    pub fn new(
+        program: impl Into<PathBuf>,
+        argv: Vec<std::ffi::OsString>,
+        timeout: Duration,
+    ) -> Self {
         Self {
             program: program.into(),
             argv,
@@ -239,7 +245,14 @@ pub fn run_supervised(command: &SupervisedCommand) -> Result<SupervisedResult, H
         .args(&command.argv)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // These children parse hostile inputs. Keep the caller's secrets
+        // (API keys, tokens in the environment) out of a process that may be
+        // compromised, and keep core dumps and stray files out of whatever
+        // directory the caller runs in.
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(key, _)| inherited_env(key)))
+        .current_dir(std::env::temp_dir());
     // Its own process group, so (a) a timeout can kill the whole tree: a
     // wrapper script's child would otherwise survive the kill, keep the
     // pipes open and block the drain threads forever; and (b) Ctrl-C at the
@@ -303,6 +316,29 @@ pub fn run_supervised(command: &SupervisedCommand) -> Result<SupervisedResult, H
         elapsed,
         killed_by_harness,
     })
+}
+
+/// Environment a supervised child keeps: what a runtime or its wrapper needs
+/// to start (search paths, temp dirs, locale, dynamic-library paths), nothing
+/// else.
+fn inherited_env(key: &std::ffi::OsStr) -> bool {
+    const KEEP: [&str; 13] = [
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "LANGUAGE",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "SYSTEMROOT",
+        "RUST_BACKTRACE",
+        "RUST_MIN_STACK",
+    ];
+    key.to_str()
+        .is_some_and(|key| KEEP.contains(&key) || key.starts_with("LC_"))
 }
 
 /// SIGKILL the child's process group (the child leads it, see
@@ -385,7 +421,7 @@ mod tests {
     fn cmd(program: &str, args: &[&str], timeout: Duration) -> SupervisedCommand {
         SupervisedCommand::new(
             PathBuf::from(program),
-            args.iter().map(|arg| arg.to_string()).collect(),
+            args.iter().map(std::ffi::OsString::from).collect(),
             timeout,
         )
     }
@@ -500,6 +536,34 @@ mod tests {
             "{:?}",
             start.elapsed()
         );
+    }
+
+    /// Only allowlisted variables reach the child, which starts in the temp
+    /// directory.
+    #[cfg(unix)]
+    #[test]
+    fn children_get_an_allowlisted_environment_and_a_neutral_directory() {
+        let command = cmd(
+            "/bin/sh",
+            &["-c", "env; echo cwd=$(pwd -P)"],
+            Duration::from_secs(10),
+        );
+        let result = run_supervised(&command).unwrap();
+        let out = result.stdout.tail_lossy(usize::MAX);
+        assert!(out.contains("PATH="), "{out}");
+        for line in out
+            .lines()
+            .filter(|line| line.contains('=') && !line.starts_with("cwd="))
+        {
+            let key = line.split('=').next().unwrap();
+            assert!(
+                inherited_env(std::ffi::OsStr::new(key))
+                    || ["PWD", "SHLVL", "_", "OLDPWD"].contains(&key),
+                "{key} leaked"
+            );
+        }
+        let temp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        assert!(out.contains(&format!("cwd={}", temp.display())), "{out}");
     }
 
     /// The child exits but leaves a background process on its stdout.

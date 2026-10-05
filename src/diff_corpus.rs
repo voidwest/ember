@@ -22,15 +22,17 @@
 //!   Streams are NOT bit-identical across implementations, so parity means
 //!   same operators/slots/tables/coverage, never byte-equal blobs.
 //! - **Ember side is a superset**: `diff_fuzz.py` raw mode runs the harness
-//!   `gguf_load_check` stage only, while [`evaluate_ember`] runs load *plus*
+//!   `gguf_load_check` stage only, while
+//!   [`crate::diff_outcome::evaluate_ember`] runs load *plus*
 //!   model construction. Ember-side divergences can therefore only go
 //!   ACCEPT -> STRUCTURED_REJECT (construct-layer rejection of a loadable
 //!   file), auditable per case; REJECT -> ACCEPT would be a bug. Construction
 //!   mode (`gguf_model_check`) is directly comparable.
 //! - **Ember is in-process**: externals run under
 //!   [`crate::subprocess::run_supervised`] (fixed
-//!   timeout, kill + reap); Ember evaluates in-process per file like
-//!   [`evaluate_ember`]. An Ember unwind is caught and reported as PANIC
+//!   timeout, kill + reap); Ember evaluates in-process per file with
+//!   [`crate::diff_outcome::evaluate_ember_contained`]. An Ember unwind is
+//!   caught and reported as PANIC
 //!   rather than killing the campaign (an OOM SIGKILL cannot be caught by
 //!   anyone; that is what `--jobs <= 4` and `dmesg` watches are for).
 //! - **Crash stderr tails** are the report-layer 400-char tails
@@ -50,9 +52,7 @@
 //! The `ember diff-corpus` CLI and the optional Python binding both call
 //! [`run_diff_corpus`]; the engine prints nothing unless `verbose` is set.
 
-use crate::diff_outcome::{
-    evaluate_ember, evaluate_external, DiffOutcome, ExternalRuntime, SideReport,
-};
+use crate::diff_outcome::{evaluate_external, DiffOutcome, ExternalRuntime, SideReport};
 use clap::ValueEnum;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -546,16 +546,6 @@ fn saves_crash(outcome: DiffOutcome) -> bool {
     )
 }
 
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else if let Some(s) = payload.downcast_ref::<&str>() {
-        (*s).to_string()
-    } else {
-        "non-string panic payload".to_string()
-    }
-}
-
 /// Lexically normalize an absolute path (no IO, so it works before the
 /// directory exists).
 fn normalize_abs(path: &Path) -> PathBuf {
@@ -828,21 +818,7 @@ fn eval_one(
     // Ember first, in-process. An unwind becomes a PANIC report rather than
     // a dead campaign (evaluators must not panic by contract; scope makes
     // even that a loud, classified finding).
-    let ember_report =
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| evaluate_ember(&blob_path)))
-        {
-            Ok(report) => report,
-            Err(payload) => SideReport {
-                runtime: "ember".to_string(),
-                outcome: DiffOutcome::Panic,
-                termination: Some("panicked(unwound-by-harness)".to_string()),
-                wall_ms: None,
-                stderr_tail: panic_message(&payload).chars().take(400).collect(),
-                stdout_truncated: false,
-                stderr_truncated: false,
-                harness_detail: None,
-            },
-        };
+    let ember_report = crate::diff_outcome::evaluate_ember_contained(&blob_path);
     let mut reports = Vec::with_capacity(1 + externals.len());
     reports.push(ember_report);
     // Externals sequentially within the case: the jobs cap is a cap on
