@@ -1332,7 +1332,7 @@ pub(crate) fn run_experiment_command(
     }
     let sign_key = resolve_sign_key(command);
     let evidence = match &sign_key {
-        Some(key) => Some(sign_bundle(&path, key)?),
+        Some(key) => Some(sign_bundle(&path, &identity, key)?),
         None => None,
     };
     if command.json {
@@ -1427,7 +1427,7 @@ fn run_with_variants(
     let mut evidence = Vec::new();
     if let Some(key) = resolve_sign_key(command) {
         for outcome in &all {
-            evidence.push(Some(sign_bundle(&outcome.path, &key)?));
+            evidence.push(Some(sign_bundle(&outcome.path, &outcome.identity, &key)?));
         }
     } else {
         evidence.resize(all.len(), None);
@@ -1524,15 +1524,28 @@ pub(crate) fn resolve_sign_key(command: &RunArgs) -> Option<PathBuf> {
 /// envelope path and the signer fingerprint.
 pub(crate) fn sign_bundle(
     bundle: &std::path::Path,
+    identity: &BundleIdentity,
     key: &std::path::Path,
 ) -> anyhow::Result<(PathBuf, String)> {
     let envelope_path = bundle_evidence_path(bundle);
-    let envelope = crate::cli_evidence::sign_record_file(
-        &bundle.join("manifest.json"),
-        &key.to_string_lossy(),
-        &envelope_path,
+    // Sign the identity this run produced and verified, not whatever
+    // manifest.json holds by the time signing happens.
+    let manifest_path = bundle.join("manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path)
+            .with_context(|| format!("failed to read '{}'", manifest_path.display()))?,
     )
-    .with_context(|| format!("failed to sign bundle '{}'", bundle.display()))?;
+    .with_context(|| format!("'{}' is not valid JSON", manifest_path.display()))?;
+    anyhow::ensure!(
+        manifest["semantic_hash"].as_str() == Some(identity.semantic_hash.as_str())
+            && manifest["payload_hash"].as_str() == Some(identity.payload_hash.as_str()),
+        "refusing to sign bundle '{}': its manifest no longer carries the identity this run \
+         produced",
+        bundle.display()
+    );
+    let envelope =
+        crate::cli_evidence::sign_record_value(&manifest, &key.to_string_lossy(), &envelope_path)
+            .with_context(|| format!("failed to sign bundle '{}'", bundle.display()))?;
     let signer = envelope["signer_fingerprint"]
         .as_str()
         .unwrap_or_default()

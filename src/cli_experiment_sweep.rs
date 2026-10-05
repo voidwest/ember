@@ -255,7 +255,11 @@ pub(crate) fn run_sweep(
     let mut signed = Vec::new();
     if let Some(key) = crate::cli_experiment::resolve_sign_key(command) {
         for outcome in std::iter::once(&base).chain(outcomes.iter()) {
-            signed.push(crate::cli_experiment::sign_bundle(&outcome.path, &key)?);
+            signed.push(crate::cli_experiment::sign_bundle(
+                &outcome.path,
+                &outcome.identity,
+                &key,
+            )?);
         }
     }
     // The manifest last: its presence marks a complete sweep.
