@@ -41,7 +41,8 @@ first fire and checksummed; `restore-original` reproduces it exactly.
   actually needed is recorded in the bundle's semantic `warnings`, with the
   source's semantic hash and the mismatching identities. Set `semantic_hash`
   (64 lowercase hex) to pin the source: without it, the source is whatever
-  bundle sits at `bundle_path` when the experiment runs or is reproduced.
+  bundle sits at `bundle_path` when the experiment runs or is reproduced, and
+  the run records a warning naming the semantic hash it resolved to.
 - `zero`: an all-zero row.
 - `vector-file { path, sha256, tensor? }` (direction operations only): a
   `.npy` (little-endian `<f4`/`<f8`, C order) or `.safetensors` file. The

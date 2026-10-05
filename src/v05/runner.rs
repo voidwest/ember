@@ -1291,6 +1291,16 @@ pub fn load_bundle_source(
         ));
     }
     let mut warnings = Vec::new();
+    if semantic_hash.is_none() {
+        // Without a pin the source is whatever bundle sits at the path, so
+        // record which one it was: a later reproduce against a changed
+        // source then differs here instead of only in its outputs.
+        warnings.push(format!(
+            "intervention '{}': source bundle not pinned; it resolved to semantic hash {} \
+             (set semantic_hash to require it)",
+            intervention.id, bundle.semantic_hash
+        ));
+    }
     if bundle.semantic_manifest.model.sha256 != target_model_sha {
         warnings.push(format!(
             "intervention '{}': allow_model_mismatch used; source bundle {} was run on model \
@@ -1873,7 +1883,9 @@ directory = "runs/runner-test"
         assert!(error.contains("tokenizer SHA"), "{error}");
         // Overrides apply to the named identity only; they cannot bypass the
         // other identity, semantic site, or source bundle integrity.
-        assert!(valid.warnings.is_empty(), "{:?}", valid.warnings);
+        // Unpinned: the resolved source is recorded.
+        assert_eq!(valid.warnings.len(), 1, "{:?}", valid.warnings);
+        assert!(valid.warnings[0].contains("not pinned"));
         // A pinned semantic hash must match the bundle at the path.
         let pinned = |hash: &str| {
             let mut pinned = source.clone();
@@ -1885,13 +1897,14 @@ directory = "runs/runner-test"
         let actual = crate::v05::verify::load_bundle_for_source(&root)
             .unwrap()
             .semantic_hash;
-        assert!(load(
+        let pinned_ok = load(
             &intervention,
             &pinned(&actual),
             FIXTURE_MODEL_SHA,
-            FIXTURE_TOKENIZER_SHA
+            FIXTURE_TOKENIZER_SHA,
         )
-        .is_ok());
+        .unwrap();
+        assert!(pinned_ok.warnings.is_empty(), "{:?}", pinned_ok.warnings);
         let error = load(
             &intervention,
             &pinned(&"0".repeat(64)),
@@ -1908,8 +1921,8 @@ directory = "runs/runner-test"
             FIXTURE_TOKENIZER_SHA,
         )
         .unwrap();
-        assert_eq!(overridden.warnings.len(), 1);
-        assert!(overridden.warnings[0].contains("allow_model_mismatch used"));
+        assert_eq!(overridden.warnings.len(), 2);
+        assert!(overridden.warnings[1].contains("allow_model_mismatch used"));
         assert!(load(
             &intervention,
             &source,

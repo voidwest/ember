@@ -923,6 +923,9 @@ pub(crate) fn activate_spec(
             let loaded =
                 load_bundle_source(intervention, source, model_sha, tokenizer_sha, n_layers)
                     .map_err(anyhow::Error::msg)?;
+            for warning in &loaded.warnings {
+                log::warn!("{warning}");
+            }
             bundle_sources.push(loaded);
         }
     }
