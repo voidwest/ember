@@ -1124,6 +1124,23 @@ fn validated_audio_input_rejects_oversized_duration() {
     assert_eq!(v.samples.len(), 16_000);
 }
 
+#[test]
+fn low_rate_wav_is_refused_before_resampling() {
+    use ember::multimodal::audio::{to_mono_16k, AudioInput, ValidatedAudioInput};
+    // 22 KB of 16-bit samples declared at 1 Hz is ~3 hours of "audio" that
+    // used to resample to ~176M samples before the duration check ran.
+    let bytes = wav_bytes(1, 16, 1, 1, &[0u8; 22_000]);
+    let start = std::time::Instant::now();
+    for result in [
+        to_mono_16k(&AudioInput::Bytes(bytes.clone())).map(|_| ()),
+        ValidatedAudioInput::from_audio_input(&AudioInput::Bytes(bytes)).map(|_| ()),
+    ] {
+        let err = result.expect_err("over-long low-rate audio must be refused");
+        assert!(err.to_string().contains("admission limit"), "{err}");
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
 // --- image decode limits ---------------------------------------------------
 
 fn crc32_ieee(bytes: &[u8]) -> u32 {

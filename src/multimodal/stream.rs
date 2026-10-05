@@ -27,9 +27,11 @@
 //! guarantees the frontend state machine never recomputes or mutates
 //! history, and reports the offsets needed to schedule honestly.
 
-use crate::multimodal::audio::{long_form_windows, MAX_FRAMES, TARGET_SAMPLE_RATE};
+use crate::multimodal::audio::{
+    ensure_admissible_duration, long_form_windows, MAX_FRAMES, TARGET_SAMPLE_RATE,
+};
 use crate::tensor::CpuTensor;
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 
 const SINC_HALF_WIDTH: isize = 16;
 /// End-margin (samples) required beyond a frame's support before it may be
@@ -450,7 +452,15 @@ impl AudioStream {
     /// finalized/pending split.
     pub fn push_pcm(&mut self, samples: &[f32]) -> Result<StreamProgress> {
         ensure!(!self.finished, "push_pcm after finish");
-        self.input_samples += samples.len();
+        // Same admission limit as static audio, enforced before any state
+        // changes. Bounding the input duration also bounds the resampler's
+        // output (and `finish`'s flush) at any configured rate.
+        let input_samples = self
+            .input_samples
+            .checked_add(samples.len())
+            .ok_or_else(|| anyhow!("audio stream length overflows"))?;
+        ensure_admissible_duration(input_samples, self.config.sample_rate)?;
+        self.input_samples = input_samples;
         let fresh = match &mut self.resampler {
             Some(r) => r.push(samples),
             None => samples.to_vec(),
@@ -748,6 +758,21 @@ mod tests {
         let mut stream = AudioStream::open(AudioStreamConfig::default()).unwrap();
         stream.push_pcm(&sig).unwrap();
         assert!(stream.finish().is_err(), "streamed must reject short input");
+    }
+
+    #[test]
+    fn streams_share_the_static_duration_limit() {
+        // 1 Hz: 3600 samples is the whole hour; one more would have made
+        // `finish` flush ~57.6M resampled samples past the limit.
+        let mut stream = AudioStream::open(AudioStreamConfig { sample_rate: 1 }).unwrap();
+        let err = stream.push_pcm(&[0.0; 3601]).unwrap_err().to_string();
+        assert!(err.contains("admission limit"), "{err}");
+        assert_eq!(
+            stream.progress().input_samples,
+            0,
+            "rejected push is a no-op"
+        );
+        stream.push_pcm(&[0.0; 2]).unwrap();
     }
 }
 

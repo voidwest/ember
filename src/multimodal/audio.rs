@@ -477,9 +477,25 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Result<Vec<f32
     Ok(out)
 }
 
+/// Reject `samples` at `sample_rate` Hz longer than [`MAX_AUDIO_SECONDS`].
+/// Checked at the *source* rate, before resampling: the rate is attacker-
+/// controlled, so a small WAV declaring a 1 Hz rate would otherwise force
+/// a resample of hundreds of millions of output samples before any
+/// post-resample duration check could refuse it.
+pub(crate) fn ensure_admissible_duration(samples: usize, sample_rate: u32) -> Result<()> {
+    ensure!(sample_rate > 0, "audio sample rate must be non-zero");
+    let duration_s = samples as f64 / f64::from(sample_rate);
+    ensure!(
+        duration_s <= MAX_AUDIO_SECONDS,
+        "audio duration {duration_s:.1}s exceeds the {MAX_AUDIO_SECONDS:.0}s admission limit"
+    );
+    Ok(())
+}
+
 /// Normalize any [`AudioInput`] to mono f32 at 16 kHz: decode, mean-of-
 /// channels, resample. This is the single entry point the model wrapper
-/// uses for all sources.
+/// uses for all sources; inputs longer than [`MAX_AUDIO_SECONDS`] are
+/// refused before resampling.
 pub fn to_mono_16k(input: &AudioInput) -> Result<DecodedAudio> {
     let decoded = match input {
         AudioInput::File(p) => decode_wav(p)?,
@@ -489,6 +505,7 @@ pub fn to_mono_16k(input: &AudioInput) -> Result<DecodedAudio> {
             sample_rate: *sample_rate,
         },
     };
+    ensure_admissible_duration(decoded.samples.len(), decoded.sample_rate)?;
     if decoded.sample_rate == TARGET_SAMPLE_RATE as u32 {
         return Ok(decoded);
     }
