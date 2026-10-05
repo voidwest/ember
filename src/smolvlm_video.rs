@@ -128,13 +128,24 @@ impl SmolVlmVideo {
     pub fn prepare_frames(&self, sampled: &SampledVideo) -> Result<CpuTensor> {
         let t0 = Instant::now();
         ensure!(!sampled.frames.is_empty(), "no frames survived sampling");
-        let (h0, w0) = (sampled.frames[0].shape()[1], sampled.frames[0].shape()[2]);
+        let first = sampled.frames[0].shape();
+        ensure!(
+            first.len() == 3 && first[0] == 3,
+            "video frames must be CHW [3, h, w], got {first:?}"
+        );
+        let (h0, w0) = (first[1], first[2]);
         let size = self.vision.transformer.config.image_size;
-        let mut pixels = vec![0.0f32; sampled.frames.len() * 3 * size * size];
+        let len = 3 * size * size;
+        let total = sampled
+            .frames
+            .len()
+            .checked_mul(len)
+            .ok_or_else(|| anyhow::anyhow!("video frame batch size overflows"))?;
+        let mut pixels = vec![0.0f32; total];
         for (i, f) in sampled.frames.iter().enumerate() {
             // every frame must share geometry (a decoded stream guarantees it)
             ensure!(
-                (f.shape()[1], f.shape()[2]) == (h0, w0),
+                f.shape() == first,
                 "frame {i} geometry {:?} differs from frame 0",
                 f.shape()
             );
@@ -160,7 +171,6 @@ impl SmolVlmVideo {
                 "video frame preprocessing produced {:?}",
                 pp.tiles.shape()
             );
-            let len = 3 * size * size;
             pixels[i * len..(i + 1) * len].copy_from_slice(pp.tiles.data());
         }
         let _ = t0.elapsed();

@@ -22,6 +22,14 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::time::Instant;
 
+/// Largest square input edge an mmproj may declare. Known towers use
+/// 224-896; the video chain also upsamples frames to 4x this edge.
+pub const MAX_VISION_IMAGE_SIZE: usize = 2048;
+
+/// Largest patch sequence per image. Attention materializes a
+/// `num_patches²` score matrix per head (1 GiB of f32 at this cap).
+pub const MAX_VISION_PATCHES: usize = 16_384;
+
 /// Vision-tower hyperparameters (mirrors the HF `vision_config`).
 #[derive(Debug, Clone)]
 pub struct VisionTransformerConfig {
@@ -732,6 +740,10 @@ impl VisionModel {
         anyhow::ensure!(patch_size > 0, "vision patch size must be non-zero");
         anyhow::ensure!(image_size > 0, "vision image size must be non-zero");
         anyhow::ensure!(
+            image_size <= MAX_VISION_IMAGE_SIZE,
+            "vision image size {image_size} exceeds the {MAX_VISION_IMAGE_SIZE}-pixel limit"
+        );
+        anyhow::ensure!(
             norm_eps.is_finite() && norm_eps >= 0.0,
             "vision layer-norm epsilon must be finite and non-negative, got {norm_eps}"
         );
@@ -793,9 +805,8 @@ impl VisionModel {
             anyhow::anyhow!("vision pixel-shuffle scale area overflow for scale {scale_factor}")
         })?;
         anyhow::ensure!(
-            num_patches <= crate::loader::limits::MAX_CONTEXT_LEN,
-            "vision patch count {num_patches} exceeds the {} element limit",
-            crate::loader::limits::MAX_CONTEXT_LEN
+            num_patches <= MAX_VISION_PATCHES,
+            "vision patch count {num_patches} exceeds the {MAX_VISION_PATCHES}-patch limit"
         );
         anyhow::ensure!(
             num_patches.is_multiple_of(scale_area),
@@ -1191,6 +1202,22 @@ mod tests {
     fn zero_patch_size_is_an_error_not_a_num_patches_panic() {
         let error = load_error(0, &[]);
         assert!(error.contains("patch size must be non-zero"));
+    }
+
+    #[test]
+    fn oversized_geometry_is_rejected_at_load() {
+        let mut meta = metadata(2);
+        meta.insert("smolvlm.vision.image_size".into(), GgufValue::U32(1 << 20));
+        let mut loader = GgufLoader::for_test(meta, tensors(&[]));
+        let error = expect_load_error(|| VisionModel::from_mmproj_loader(&mut loader));
+        assert!(error.contains("image size"), "{error}");
+        // 2048 / 2 = 1024 patches per side: within the edge cap, over the
+        // patch cap
+        let mut meta = metadata(2);
+        meta.insert("smolvlm.vision.image_size".into(), GgufValue::U32(2048));
+        let mut loader = GgufLoader::for_test(meta, tensors(&[]));
+        let error = expect_load_error(|| VisionModel::from_mmproj_loader(&mut loader));
+        assert!(error.contains("patch count"), "{error}");
     }
 
     #[test]

@@ -1261,6 +1261,40 @@ fn low_rate_wav_is_refused_before_resampling() {
 
 // --- image decode limits ---------------------------------------------------
 
+#[cfg(unix)]
+#[test]
+fn decode_rgb_refuses_a_fifo_instead_of_blocking() {
+    let dir = std::env::temp_dir().join(format!("ember-fifo-frame-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fifo = dir.join("frame_0000.png");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let err = decode_rgb(&fifo).expect_err("a FIFO is not an image file");
+    assert!(err.to_string().contains("regular file"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn malformed_pixels_and_tile_size_are_errors_not_panics() {
+    let config = ImagePreprocessConfig::default();
+    let flat = CpuTensor::from_data(vec![12], vec![0.0; 12]);
+    assert!(preprocess(&flat, &config).is_err());
+    assert!(resize(&flat, 2, 2, Resample::Lanczos).is_err());
+    let empty = CpuTensor::from_data(vec![3, 0, 4], vec![]);
+    assert!(resize(&empty, 2, 2, Resample::Lanczos).is_err());
+    let rgb = CpuTensor::from_data(vec![3, 2, 2], vec![0.0; 12]);
+    let zero_tile = ImagePreprocessConfig {
+        tile_size: Some(0),
+        ..ImagePreprocessConfig::default()
+    };
+    let err = preprocess(&rgb, &zero_tile).expect_err("tile size 0");
+    assert!(err.to_string().contains("tile_size"), "{err}");
+}
+
 fn crc32_ieee(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in bytes {
