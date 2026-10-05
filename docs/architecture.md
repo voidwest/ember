@@ -194,12 +194,16 @@ the probe pipeline and CPU backend include these CPU-friendly optimizations:
   model's potentially very large metadata context.
 - file-loaded q8_0 tensors retain mmap ranges, avoiding a second full model
   copy and allowing the operating system to page data lazily.
-- q8_0 prefill uses tiled multi-row kernels; Q/K/V and gate/up projections
-  reuse packed activation rows.
-- q8_0 single-row decode matmuls split output rows across Rayon workers once
-  their measured work exceeds the decode crossover.
+- q8_0 prefill uses tiled multi-row kernels. Gemma 4 prefill and the Q8_0
+  decode fast path share packed activation rows across Q/K/V and gate/up;
+  Llama prefill quantizes the input once per projection.
+- single-row decode matvecs (Q8_0 and K-quant) and decode attention run on the
+  spinning decode team (`decode_pool`) once their work exceeds the decode
+  crossover; Rayon is the fallback.
 - shared CPU attention parallelizes prefill by output row and decode by head,
-  with worker-local score scratch to avoid scatter buffers.
+  with worker-local score scratch to avoid scatter buffers. Prefill rows and
+  planned decode use the register-tiled kernel in `attention_kernels` where
+  the CPU supports it.
 
 the next useful optimization targets are:
 
