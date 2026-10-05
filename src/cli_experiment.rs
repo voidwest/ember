@@ -1749,7 +1749,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
         return crate::cli_experiment_sweep::run_verify_sweep(
             &command.bundle,
             &options,
-            command.anchor.expect_evidence.is_some(),
+            command.anchor.trusted_key.is_some(),
             command.write_report.as_deref(),
             command.json,
         );
@@ -2278,5 +2278,26 @@ mod tests {
             bundle_evidence_path(Path::new("probe.v1")),
             PathBuf::from("probe.v1.evidence.json")
         );
+    }
+
+    #[test]
+    fn a_signature_anchor_on_a_sweep_is_refused_not_ignored() {
+        let dir = std::env::temp_dir().join(format!("ember-sweep-anchor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(ember::v05::sweep::SWEEP_MANIFEST_FILE), b"{}").unwrap();
+        let command = super::VerifyArgs {
+            bundle: dir.clone(),
+            model: None,
+            tokenizer: None,
+            anchor: super::AnchorArgs {
+                trusted_key: Some("lab.pub".into()),
+                ..super::AnchorArgs::default()
+            },
+            write_report: None,
+            json: true,
+        };
+        let error = super::run_verify_command(&command).unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(error.contains("--trusted-key"), "{error}");
     }
 }

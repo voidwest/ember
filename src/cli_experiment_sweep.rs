@@ -392,10 +392,13 @@ pub(crate) fn run_verify_sweep(
     write_report: Option<&Path>,
     json: bool,
 ) -> anyhow::Result<()> {
+    // Refuse rather than ignore a signature anchor: `--trusted-key` alone
+    // would otherwise report a sweep "verified" without checking any
+    // signature.
     anyhow::ensure!(
         !anchored_by_evidence,
-        "--expect-evidence applies to single bundles; anchor a sweep with \
-         --expect-semantic-hash <sweep hash>"
+        "--trusted-key/--expect-evidence apply to single bundles; anchor a sweep \
+         with --expect-semantic-hash <sweep hash>"
     );
     let report = verify_sweep(dir, options).map_err(anyhow::Error::msg)?;
     if let Some(path) = write_report {
