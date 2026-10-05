@@ -30,6 +30,18 @@ homepage = "https://voidwest.dev/ember"
 readme = "README.md"
 keywords = ["gguf", "llm", "inference", "interpretability", "research"]
 categories = ["command-line-utilities", "science"]
+# What a source package (`cargo package`, or the Python binding's sdist,
+# which packages this path dependency) needs to build: not the docs site,
+# research data, artifacts or local files.
+include = [
+    "/src/**",
+    "/benches/**",
+    "/docs/api-stability.md",
+    "/tokenizer.json",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
 
 [dependencies]
 # Kernels, models, plans and the hook framework; every module is re-exported

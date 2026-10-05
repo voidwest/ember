@@ -35,7 +35,6 @@ on:
       - "crates/ember-core/Cargo.toml"
       - "crates/ember-core/build.rs"
       - "Cargo.lock"
-      - "build.rs"
       - "scripts/run_parser_fuzz.sh"
       - ".github/workflows/fuzz.yml"
   pull_request:
@@ -64,7 +63,6 @@ on:
       - "crates/ember-core/Cargo.toml"
       - "crates/ember-core/build.rs"
       - "Cargo.lock"
-      - "build.rs"
       - "scripts/run_parser_fuzz.sh"
       - ".github/workflows/fuzz.yml"
   # The path filters cannot list every module the loader reaches; a weekly

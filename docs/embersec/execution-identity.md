@@ -32,9 +32,11 @@ env ────────► behavior knobs (EMBER_*) that change numerics/pa
 - `--write-run-manifest` (manifest schema v1): model SHA-256 + GGUF metadata,
   tokenizer SHA-256, git commit, rustc version, rayon threads, CPU features,
   k-strategy, sampler temperature/top-k/top-p, probe/experiment switches.
-- `build.rs` embeds build-time `EMBER_GIT_COMMIT` / `EMBER_GIT_DIRTY` /
-  `EMBER_RUSTC_VERSION` / `EMBER_TARGET` into the binary (used by trace.rs,
-  plan_build.rs, agent/session.rs).
+- `ember-core`'s build script (`crates/ember-core/build.rs`) embeds
+  build-time `EMBER_GIT_COMMIT` / `EMBER_GIT_DIRTY` / `EMBER_RUSTC_VERSION` /
+  `EMBER_TARGET` / `EMBER_OPT_LEVEL` into the binary; `ember` reads them
+  through `build_info` (used by trace.rs, plan_build.rs, agent/session.rs,
+  v05 host profiles and run manifests).
 - v0.5 experiment bundles: semantic identity (sanitized execution plan,
   payload hash, `resolved-experiment.json`), `experiment reproduce/verify`.
 - `SeededRng::Std(StdRng::seed_from_u64)` already existed in the generation
