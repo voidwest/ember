@@ -116,7 +116,7 @@ operation = { kind = "ablate-projection" }       # direction source
 
 source = { kind = "inline-vector", values = [0.1, 0.2] }
 source = { kind = "capture-from-current-run", capture_id = "cap" }
-source = { kind = "capture-from-bundle", bundle_path = "runs/x", capture_id = "cap", input_id = "i", layer = 7 }
+source = { kind = "capture-from-bundle", bundle_path = "runs/x", capture_id = "cap", input_id = "i", layer = 7 }  # semantic_hash = "<64 hex>" pins the source
 source = { kind = "zero" }
 source = { kind = "vector-file", path = "dir.npy", sha256 = "<64 hex>" }            # tensor = "name" for safetensors
 source = { kind = "contrastive", positive = ["..."], negative = ["..."] }          # tokens = {...}, default prompt-final

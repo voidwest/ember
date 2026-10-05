@@ -197,12 +197,37 @@ impl Llama<CpuBackend> {
                     sequence.logits.len()
                 )));
             }
-            if sequence.cache.n_layers() != self.blocks.len() {
+            let cache = &*sequence.cache;
+            if cache.n_layers() != self.blocks.len() {
                 return Err(CpuError::ShapeMismatch(
                     "batched decode cache layer count mismatch".into(),
                 ));
             }
-            sequence.cache.validate_start_pos(sequence.start_pos);
+            if cache.n_kv_heads() != self.config.n_kv_heads
+                || (0..cache.n_layers())
+                    .any(|layer| cache.layer_head_dim(layer) != self.config.head_dim)
+            {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "batched decode cache has {} KV heads of width {}, expected {} of width {}",
+                    cache.n_kv_heads(),
+                    cache.head_dim(),
+                    self.config.n_kv_heads,
+                    self.config.head_dim
+                )));
+            }
+            if sequence.start_pos != cache.cursor() {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "batched decode start_pos {} does not match the cache cursor {}",
+                    sequence.start_pos,
+                    cache.cursor()
+                )));
+            }
+            if cache.cursor() >= cache.max_seq_len() {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "batched decode cache is full ({} positions)",
+                    cache.max_seq_len()
+                )));
+            }
         }
         let embed_dim = self.config.embed_dim;
         let q_dim = self.config.n_heads * self.config.head_dim;

@@ -176,8 +176,17 @@ pub(crate) fn sign_record_file(record: &Path, key: &str, out: &Path) -> Result<s
             .with_context(|| format!("failed to read record {}", record.display()))?,
     )
     .with_context(|| format!("record {} is not valid JSON", record.display()))?;
+    sign_record_value(&parsed, key, out)
+}
+
+/// Sign an already parsed record (see [`sign_record_file`]).
+pub(crate) fn sign_record_value(
+    parsed: &serde_json::Value,
+    key: &str,
+    out: &Path,
+) -> Result<serde_json::Value> {
     let seed = read_key_seed(key)?;
-    let envelope = build_envelope(&parsed, &seed, ember::extraction::unix_timestamp())?;
+    let envelope = build_envelope(parsed, &seed, ember::extraction::unix_timestamp())?;
     crate::cli_support::write_json_file(&out.to_string_lossy(), &envelope)?;
     Ok(envelope)
 }

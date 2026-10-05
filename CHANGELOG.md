@@ -12,7 +12,7 @@ API.
 ## [1.0.0] — release candidate (staged; pending external acceptance gates)
 
 This is the 1.0.0 changelog, staged for the release cut. The local release
-gates pass on candidate `099270c4…` (see
+gates pass on candidate `v1.0.0-rc.2` (`d41a618`; see
 [docs/audits/1.0-current-validation.md](docs/audits/1.0-current-validation.md));
 the tag waits on the external items in
 [docs/road-to-1.0.md](docs/road-to-1.0.md): clean-machine installation,
@@ -261,7 +261,7 @@ publish this section as a released version until those are closed.
   This GUI toolchain increase is reserved for the next minor release.
 - Add an actionable 1.0 release-gate checklist in `docs/road-to-1.0.md`.
 
-## [Unreleased]
+## Development since 0.6.8 (released as part of 1.0.0)
 
 - Align failed experiment verification/reproduction verdicts with CLI exit code 3; return the shared verdict error so handler cleanup runs.
 
@@ -938,7 +938,7 @@ the `experiment` subcommand runs.
   prefill, so multi-token prefill records failed self-validation. The
   record token count now comes from the tensor's actual row count.
 
-## [Unreleased]
+## Development between 0.2.0 and 0.3.0
 
 ### Added
 

@@ -452,6 +452,7 @@ fn rope_semantics_equal(
         && left.dimension_count == right.dimension_count
         && left.theta.to_bits() == right.theta.to_bits()
         && left.frequency_layout == right.frequency_layout
+        && crate::kv_snapshot::frequency_factors_agree(left, right)
         && left.position_origin == right.position_origin
         && left.keys_state == right.keys_state
         && left.qk_norm_order == right.qk_norm_order

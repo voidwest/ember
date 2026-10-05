@@ -46,14 +46,9 @@ jobs:
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-
+      # Caches ~/.cargo and target/ without the workspace's own build
+      # products, keyed by job, toolchain and Cargo.lock.
+      - uses: Swatinem/rust-cache@v2
 
       - name: install X11 system libraries (gpui native GUI)
         run: |
@@ -64,7 +59,10 @@ jobs:
           sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libwayland-dev libasound2-dev pkg-config
 
       - name: build
-        run: cargo build --locked --release --all-targets --verbose
+        # Only the release binary is needed (the binding tests' CLI parity
+        # checks use target/release/ember); `test --all-targets` below
+        # compiles every target in the dev profile anyway.
+        run: cargo build --locked --release --bin ember --verbose
 
       - name: test
         run: cargo test --locked --all-targets --verbose
@@ -123,7 +121,7 @@ jobs:
         # rustdoc lints (broken_intra_doc_links, private_intra_doc_links) are
         # warn-level in lib.rs; -D warnings turns any regression into a red
         # CI run.
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --release
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
       - name: python dependencies
         run: python -m pip install -r probes/requirements.txt
@@ -133,8 +131,9 @@ jobs:
           python -m compileall -q python probes stimuli scripts tests
           python probes/run_probe_matrix.py --model smoke:dummy.gguf --generate-tokens 1 --dry-run
           # One script per `bash -n`: given several paths it parses only the
-          # first and passes the rest to it as arguments.
-          for script in bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh scripts/conference_demo.sh scripts/validate_k_parity.sh tools/crossover_sweep.sh tools/verify_k_quant_llamacpp.sh scripts/ci_local.sh .githooks/pre-push; do
+          # first and passes the rest to it as arguments. Every tracked
+          # script, so a new one cannot be missed.
+          for script in $(git ls-files '*.sh') .githooks/pre-push; do
             bash -n "$script"
           done
 
@@ -162,14 +161,9 @@ jobs:
           rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
           rustup override set 1.92.0
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-
+      # Caches ~/.cargo and target/ without the workspace's own build
+      # products, keyed by job, toolchain and Cargo.lock.
+      - uses: Swatinem/rust-cache@v2
 
       - name: build (headless)
         run: cargo build --locked --no-default-features --all-targets
@@ -215,14 +209,11 @@ jobs:
           rustc --version
           cargo --version
 
-      - uses: actions/cache@v4
+      # Caches ~/.cargo and target/ without the workspace's own build
+      # products, keyed by job, toolchain and Cargo.lock.
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.label }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.label }}-cargo-
+          key: ${{ matrix.label }}
 
       - name: build (headless)
         run: cargo build --locked --no-default-features --all-targets
@@ -273,14 +264,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ runner.arch }}-golden-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-golden-cargo-
+      # Caches ~/.cargo and target/ without the workspace's own build
+      # products, keyed by job, toolchain and Cargo.lock.
+      - uses: Swatinem/rust-cache@v2
 
       - name: cache the pinned model
         # Keyed by the model's pinned SHA-256; download_models.sh re-checks it.

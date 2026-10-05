@@ -116,8 +116,13 @@ struct WriterState {
 /// One process's handle on the packed cache for one source model + layout.
 pub struct PackedCache {
     path: PathBuf,
-    /// Lazily created read-only mapping of the cache file, shared by every
-    /// packed weight served from it (no per-tensor copies).
+    /// The cache file whose header was validated into `entries`. Mapping
+    /// this handle rather than reopening `path` keeps the offsets and the
+    /// bytes from one file even if another process publishes a new cache
+    /// in between.
+    source: Option<File>,
+    /// Lazily created read-only mapping of `source`, shared by every packed
+    /// weight served from it (no per-tensor copies).
     mapped: Mutex<Option<std::sync::Arc<memmap2::Mmap>>>,
     writer: Mutex<Option<WriterState>>,
     entries: Vec<HeaderEntry>,
@@ -176,19 +181,20 @@ impl PackedCache {
         let dir = dir?;
         let key = cache_key(model_path, loader);
         let path = dir.join(format!("{key}.bin"));
-        let entries = match Self::read_header(&path, verify) {
-            Ok(Some((header, _payload_len))) => header.entries,
-            Ok(None) => Vec::new(),
+        let (source, entries) = match Self::read_header(&path, verify) {
+            Ok(Some((file, header, _payload_len))) => (Some(file), header.entries),
+            Ok(None) => (None, Vec::new()),
             Err(error) => {
                 log::warn!(
                     "packed cache {} is unusable ({error}); rebuilding in memory",
                     path.display()
                 );
-                Vec::new()
+                (None, Vec::new())
             }
         };
         Some(Self {
             path,
+            source,
             mapped: Mutex::new(None),
             writer: Mutex::new(None),
             entries,
@@ -303,11 +309,12 @@ impl PackedCache {
     fn mapped(&self) -> Option<std::sync::Arc<memmap2::Mmap>> {
         let mut guard = self.mapped.lock().ok()?;
         if guard.is_none() {
-            let file = File::open(&self.path).ok()?;
-            // Safety: read-only mapping of a file that is only ever replaced
-            // by an atomic rename (never truncated in place), so the mapping
-            // cannot observe a partial payload.
-            let mmap = unsafe { memmap2::Mmap::map(&file).ok()? };
+            let file = self.source.as_ref()?;
+            // Safety: read-only mapping of the file whose header produced
+            // `entries`. Cache files are only ever replaced by an atomic
+            // rename (never truncated or rewritten in place), so this inode
+            // keeps the validated length and payload.
+            let mmap = unsafe { memmap2::Mmap::map(file).ok()? };
             *guard = Some(std::sync::Arc::new(mmap));
         }
         guard.clone()
@@ -596,13 +603,16 @@ impl PackedCache {
             .write_all(&(header_json.len() as u32).to_le_bytes())?;
         state.file.write_all(&header_json)?;
         state.file.write_all(&digest)?;
-        state.file.flush()?;
+        // Durable before visible: without this a crash after the rename can
+        // leave a valid header over unwritten (zero) payload pages, which
+        // pass every structural check.
+        state.file.sync_all()?;
         drop(state.file);
         std::fs::rename(&state.temp_path, &state.dest)
     }
 
     /// Read and validate the header. `Ok(None)` means "no usable file".
-    fn read_header(path: &Path, verify: bool) -> std::io::Result<Option<(Header, u64)>> {
+    fn read_header(path: &Path, verify: bool) -> std::io::Result<Option<(File, Header, u64)>> {
         let mut file = match File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -738,7 +748,7 @@ impl PackedCache {
                 ));
             }
         }
-        Ok(Some((header, payload_len)))
+        Ok(Some((file, header, payload_len)))
     }
 }
 
@@ -1138,6 +1148,42 @@ mod tests {
             assert_eq!(loaded.scales(), expected.scales(), "{name} scales");
         }
         assert_eq!(cache.entries.len(), 3, "no duplicate entries");
+    }
+
+    /// A reader that validated one file's header must keep serving that
+    /// file's bytes after another process publishes a cache with a
+    /// different layout under the same name.
+    #[test]
+    fn a_republished_file_does_not_mix_with_a_validated_header() {
+        if !crate::simd::interleaved_q8_0_supported() {
+            return;
+        }
+        let (loader, _) = loader_fixture();
+        let (dir, model) = temp_cache_path("republish");
+        let pack = |out: usize, input: usize| {
+            let source = QuantizedWeight::try_new(q8_bytes(out, input), vec![out, input]).unwrap();
+            QuantizedWeightInterleaved::from_quantized(&source)
+        };
+        let head = pack(4096, 2048);
+        let gate = pack(512, 256);
+        let cache = open_cache(&model, &loader, &dir);
+        cache.record_interleaved("output.weight", &head);
+        cache.record_interleaved("blk.0.ffn_gate.weight", &gate);
+        cache.finish_write();
+
+        // Reader validates the header but has not mapped the payload yet.
+        let reader = open_cache(&model, &loader, &dir);
+        // Another process publishes a file whose entries sit at new offsets.
+        let writer = open_cache(&model, &loader, &dir);
+        writer.record_interleaved("blk.0.ffn_down.weight", &pack(256, 512));
+        writer.record_interleaved("blk.0.ffn_gate.weight", &pack(512, 256));
+        writer.finish_write();
+
+        let loaded = reader
+            .get_interleaved("output.weight", 4096, 2048)
+            .expect("cache hit");
+        assert_eq!(loaded.quants(), head.quants());
+        assert_eq!(loaded.scales(), head.scales());
     }
 
     #[test]

@@ -78,6 +78,25 @@ impl BundleWriter {
         semantic_manifest: SemanticManifest,
         runtime_json: serde_json::Value,
     ) -> Result<(PathBuf, BundleIdentity), String> {
+        self.finalize_with_report(semantic_manifest, runtime_json)
+            .map(|(root, identity, _)| (root, identity))
+    }
+
+    /// [`Self::finalize`], also returning the verification report of the
+    /// staged bundle. Publication is a rename of exactly those bytes, so the
+    /// report describes the published bundle without reading it again.
+    pub fn finalize_with_report(
+        self,
+        semantic_manifest: SemanticManifest,
+        runtime_json: serde_json::Value,
+    ) -> Result<
+        (
+            PathBuf,
+            BundleIdentity,
+            crate::v05::verify::VerificationReport,
+        ),
+        String,
+    > {
         if self.root.as_os_str().is_empty() {
             return Err("bundle output directory must not be empty".into());
         }
@@ -229,6 +248,7 @@ impl BundleWriter {
                 semantic_hash,
                 payload_hash,
             },
+            verification,
         ))
     }
 }

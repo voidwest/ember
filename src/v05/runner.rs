@@ -1238,6 +1238,9 @@ pub struct BundleSource {
     pub source: InterventionSource,
     pub rows: Vec<f32>,
     pub columns: usize,
+    /// Deterministic provenance warnings for identity overrides that this
+    /// source actually needed (recorded in the semantic manifest).
+    pub warnings: Vec<String>,
 }
 
 /// Load and validate a cross-bundle source against the target experiment.
@@ -1256,6 +1259,7 @@ pub fn load_bundle_source(
         capture_id,
         input_id,
         layer,
+        semantic_hash,
     } = source
     else {
         return Err("source is not a bundle source".into());
@@ -1279,6 +1283,31 @@ pub fn load_bundle_source(
         ));
     }
     let bundle = crate::v05::verify::load_bundle_for_source(bundle_path)?;
+    if let Some(expected) = semantic_hash
+        && bundle.semantic_hash != *expected
+    {
+        return Err(format!(
+            "intervention '{}': source bundle '{}' has semantic hash {} but {expected} is pinned",
+            intervention.id,
+            bundle_path.display(),
+            bundle.semantic_hash
+        ));
+    }
+    let mut warnings = Vec::new();
+    if bundle.semantic_manifest.model.sha256 != target_model_sha {
+        warnings.push(format!(
+            "intervention '{}': allow_model_mismatch used; source bundle {} was run on model \
+             {}, the target is {target_model_sha}",
+            intervention.id, bundle.semantic_hash, bundle.semantic_manifest.model.sha256
+        ));
+    }
+    if bundle.semantic_manifest.tokenizer.sha256 != target_tokenizer_sha {
+        warnings.push(format!(
+            "intervention '{}': allow_tokenizer_mismatch used; source bundle {} was run with \
+             tokenizer {}, the target uses {target_tokenizer_sha}",
+            intervention.id, bundle.semantic_hash, bundle.semantic_manifest.tokenizer.sha256
+        ));
+    }
     if bundle.semantic_manifest.model.sha256 != target_model_sha
         && !intervention.compatibility.allow_model_mismatch
     {
@@ -1329,6 +1358,7 @@ pub fn load_bundle_source(
         source: source.clone(),
         rows,
         columns: index_entry.shape.last().copied().unwrap_or(0),
+        warnings,
     })
 }
 
@@ -1783,6 +1813,7 @@ directory = "runs/runner-test"
             capture_id: "capture".into(),
             input_id: "i1".into(),
             layer: 0,
+            semantic_hash: None,
         };
         let error =
             load_bundle_source(&intervention, &source, "model", "tokenizer", 2).unwrap_err();
@@ -1807,6 +1838,7 @@ directory = "runs/runner-test"
             capture_id: "cap-1".into(),
             input_id: "i1".into(),
             layer: 0,
+            semantic_hash: None,
         };
         let mut intervention = test_spec().interventions.remove(2);
         intervention.site = SemanticHookSite::ResidualPostMlp;
@@ -1844,14 +1876,43 @@ directory = "runs/runner-test"
         assert!(error.contains("tokenizer SHA"), "{error}");
         // Overrides apply to the named identity only; they cannot bypass the
         // other identity, semantic site, or source bundle integrity.
-        intervention.compatibility.allow_model_mismatch = true;
+        assert!(valid.warnings.is_empty(), "{:?}", valid.warnings);
+        // A pinned semantic hash must match the bundle at the path.
+        let pinned = |hash: &str| {
+            let mut pinned = source.clone();
+            if let InterventionSource::CaptureFromBundle { semantic_hash, .. } = &mut pinned {
+                *semantic_hash = Some(hash.to_string());
+            }
+            pinned
+        };
+        let actual = crate::v05::verify::load_bundle_for_source(&root)
+            .unwrap()
+            .semantic_hash;
         assert!(load(
             &intervention,
-            &source,
-            "different-model",
+            &pinned(&actual),
+            FIXTURE_MODEL_SHA,
             FIXTURE_TOKENIZER_SHA
         )
         .is_ok());
+        let error = load(
+            &intervention,
+            &pinned(&"0".repeat(64)),
+            FIXTURE_MODEL_SHA,
+            FIXTURE_TOKENIZER_SHA,
+        )
+        .unwrap_err();
+        assert!(error.contains("is pinned"), "{error}");
+        intervention.compatibility.allow_model_mismatch = true;
+        let overridden = load(
+            &intervention,
+            &source,
+            "different-model",
+            FIXTURE_TOKENIZER_SHA,
+        )
+        .unwrap();
+        assert_eq!(overridden.warnings.len(), 1);
+        assert!(overridden.warnings[0].contains("allow_model_mismatch used"));
         assert!(load(
             &intervention,
             &source,

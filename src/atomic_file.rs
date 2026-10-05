@@ -96,8 +96,27 @@ fn atomic_write_with_policy(path: &Path, bytes: &[u8], overwrite: bool) -> io::R
     if !overwrite {
         let _ = fs::remove_file(&temporary_path);
     }
+    sync_parent_directory(path);
     Ok(())
 }
+
+/// Persist the directory entry the rename or link just created; until then a
+/// crash can lose the publication even though the payload itself is synced.
+/// Best effort: the file is already published, so a failure here must not be
+/// reported as a failed write.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_parent_directory(path: &Path) {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if let Ok(directory) = File::open(parent) {
+        let _ = rustix::fs::fsync(&directory);
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn sync_parent_directory(_: &Path) {}
 
 #[cfg(test)]
 mod tests {

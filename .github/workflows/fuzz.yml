@@ -25,6 +25,12 @@ on:
       - "src/quant_k.rs"
       - "src/simd.rs"
       - "src/multimodal/**"
+      - "src/plan.rs"
+      - "src/plan_build.rs"
+      - "src/k_quant_matmul.rs"
+      - "src/k_quant_matmul/**"
+      - "src/half_weight.rs"
+      - "src/packed_cache.rs"
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
@@ -46,11 +52,21 @@ on:
       - "src/quant_k.rs"
       - "src/simd.rs"
       - "src/multimodal/**"
+      - "src/plan.rs"
+      - "src/plan_build.rs"
+      - "src/k_quant_matmul.rs"
+      - "src/k_quant_matmul/**"
+      - "src/half_weight.rs"
+      - "src/packed_cache.rs"
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
       - "scripts/run_parser_fuzz.sh"
       - ".github/workflows/fuzz.yml"
+  # The path filters cannot list every module the loader reaches; a weekly
+  # run catches regressions that arrive through an unlisted file.
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch: {}
 
 env:

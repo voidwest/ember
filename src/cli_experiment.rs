@@ -22,9 +22,7 @@ use ember::quant_k::KStrategy;
 use ember::tokenizer::EmberTokenizer;
 use ember::v05::compare::compare_loaded;
 use ember::v05::manifest::BundleIdentity;
-use ember::v05::run::{
-    write_bundle, BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta,
-};
+use ember::v05::run::{BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta};
 use ember::v05::runner::{
     load_bundle_source, BundleSource, InputResult, ModelFacts, V05Experiment,
 };
@@ -508,8 +506,9 @@ pub(crate) fn prepare_run(
     // on helper threads while it loads. Results are checked in the order
     // they were when everything ran in sequence, with the same errors, and
     // the tokenizer is parsed only after its bytes match the spec's pin.
+    let model_file = ModelFileIdentity::of(&resolved.model.path)?;
     let abandon = AtomicBool::new(false);
-    std::thread::scope(|scope| {
+    let prepared = std::thread::scope(|scope| {
         // After an early error (or a panic) the helpers' results go unused;
         // stop them instead of waiting out a whole-model hash when the scope
         // joins. A drop guard covers the unwinding path too.
@@ -523,7 +522,49 @@ pub(crate) fn prepare_run(
             model_hash,
             &abandon,
         )
-    })
+    })?;
+    model_file.ensure_unchanged(&resolved.model.path)?;
+    Ok(prepared)
+}
+
+/// What identifies a model file on disk. The SHA-256 and the weights come
+/// from separate opens (the hash runs beside the load); a file replaced or
+/// rewritten in between would otherwise be used under the recorded hash.
+pub(crate) struct ModelFileIdentity {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    inode: (u64, u64),
+}
+
+impl ModelFileIdentity {
+    pub(crate) fn of(path: &std::path::Path) -> anyhow::Result<Self> {
+        let metadata = std::fs::metadata(path)
+            .with_context(|| format!("cannot stat model '{}'", path.display()))?;
+        Ok(Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            inode: {
+                use std::os::unix::fs::MetadataExt as _;
+                (metadata.dev(), metadata.ino())
+            },
+        })
+    }
+
+    pub(crate) fn ensure_unchanged(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        let now = Self::of(path)?;
+        let same = now.len == self.len && now.modified == self.modified;
+        #[cfg(unix)]
+        let same = same && now.inode == self.inode;
+        anyhow::ensure!(
+            same,
+            "model '{}' changed while it was being hashed and loaded; its recorded SHA-256 \
+             may not describe the weights in use",
+            path.display()
+        );
+        Ok(())
+    }
 }
 
 /// Sets the flag when dropped: tells `prepare_run`'s helper threads that
@@ -1146,13 +1187,21 @@ pub(crate) fn finish_bundle(
         },
         plan: (*active.plan).clone(),
         results: results.clone(),
-        warnings: Vec::new(),
+        // Overrides a cross-bundle source needed are part of the result's
+        // provenance (docs/interventions.md).
+        warnings: active
+            .bundle_sources
+            .iter()
+            .flat_map(|source| source.warnings.iter().cloned())
+            .collect(),
         runtime,
         artifacts,
     };
-    let (path, identity) =
-        write_bundle(&materials, target.retain_incomplete).map_err(anyhow::Error::msg)?;
-    let report = verify_bundle(&path, &VerifyOptions::default()).map_err(anyhow::Error::msg)?;
+    // The report of the verification that gated publication: the published
+    // bundle is a rename of exactly the verified staged bytes.
+    let (path, identity, report) =
+        ember::v05::run::write_verified_bundle(&materials, target.retain_incomplete)
+            .map_err(anyhow::Error::msg)?;
     Ok(RunOutcome {
         path,
         identity,
@@ -1326,7 +1375,7 @@ pub(crate) fn run_experiment_command(
     }
     let sign_key = resolve_sign_key(command);
     let evidence = match &sign_key {
-        Some(key) => Some(sign_bundle(&path, key)?),
+        Some(key) => Some(sign_bundle(&path, &identity, key)?),
         None => None,
     };
     if command.json {
@@ -1421,7 +1470,7 @@ fn run_with_variants(
     let mut evidence = Vec::new();
     if let Some(key) = resolve_sign_key(command) {
         for outcome in &all {
-            evidence.push(Some(sign_bundle(&outcome.path, &key)?));
+            evidence.push(Some(sign_bundle(&outcome.path, &outcome.identity, &key)?));
         }
     } else {
         evidence.resize(all.len(), None);
@@ -1518,15 +1567,28 @@ pub(crate) fn resolve_sign_key(command: &RunArgs) -> Option<PathBuf> {
 /// envelope path and the signer fingerprint.
 pub(crate) fn sign_bundle(
     bundle: &std::path::Path,
+    identity: &BundleIdentity,
     key: &std::path::Path,
 ) -> anyhow::Result<(PathBuf, String)> {
     let envelope_path = bundle_evidence_path(bundle);
-    let envelope = crate::cli_evidence::sign_record_file(
-        &bundle.join("manifest.json"),
-        &key.to_string_lossy(),
-        &envelope_path,
+    // Sign the identity this run produced and verified, not whatever
+    // manifest.json holds by the time signing happens.
+    let manifest_path = bundle.join("manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path)
+            .with_context(|| format!("failed to read '{}'", manifest_path.display()))?,
     )
-    .with_context(|| format!("failed to sign bundle '{}'", bundle.display()))?;
+    .with_context(|| format!("'{}' is not valid JSON", manifest_path.display()))?;
+    anyhow::ensure!(
+        manifest["semantic_hash"].as_str() == Some(identity.semantic_hash.as_str())
+            && manifest["payload_hash"].as_str() == Some(identity.payload_hash.as_str()),
+        "refusing to sign bundle '{}': its manifest no longer carries the identity this run \
+         produced",
+        bundle.display()
+    );
+    let envelope =
+        crate::cli_evidence::sign_record_value(&manifest, &key.to_string_lossy(), &envelope_path)
+            .with_context(|| format!("failed to sign bundle '{}'", bundle.display()))?;
     let signer = envelope["signer_fingerprint"]
         .as_str()
         .unwrap_or_default()
@@ -1708,10 +1770,13 @@ pub(crate) fn load_anchored_bundle(
 
 /// Refuse a report path inside the bundle: verification must not add files
 /// to the bundle it checks.
-fn write_report_outside(
+/// Fail unless `path` would be written outside `bundle` (a bundle or sweep
+/// directory); commands that only read a bundle never write into it.
+/// `refusal` is the error message.
+pub(crate) fn ensure_outside_bundle(
     bundle: &std::path::Path,
     path: &std::path::Path,
-    report: &ember::v05::verify::VerificationReport,
+    refusal: &str,
 ) -> anyhow::Result<()> {
     let bundle_root = bundle
         .canonicalize()
@@ -1723,10 +1788,20 @@ fn write_report_outside(
     let parent = parent
         .canonicalize()
         .with_context(|| format!("cannot resolve '{}'", parent.display()))?;
-    anyhow::ensure!(
-        !parent.starts_with(&bundle_root),
-        "--write-report must point outside the bundle; verification never modifies the bundle"
-    );
+    anyhow::ensure!(!parent.starts_with(&bundle_root), "{refusal}");
+    Ok(())
+}
+
+fn write_report_outside(
+    bundle: &std::path::Path,
+    path: &std::path::Path,
+    report: &ember::v05::verify::VerificationReport,
+) -> anyhow::Result<()> {
+    ensure_outside_bundle(
+        bundle,
+        path,
+        "--write-report must point outside the bundle; verification never modifies the bundle",
+    )?;
     let mut bytes = serde_json::to_vec_pretty(report)?;
     bytes.push(b'\n');
     ember::atomic_file::atomic_write(path, &bytes)
@@ -1743,7 +1818,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
         return crate::cli_experiment_sweep::run_verify_sweep(
             &command.bundle,
             &options,
-            command.anchor.expect_evidence.is_some(),
+            command.anchor.trusted_key.is_some(),
             command.write_report.as_deref(),
             command.json,
         );
@@ -2272,5 +2347,42 @@ mod tests {
             bundle_evidence_path(Path::new("probe.v1")),
             PathBuf::from("probe.v1.evidence.json")
         );
+    }
+
+    #[test]
+    fn a_model_file_replaced_during_load_is_detected() {
+        let dir = std::env::temp_dir().join(format!("ember-model-identity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("model.gguf");
+        std::fs::write(&model, b"weights").unwrap();
+        let identity = super::ModelFileIdentity::of(&model).unwrap();
+        identity.ensure_unchanged(&model).unwrap();
+        // Replaced by rename (same length): a different file.
+        let replacement = dir.join("other.gguf");
+        std::fs::write(&replacement, b"WEIGHTS").unwrap();
+        std::fs::rename(&replacement, &model).unwrap();
+        assert!(identity.ensure_unchanged(&model).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_signature_anchor_on_a_sweep_is_refused_not_ignored() {
+        let dir = std::env::temp_dir().join(format!("ember-sweep-anchor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(ember::v05::sweep::SWEEP_MANIFEST_FILE), b"{}").unwrap();
+        let command = super::VerifyArgs {
+            bundle: dir.clone(),
+            model: None,
+            tokenizer: None,
+            anchor: super::AnchorArgs {
+                trusted_key: Some("lab.pub".into()),
+                ..super::AnchorArgs::default()
+            },
+            write_report: None,
+            json: true,
+        };
+        let error = super::run_verify_command(&command).unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(error.contains("--trusted-key"), "{error}");
     }
 }

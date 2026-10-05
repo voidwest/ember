@@ -5,6 +5,7 @@
 #   scripts/ci_local.sh full     # quick + the test suites CI runs without a model
 #
 # Env: PYTHON (default .venv/bin/python, else python3)
+#      CARGO_BUILD_JOBS (cargo's own; e.g. 2 keeps a laptop's load moderate)
 #
 # "quick" only checks and lints, so it never replaces target/debug/ember.
 # Every step runs even after a failure; the summary lists what failed.
@@ -102,13 +103,33 @@ python="${PYTHON:-python3}"
 [[ -z "${PYTHON:-}" && -x .venv/bin/python ]] && python=".venv/bin/python"
 if command -v "$python" >/dev/null 2>&1; then
     run "docs site checks" "$python" scripts/check_docs.py
+    run "python compile" "$python" -m compileall -q python probes stimuli scripts tests
+    run "probe matrix dry run" "$python" probes/run_probe_matrix.py \
+        --model smoke:dummy.gguf --generate-tokens 1 --dry-run
 else
     skip "docs site checks" "python3 not found"
+    skip "python smoke" "python3 not found"
 fi
+
+# One script per `bash -n`: given several paths it parses only the first.
+shell_syntax() {
+    local script status=0
+    for script in $(git ls-files '*.sh') .githooks/pre-push; do
+        bash -n "$script" || status=1
+    done
+    return "$status"
+}
+run "shell syntax" shell_syntax
 
 if [[ "$mode" == "full" ]]; then
     run "test" cargo test --locked --all-targets
     run "doctests" cargo test --locked --doc
+    run "test with the audio feature" cargo test --locked --features audio --lib
+    if cargo audit --version >/dev/null 2>&1; then
+        run "cargo audit" cargo audit
+    else
+        skip "cargo audit" "cargo install cargo-audit"
+    fi
     run "native GUI interactions" \
         cargo test --locked --features gui-tests --bin ember gui_native::kit_tests
     run "K-quant kernel tier" \

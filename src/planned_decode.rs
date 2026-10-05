@@ -886,6 +886,23 @@ pub(crate) fn planned_causal_attention(
     let compute_head = |h: usize, score_row: &mut [f32], head_out: &mut [f32]| {
         let kv_h = h / n_repeat;
         let q_head = &q[h * head_dim..(h + 1) * head_dim];
+        // The register-tiled kernel computes exactly the loops below (same
+        // per-element arithmetic and order, see `attention_kernels`), with
+        // independent keys in separate vector lanes.
+        if crate::attention_kernels::cached_row_head(
+            q_head,
+            cached_k,
+            cached_v,
+            kv_h * cache_head_stride,
+            head_dim,
+            scale,
+            0,
+            total_seq_len - 1,
+            score_row,
+            head_out,
+        ) {
+            return;
+        }
         let k_head = &cached_k[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
         let v_head = &cached_v[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
         // scores: q · k_j for each cached position
@@ -905,10 +922,29 @@ pub(crate) fn planned_causal_attention(
         }
     };
     if crate::backend::should_parallel_attention(n_heads, 1, total_seq_len, head_dim) {
-        out.par_chunks_mut(head_dim)
-            .zip(scores[..n_heads * total_seq_len].par_chunks_mut(total_seq_len))
-            .enumerate()
-            .for_each(|(h, (head_out, score_row))| compute_head(h, score_row, head_out));
+        // One head per chunk on the decode team, which is already spinning
+        // between the surrounding matvec regions (as in the backend's
+        // single-token attention); Rayon would wake a second set of threads
+        // to compete with it.
+        let heads = crate::decode_pool::SharedMut::new(out);
+        let rows = crate::decode_pool::SharedMut::new(&mut scores[..n_heads * total_seq_len]);
+        let ran = crate::decode_pool::run(n_heads, &|h| {
+            // SAFETY: each chunk index is a distinct head, so its output
+            // slice and score row are disjoint from every other chunk's.
+            let (head_out, score_row) = unsafe {
+                (
+                    heads.range(h * head_dim, head_dim),
+                    rows.range(h * total_seq_len, total_seq_len),
+                )
+            };
+            compute_head(h, score_row, head_out);
+        });
+        if !ran {
+            out.par_chunks_mut(head_dim)
+                .zip(scores[..n_heads * total_seq_len].par_chunks_mut(total_seq_len))
+                .enumerate()
+                .for_each(|(h, (head_out, score_row))| compute_head(h, score_row, head_out));
+        }
     } else {
         for (h, (head_out, score_row)) in out
             .chunks_mut(head_dim)
@@ -1564,10 +1600,25 @@ pub(crate) fn forward_last_logits_planned_into(
                         crate::decode_profile::DecodeExecutionMode::Serial
                     });
                     // in-place silu: x / (1 + exp(-x)), matching the
-                    // reference `CpuTensor::silu` formula
-                    for x in data.iter_mut() {
-                        *x = *x / (1.0 + (-*x).exp());
-                    }
+                    // reference `CpuTensor::silu` formula. Elementwise, so
+                    // splitting it across the decode team (which otherwise
+                    // spins while this thread runs ~8k libm exps) leaves
+                    // every value bit-identical.
+                    let silu = |values: &mut [f32]| {
+                        for x in values.iter_mut() {
+                            *x = *x / (1.0 + (-*x).exp());
+                        }
+                    };
+                    const SILU_CHUNK: usize = 1024;
+                    let chunks = data.len().div_ceil(SILU_CHUNK);
+                    let len = data.len();
+                    let shared = crate::decode_pool::SharedMut::new(data);
+                    crate::decode_pool::run_or_serial(chunks, &|chunk| {
+                        let start = chunk * SILU_CHUNK;
+                        // SAFETY: each chunk index owns the distinct range
+                        // start..start + SILU_CHUNK (clamped to the end).
+                        silu(unsafe { shared.range(start, SILU_CHUNK.min(len - start)) });
+                    });
                 }
                 ResolvedOp::Elemul { a, b, out } => {
                     let (a_data, b_data, out_data) =

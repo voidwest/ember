@@ -374,6 +374,75 @@ fn resolve_under_root(
     Ok(root.join(rel_path))
 }
 
+/// Read a regular text file under `root`, at most `MAX_READ_BYTES`.
+///
+/// The lexical check in `resolve_under_root` cannot see symlinks, so the
+/// resolved target must still lie under the canonical root and be a regular
+/// file: a link to a secret outside the sandbox, to `/dev/zero` (length 0,
+/// unbounded content) or to a FIFO (blocks forever) is refused. The read
+/// itself is bounded as well, so a file that grows after the size check
+/// cannot exhaust memory.
+fn read_text_under_root(
+    root: &std::path::Path,
+    rel: &str,
+    cap_name: &str,
+) -> Result<(String, u64), ToolFailure> {
+    let path = resolve_under_root(root, rel)?;
+    let canonical_root = std::fs::canonicalize(root).map_err(|e| {
+        fail(
+            ToolFailureKind::Execution,
+            format!("cannot resolve the sandbox root: {e}"),
+        )
+    })?;
+    let canonical = std::fs::canonicalize(&path).map_err(|e| {
+        fail(
+            ToolFailureKind::Execution,
+            format!("cannot stat `{rel}`: {e}"),
+        )
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(fail(
+            ToolFailureKind::Execution,
+            format!("`{rel}` resolves outside the sandbox root"),
+        ));
+    }
+    let meta = std::fs::metadata(&canonical).map_err(|e| {
+        fail(
+            ToolFailureKind::Execution,
+            format!("cannot stat `{rel}`: {e}"),
+        )
+    })?;
+    if !meta.is_file() {
+        return Err(fail(
+            ToolFailureKind::Execution,
+            format!("`{rel}` is not a regular file"),
+        ));
+    }
+    let over_cap = |bytes: u64| {
+        fail(
+            ToolFailureKind::Execution,
+            format!("`{rel}` exceeds the 1 MiB {cap_name} cap ({bytes} bytes)"),
+        )
+    };
+    if meta.len() > MAX_READ_BYTES {
+        return Err(over_cap(meta.len()));
+    }
+    let mut text = String::new();
+    std::fs::File::open(&canonical)
+        .and_then(|f| f.take(MAX_READ_BYTES + 1).read_to_string(&mut text))
+        .map_err(|e| {
+            fail(
+                ToolFailureKind::Execution,
+                format!("cannot read `{rel}`: {e}"),
+            )
+        })?;
+    let bytes = text.len() as u64;
+    if bytes > MAX_READ_BYTES {
+        return Err(over_cap(bytes));
+    }
+    Ok((text, bytes))
+}
+
 /// Read a UTF-8 text file under a fixed root (1 MiB cap). ReadOnly.
 pub struct ReadTextFileTool {
     root: std::path::PathBuf,
@@ -401,31 +470,10 @@ impl Tool for ReadTextFileTool {
 
     fn execute(&self, args: &ValidatedArguments, _ctx: &ToolContext<'_>) -> ToolOutcome {
         let rel = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        let path = resolve_under_root(&self.root, rel)?;
-        let meta = std::fs::metadata(&path).map_err(|e| {
-            fail(
-                ToolFailureKind::Execution,
-                format!("cannot stat `{rel}`: {e}"),
-            )
-        })?;
-        if meta.len() > MAX_READ_BYTES {
-            return Err(fail(
-                ToolFailureKind::Execution,
-                format!("`{rel}` exceeds the 1 MiB read cap ({} bytes)", meta.len()),
-            ));
-        }
-        let mut text = String::new();
-        std::fs::File::open(&path)
-            .and_then(|mut f| f.read_to_string(&mut text))
-            .map_err(|e| {
-                fail(
-                    ToolFailureKind::Execution,
-                    format!("cannot read `{rel}`: {e}"),
-                )
-            })?;
+        let (text, bytes) = read_text_under_root(&self.root, rel, "read")?;
         Ok(ToolOutput::json(serde_json::json!({
             "path": rel,
-            "bytes": meta.len(),
+            "bytes": bytes,
             "content": text,
         })))
     }
@@ -474,31 +522,7 @@ impl Tool for SearchTextTool {
                 "empty search pattern is not allowed",
             ));
         }
-        let path = resolve_under_root(&self.root, rel)?;
-        let meta = std::fs::metadata(&path).map_err(|e| {
-            fail(
-                ToolFailureKind::Execution,
-                format!("cannot stat `{rel}`: {e}"),
-            )
-        })?;
-        if meta.len() > MAX_READ_BYTES {
-            return Err(fail(
-                ToolFailureKind::Execution,
-                format!(
-                    "`{rel}` exceeds the 1 MiB search cap ({} bytes)",
-                    meta.len()
-                ),
-            ));
-        }
-        let mut text = String::new();
-        std::fs::File::open(&path)
-            .and_then(|mut f| f.read_to_string(&mut text))
-            .map_err(|e| {
-                fail(
-                    ToolFailureKind::Execution,
-                    format!("cannot read `{rel}`: {e}"),
-                )
-            })?;
+        let (text, _) = read_text_under_root(&self.root, rel, "search")?;
 
         let mut total = 0usize;
         let mut lines: Vec<u64> = Vec::new();
@@ -714,6 +738,73 @@ mod tests {
         assert_eq!(err.kind, ToolFailureKind::Execution);
         assert!(err.message.contains("search cap"));
         let _ = std::fs::remove_file(root.join("big.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_tools_refuse_symlinks_out_of_the_root_and_special_files() {
+        let root = unique_dir("ember-sb-links");
+        let outside = unique_dir("ember-sb-outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        std::fs::write(root.join("inside.txt"), "inside").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("escape")).unwrap();
+        std::os::unix::fs::symlink("/dev/zero", root.join("zero")).unwrap();
+        std::os::unix::fs::symlink(root.join("inside.txt"), root.join("alias")).unwrap();
+        let store = store(&root, "r");
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let read = ReadTextFileTool::new(&root);
+        let search = SearchTextTool::new(&root);
+        let (read_schema, search_schema) = (read.schema(), search.schema());
+
+        let err = read
+            .execute(&args_for(&read_schema, r#"{"path":"escape"}"#), &c)
+            .unwrap_err();
+        assert!(
+            err.message.contains("outside the sandbox"),
+            "{}",
+            err.message
+        );
+        let err = search
+            .execute(
+                &args_for(&search_schema, r#"{"path":"escape","pattern":"s"}"#),
+                &c,
+            )
+            .unwrap_err();
+        assert!(
+            err.message.contains("outside the sandbox"),
+            "{}",
+            err.message
+        );
+        let err = read
+            .execute(&args_for(&read_schema, r#"{"path":"zero"}"#), &c)
+            .unwrap_err();
+        assert!(
+            err.message.contains("outside the sandbox"),
+            "{}",
+            err.message
+        );
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let err = read
+            .execute(&args_for(&read_schema, r#"{"path":"sub"}"#), &c)
+            .unwrap_err();
+        assert!(
+            err.message.contains("not a regular file"),
+            "{}",
+            err.message
+        );
+        // A link that stays inside the root is still a plain file.
+        let ok = read
+            .execute(&args_for(&read_schema, r#"{"path":"alias"}"#), &c)
+            .unwrap();
+        match ok.payload {
+            ToolPayload::Json(v) => assert_eq!(v["content"], "inside"),
+            other => panic!("expected json, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
     }
 
     #[test]

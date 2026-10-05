@@ -72,21 +72,11 @@ fn load_pinned_tokenizer(
 
 /// Refuse an output path inside the bundle: bundles are immutable.
 fn ensure_outside(bundle: &Path, path: &Path) -> anyhow::Result<()> {
-    let bundle_root = bundle
-        .canonicalize()
-        .with_context(|| format!("cannot resolve '{}'", bundle.display()))?;
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let parent = parent
-        .canonicalize()
-        .with_context(|| format!("cannot resolve '{}'", parent.display()))?;
-    anyhow::ensure!(
-        !parent.starts_with(&bundle_root),
-        "--out must point outside the bundle; the lens never modifies the bundle"
-    );
-    Ok(())
+    crate::cli_experiment::ensure_outside_bundle(
+        bundle,
+        path,
+        "--out must point outside the bundle; the lens never modifies the bundle",
+    )
 }
 
 pub(crate) fn run_lens_command(
@@ -104,6 +94,7 @@ pub(crate) fn run_lens_command(
     }
 
     // -- model: must be the file the bundle recorded --
+    let model_file = crate::cli_experiment::ModelFileIdentity::of(&command.model)?;
     let model_sha = sha256_file_result(&command.model)
         .with_context(|| format!("failed to hash '{}'", command.model.display()))?;
     if model_sha != manifest.model.sha256 {
@@ -122,6 +113,7 @@ pub(crate) fn run_lens_command(
         "the lens supports llama-family models (llama/qwen3); got architecture '{architecture}'"
     );
     let model = Llama::from_loader_with_max_seq_len(loader, None)?;
+    model_file.ensure_unchanged(&command.model)?;
 
     // -- tokenizer: --tokenizer, else the path the bound spec names --
     let tokenizer_path = match &command.tokenizer {

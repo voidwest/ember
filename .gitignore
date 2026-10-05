@@ -133,16 +133,6 @@ artifacts/golden-v03/**/*.bin
 /tests/_embersec_harness.rs
 /docs/road-to-1.0-plan.html
 
-# collaboration guidance is intentionally tracked despite the broad Markdown ignore
-!/.github/PULL_REQUEST_TEMPLATE.md
-!docs/audits/
-!docs/audits/*.md
-!docs/adr/
-!docs/adr/*.md
-
-!docs/road-to-1.0.md
-!docs/release-1.0.md
-
 .DS_Store
 
 # Native console visual-test artifacts. `ember gui --render-test-dir` writes
@@ -167,3 +157,11 @@ docs/screenshots/console-shell/
 
 # Local working notes for the current UI pass; not documentation.
 /nextsteps.md
+
+# Local agent worktrees, backups and private research material in the main
+# checkout. Never published; also keeps build.rs from flagging every local
+# build as dirty.
+/.claude/worktrees/
+/.claude/untracked-backup-*/
+/.claude/research-data/
+/*.mp4

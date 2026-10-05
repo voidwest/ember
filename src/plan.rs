@@ -334,7 +334,9 @@ impl DecodeArena {
     /// Allocate the arena from a scratch plan. Offsets are already
     /// deterministic and aligned; this adds base-pointer alignment.
     pub fn new(scratch: &ScratchPlan) -> Self {
-        let alignment = scratch.alignment.max(4);
+        // A power of two >= 4 keeps the base f32-aligned whatever the plan
+        // says (the planner itself always uses 64).
+        let alignment = scratch.alignment.max(4).next_power_of_two();
         let capacity = scratch
             .total_bytes
             .checked_add(alignment)
@@ -371,16 +373,17 @@ impl DecodeArena {
     /// Mutable f32 view of one region.
     pub fn region_f32(&mut self, region: usize) -> Result<&mut [f32], String> {
         let (offset, size, _) = self.region(region)?;
-        if size % 4 != 0 {
-            return Err(format!("region {region} size {size} is not f32-aligned"));
+        if size % 4 != 0 || offset % 4 != 0 {
+            return Err(format!(
+                "region {region} (offset {offset}, size {size}) is not f32-aligned"
+            ));
         }
         let start = self.pad + offset;
         let bytes = &mut self.storage[start..start + size];
-        // SAFETY: the arena base (storage[pad..]) is aligned to
-        // scratch.alignment (>= 4), region offsets are aligned the same way
-        // by the planner, and region sizes are multiples of 4 (they are
-        // sized in f32 elements). The slice is therefore a valid aligned
-        // f32 slice with no dangling or aliased storage.
+        // SAFETY: the arena base (storage[pad..]) is aligned to a power of
+        // two >= 4, and the offset and size were just checked to be
+        // multiples of 4, so `bytes` (bounds-checked above) is a valid,
+        // aligned f32 slice with no dangling or aliased storage.
         Ok(unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut f32, size / 4) })
     }
 
@@ -398,17 +401,19 @@ impl DecodeArena {
         let mut entries: [(usize, usize, usize); N] = [(0, 0, 0); N]; // (offset, size, request index)
         for (request, &index) in regions.iter().enumerate() {
             let (offset, size, _) = self.region(index)?;
-            if size % 4 != 0 {
-                return Err(format!("region {index} size {size} is not f32-aligned"));
+            if size % 4 != 0 || offset % 4 != 0 {
+                return Err(format!(
+                    "region {index} (offset {offset}, size {size}) is not f32-aligned"
+                ));
             }
             entries[request] = (offset, size, request);
         }
         entries.sort_unstable_by_key(|entry| entry.0);
         for window in entries.windows(2) {
-            if window[0].0 == window[1].0 {
+            if window[1].0 < window[0].0.saturating_add(window[0].1) || window[0].0 == window[1].0 {
                 return Err(format!(
-                    "illegal aliasing: regions requested at offset {} twice",
-                    window[0].0
+                    "illegal aliasing: regions requested at offsets {} and {} overlap",
+                    window[0].0, window[1].0
                 ));
             }
         }
@@ -1259,6 +1264,38 @@ fn short_sha(sha: &str) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn decode_arena_rejects_misaligned_or_overlapping_regions() {
+        let region = |name: &str, offset: usize, size: usize| ScratchRegion {
+            name: name.into(),
+            offset,
+            size,
+            alignment: 4,
+            first_op: 0,
+            last_op: 0,
+            shared_with: None,
+        };
+        let scratch = ScratchPlan {
+            total_bytes: 256,
+            alignment: 6,
+            seq_capacity: 1,
+            regions: vec![
+                region("a", 0, 64),
+                region("b", 2, 16),
+                region("c", 32, 64),
+                region("d", 128, 64),
+            ],
+            tensor_regions: BTreeMap::new(),
+        };
+        let mut arena = DecodeArena::new(&scratch);
+        let a = arena.region_f32(0).unwrap();
+        assert_eq!(a.as_ptr() as usize % 4, 0);
+        assert!(arena.region_f32(1).unwrap_err().contains("f32-aligned"));
+        assert!(arena.regions_f32([0, 1]).is_err());
+        assert!(arena.regions_f32([0, 2]).unwrap_err().contains("overlap"));
+        assert!(arena.regions_f32([0, 3]).is_ok());
+    }
 
     pub(crate) fn sample_plan(execution: ExecutionMode, hook: HookMode) -> ExecutionPlan {
         ExecutionPlan {

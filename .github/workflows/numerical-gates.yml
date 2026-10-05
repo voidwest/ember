@@ -60,7 +60,7 @@ env:
   SRC_BYTES: "2479595360"
 
   # Pinned llama.cpp quantizer commit. Must match QUANTIZER_COMMIT in
-  # scripts/validate_ladder_inputs.py and the pin in setup_lama_cpp.sh.
+  # scripts/validate_ladder_inputs.py and the pin in setup_llama_cpp.sh.
   LLAMA_CPP_PIN: 47c786924ad1ab7e91da2cdc72fcdb563780c2bd
 
   # Fresh ladder output directory; see the note at the top of this file.

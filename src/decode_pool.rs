@@ -35,6 +35,18 @@ const SPIN_BUDGET: Duration = Duration::from_millis(2);
 
 type Job<'a> = &'a (dyn Fn(usize) + Sync);
 
+/// A value alone on a 128-byte line (Apple M-series and recent x86 prefetch
+/// pairs of 64-byte lines).
+#[repr(align(128))]
+struct CacheLine<T>(T);
+
+impl<T> std::ops::Deref for CacheLine<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
 struct Shared {
     /// `epoch << 32 | next_chunk`. Claiming a chunk is a CAS on this word, so
     /// a worker can never claim a chunk of an epoch other than the one whose
@@ -43,7 +55,10 @@ struct Shared {
     chunks: AtomicUsize,
     /// Thin pointer to the caller's `Job` fat reference.
     job: AtomicPtr<()>,
-    done: AtomicUsize,
+    /// Incremented by every finished chunk and polled by the publisher, so it
+    /// gets its own cache line: sharing one with `state` made every
+    /// completion invalidate the line all idle workers spin on.
+    done: CacheLine<AtomicUsize>,
     panicked: AtomicBool,
     sleepers: AtomicUsize,
     shutdown: AtomicBool,
@@ -140,7 +155,7 @@ impl Team {
             state: AtomicU64::new(CLOSED),
             chunks: AtomicUsize::new(0),
             job: AtomicPtr::new(std::ptr::null_mut()),
-            done: AtomicUsize::new(0),
+            done: CacheLine(AtomicUsize::new(0)),
             panicked: AtomicBool::new(false),
             sleepers: AtomicUsize::new(0),
             shutdown: AtomicBool::new(false),

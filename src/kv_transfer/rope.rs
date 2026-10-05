@@ -169,7 +169,7 @@ fn apply_all_positions(
         manifest.sequence_length,
         manifest.head_dim,
         manifest.rope.theta,
-        None,
+        manifest.rope.frequency_factors.as_deref(),
     );
     let half = manifest.head_dim / 2;
     let head_stride = manifest
@@ -271,6 +271,15 @@ mod tests {
     }
 
     fn snapshot(layout: KvRopeLayout, qk_order: KvQkNormOrder, has_k_norm: bool) -> KvSnapshot {
+        snapshot_with_factors(layout, qk_order, has_k_norm, None)
+    }
+
+    fn snapshot_with_factors(
+        layout: KvRopeLayout,
+        qk_order: KvQkNormOrder,
+        has_k_norm: bool,
+        frequency_factors: Option<Vec<f32>>,
+    ) -> KvSnapshot {
         let mut cache = KVCache::new(1, 1, 4, 3);
         for position in 0..3 {
             cache.append(
@@ -298,6 +307,7 @@ mod tests {
                     dimension_count: 4,
                     theta: 10_000.0,
                     frequency_layout: "uniform-theta".into(),
+                    frequency_factors,
                     position_origin: "absolute-zero-based".into(),
                     keys_state: "post-rope".into(),
                     qk_norm_order: qk_order,
@@ -330,6 +340,35 @@ mod tests {
                     expected.to_f32()
                 );
             }
+        }
+    }
+
+    /// Llama-3-style models scale each frequency pair by a stored factor;
+    /// content conversion must undo the frequencies the cache was built with.
+    #[test]
+    fn content_conversion_uses_recorded_frequency_factors() {
+        let factors = vec![1.0f32, 8.0];
+        let snapshot = snapshot_with_factors(
+            KvRopeLayout::AdjacentPair,
+            KvQkNormOrder::BeforeRope,
+            false,
+            Some(factors.clone()),
+        );
+        let content = stored_keys_to_content(&snapshot).unwrap();
+        // Position 1, pair 1 (dims 2 and 3): angle = theta^(-2/4) / factor.
+        let angle = 10_000f32.powf(-0.5) / factors[1];
+        let (sin, cos) = angle.sin_cos();
+        let stored: Vec<f32> = snapshot.keys()[4..8].iter().map(|v| v.to_f32()).collect();
+        let expected = [
+            stored[2] * cos + stored[3] * sin,
+            -stored[2] * sin + stored[3] * cos,
+        ];
+        for (actual, expected) in content.values[6..8].iter().zip(expected) {
+            assert!((actual - expected).abs() <= 1e-6, "{actual} vs {expected}");
+        }
+        let restored = content_keys_to_stored(&content, snapshot.manifest()).unwrap();
+        for (expected, actual) in snapshot.keys().iter().zip(restored) {
+            assert!((expected.to_f32() - actual).abs() <= 1e-6);
         }
     }
 

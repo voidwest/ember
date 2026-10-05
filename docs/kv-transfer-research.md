@@ -107,7 +107,9 @@ ordinary greedy behavior remain distinct in the report. See
 These utilities are not called by ordinary inference. Production scalar/SIMD
 RoPE call sites were not rerouted, so the seam does not silently change decode
 numerics. The high-level conversion currently accepts only full-dimension,
-`uniform-theta`, absolute-zero-based RoPE snapshots. It returns f32 values and
+`uniform-theta`, absolute-zero-based RoPE snapshots, applying any recorded
+`frequency_factors` (a snapshot of a llama3-scaled model written before the
+factors were recorded converts with the wrong frequencies). It returns f32 values and
 does not quantize them, create a transformed snapshot, fit a mapper, or inject a
 cache into another model.
 

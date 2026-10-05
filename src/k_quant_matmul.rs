@@ -254,6 +254,19 @@ const PARALLEL_Q8_K_QUANTIZE_MIN_BLOCKS: usize = 256;
 const PARALLEL_Q8_K_QUANTIZE_CHUNK_BLOCKS: usize = 32;
 
 fn quantize_q8_k_blocks(src: &[f32], dst: &mut [Q8KBlock]) -> Result<(), &'static str> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        arm::quantize_q8_k_blocks(src, dst)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        quantize_q8_k_blocks_scalar(src, dst)
+    }
+}
+
+/// The reference Q8_K encoder; the NEON encoder reproduces it bit for bit.
+#[cfg(any(not(target_arch = "aarch64"), test))]
+fn quantize_q8_k_blocks_scalar(src: &[f32], dst: &mut [Q8KBlock]) -> Result<(), &'static str> {
     for (values, block) in src.chunks_exact(QK_K).zip(dst.iter_mut()) {
         let mut max = 0.0f32;
         let mut amax = 0.0f32;
@@ -2037,9 +2050,10 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
-    fn x86_q8_k_packing_is_bit_identical_to_scalar() {
+    fn vector_q8_k_packing_is_bit_identical_to_scalar() {
+        #[cfg(target_arch = "x86_64")]
         if !x86_k_supported() {
             return;
         }
@@ -2085,18 +2099,28 @@ mod tests {
         extremes[1] = -f32::MAX;
         values[5 * QK_K..6 * QK_K].fill(-0.0);
 
-        let mut scalar = Vec::new();
-        let mut x86 = Vec::new();
-        quantize_q8_k_into_scalar(&values, &mut scalar).unwrap();
+        let mut scalar = vec![Q8KBlock::default(); values.len() / QK_K];
+        quantize_q8_k_blocks_scalar(&values, &mut scalar).unwrap();
         assert_eq!(&scalar[1].qs[1..9], &[-4, -2, -2, 0, 0, 2, 2, 4]);
         assert!(scalar[2].d.is_sign_negative());
         assert!(!scalar[6].d.is_sign_negative());
         assert_eq!(&scalar[2].qs[..2], &[-127, 127]);
         assert_eq!(&scalar[6].qs[..2], &[-127, 127]);
-        // SAFETY: guarded by the complete x86 feature predicate.
-        unsafe { super::x86::quantize_q8_k_into(&values, &mut x86) }.unwrap();
-        assert_eq!(x86.len(), scalar.len());
-        for (index, (actual, expected)) in x86.iter().zip(&scalar).enumerate() {
+        #[cfg(target_arch = "x86_64")]
+        let vector = {
+            let mut vector = Vec::new();
+            // SAFETY: guarded by the complete x86 feature predicate.
+            unsafe { super::x86::quantize_q8_k_into(&values, &mut vector) }.unwrap();
+            vector
+        };
+        #[cfg(target_arch = "aarch64")]
+        let vector = {
+            let mut vector = vec![Q8KBlock::default(); scalar.len()];
+            super::arm::quantize_q8_k_blocks(&values, &mut vector).unwrap();
+            vector
+        };
+        assert_eq!(vector.len(), scalar.len());
+        for (index, (actual, expected)) in vector.iter().zip(&scalar).enumerate() {
             assert_eq!(
                 actual.d.to_bits(),
                 expected.d.to_bits(),

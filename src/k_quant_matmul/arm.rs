@@ -6,6 +6,67 @@
 use super::*;
 use std::arch::aarch64::*;
 
+/// Q8_K encoding of whole blocks, bit-identical to the scalar encoder: the
+/// scale comes from the first element of largest magnitude, each quant is
+/// `round_ties_even(inverse_scale * value)` clamped to +-127, and block sums
+/// are exact integer sums. Only the scans and the per-element arithmetic are
+/// vectorized (NEON is part of the aarch64 baseline).
+pub(super) fn quantize_q8_k_blocks(src: &[f32], dst: &mut [Q8KBlock]) -> Result<(), &'static str> {
+    for (values, block) in src.chunks_exact(QK_K).zip(dst.iter_mut()) {
+        // SAFETY: `values` holds exactly `QK_K` (a multiple of 16) floats,
+        // so every four-lane load at `i < QK_K` is in bounds.
+        let (amax, all_finite) = unsafe {
+            let finite_bound = vdupq_n_f32(f32::MAX);
+            let mut amax = vdupq_n_f32(0.0);
+            let mut finite = vdupq_n_u32(u32::MAX);
+            for i in (0..QK_K).step_by(4) {
+                let abs = vabsq_f32(vld1q_f32(values.as_ptr().add(i)));
+                // NaN and +-inf both fail `abs <= f32::MAX`.
+                finite = vandq_u32(finite, vcleq_f32(abs, finite_bound));
+                amax = vmaxq_f32(amax, abs);
+            }
+            (vmaxvq_f32(amax), vminvq_u32(finite) != 0)
+        };
+        if !all_finite {
+            return Err("K-quant matmul requires finite activations");
+        }
+        if amax == 0.0 {
+            *block = Q8KBlock::default();
+            continue;
+        }
+        // The scalar scan keeps the first element whose |value| is the
+        // maximum (strict `>`), so its sign picks the scale's sign.
+        let max = *values
+            .iter()
+            .find(|value| value.abs() == amax)
+            .expect("the maximum magnitude occurs in the block");
+        let inverse_scale = -127.0 / max;
+        // SAFETY: as above for `values`; `block.qs` holds `QK_K` quants and
+        // `block.bsums` one sum per 16, so each 16-wide store and each sum
+        // index `i / 16` is in bounds.
+        unsafe {
+            let scale = vdupq_n_f32(inverse_scale);
+            let (low, high) = (vdupq_n_f32(-127.0), vdupq_n_f32(127.0));
+            for i in (0..QK_K).step_by(16) {
+                let mut lanes = [vdupq_n_s32(0); 4];
+                for (part, lane) in lanes.iter_mut().enumerate() {
+                    let value = vld1q_f32(values.as_ptr().add(i + 4 * part));
+                    let rounded = vrndnq_f32(vmulq_f32(scale, value));
+                    *lane = vcvtq_s32_f32(vmaxq_f32(vminq_f32(rounded, high), low));
+                }
+                let quants = vcombine_s8(
+                    vmovn_s16(vcombine_s16(vmovn_s32(lanes[0]), vmovn_s32(lanes[1]))),
+                    vmovn_s16(vcombine_s16(vmovn_s32(lanes[2]), vmovn_s32(lanes[3]))),
+                );
+                vst1q_s8(block.qs.as_mut_ptr().add(i), quants);
+                block.bsums[i / 16] = vaddlvq_s8(quants);
+            }
+        }
+        block.d = inverse_scale.recip();
+    }
+    Ok(())
+}
+
 #[inline]
 #[target_feature(enable = "neon,dotprod")]
 unsafe fn dot_acc(mut acc: int32x4_t, x: int8x16_t, y: int8x16_t) -> int32x4_t {
