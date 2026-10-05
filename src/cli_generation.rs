@@ -554,15 +554,13 @@ where
         let logits =
             self.forward_last_logits(backend, model, token_ids, cache, start_pos, phase)?;
         let data = backend.data(&logits);
-        let mut best = 0usize;
-        let mut best_val = f32::NEG_INFINITY;
-        for (i, &value) in data.iter().enumerate() {
-            if value > best_val {
-                best_val = value;
-                best = i;
-            }
-        }
-        Ok((best as u32, best_val))
+        // Same contract as the materialized greedy route: every logit must
+        // be finite, not only the winner (a skipped NaN would otherwise
+        // pass unnoticed).
+        crate::cli_commands::validate_logits_values(data, data.len(), true)?;
+        anyhow::ensure!(!data.is_empty(), "greedy logits are empty");
+        let best = ember::sampler::argmax_token(data);
+        Ok((u32::try_from(best)?, data[best]))
     }
 }
 

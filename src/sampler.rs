@@ -41,12 +41,22 @@ pub fn sample_token(
         return argmax_token(logits);
     }
 
-    let mut logits: Vec<f32> = logits.to_vec();
+    let mut scaled: Vec<f32> = logits.to_vec();
     let mut scratch = Vec::new();
 
-    for l in &mut logits {
+    let mut overflowed = false;
+    for l in &mut scaled {
+        let finite = l.is_finite();
         *l /= temperature;
+        overflowed |= finite && !l.is_finite();
     }
+    // A temperature small enough to push a finite logit to infinity is the
+    // T -> 0 limit; sampling the overflowed values would instead be uniform
+    // over every token that reached +inf (or the whole vocabulary).
+    if overflowed {
+        return argmax_token(logits);
+    }
+    let mut logits = scaled;
 
     if let Some(k) = top_k {
         top_k_filter(&mut logits, k, &mut scratch);
@@ -306,6 +316,16 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn a_temperature_that_overflows_the_logits_samples_greedily() {
+        let mut rng = StdRng::seed_from_u64(7);
+        for logits in [[1.0f32, 3.0, 2.0], [-3.0, -1.0, -2.0]] {
+            for _ in 0..16 {
+                assert_eq!(sample_token(&logits, 1e-40, None, None, &mut rng), 1);
             }
         }
     }
