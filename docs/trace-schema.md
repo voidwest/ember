@@ -6,7 +6,7 @@ are not interchangeable and neither supersedes the other.
 | Format | Schema | Shape | Written by |
 |---|---|---|---|
 | Agent trace | `ember.agent.trace.v1` | JSONL, one object per line | `ember agent run` |
-| Inference trace | `ember.infertrace.v1` | a single JSON document | `ember generate --trace-out` |
+| Inference trace | `ember.infertrace.v1` | a single JSON document | `ember --trace ops --trace-out <file>` (generation) |
 
 Both follow the same compatibility rules, stated once under
 [Guarantees](#guarantees-and-non-goals) below.

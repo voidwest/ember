@@ -61,7 +61,13 @@ activation path, reference activation path, and reference implementation.
 - layer numbering must be explicit: embeddings, block outputs, and final norm
   are different comparison points
 
-## Proposed Ember CLI Shape
+## Proposed Ember CLI Shape (superseded)
+
+> Superseded: these flags were never implemented. Hidden states are captured
+> with `ember extract` ([artifact contract](artifact_contract.md)), with
+> `--dump-layers` for Gemma 4 ([usage](usage.md)), and in versioned
+> experiments with `ember experiment` captures ([experiments](experiments.md)).
+> The sketch is kept as design history.
 
 Possible additions:
 

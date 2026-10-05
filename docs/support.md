@@ -64,7 +64,7 @@ distinct even though both dispatch through the shared llama-family engine).
 | Live duplex voice | Experimental | Non-default `audio` feature; requires local audio hardware; never exercised in CI |
 | Linux x86_64 | Supported | Primary CI target (AVX2 baseline, scalar fallback always available) |
 | Linux aarch64 | Supported (headless) | CI target; NEON elementwise/dequant kernels; native Q8_0/Q4_K/Q6_K dot-product kernels when CPU features permit, scalar fallback otherwise |
-| macOS (arm64, x86_64) | Unclaimed | CI builds, tests and lints the headless crate and compile-checks the GUI on both architectures, but runs no model-level gate there and makes no general support promise; macOS ARM has local kernel/model validation described in [ARM kernels](arm-kernels.md) |
+| macOS (arm64, x86_64) | Unclaimed | CI builds, tests and lints the headless crate and compile-checks the GUI on both architectures; the only model-level gate there is the arm64 golden-path run of the pinned research example, and there is no general support promise; macOS ARM has local kernel/model validation described in [ARM kernels](arm-kernels.md) |
 | Windows | Unclaimed | No CI tier or general support promise |
 
 ## Changing this file

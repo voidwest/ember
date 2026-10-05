@@ -71,10 +71,15 @@ run_llama_bench() {
   local target="$OUT/$family-$rung.llama-bench.json"
   local rss=""
   echo "== llama-bench: $family-$rung =="
+  # -ngl 0: CPU only (llama-bench offloads to Metal on macOS by default).
+  local args=(-m "$model" -p 8 -n 16 -t "$THREADS" -r 3 -ngl 0 -o json)
   if [[ -n "$TIME_BIN" ]]; then
-    rss="$(/usr/bin/time -v "$LLAMA_BENCH" -m "$model" -p 8 -n 16 -t "$THREADS" -r 3 -o json 2>&1 | tee "$target" | grep "Maximum resident" | awk '{print $NF}')"
+    # time's report goes to its own file so the JSON stays parseable.
+    local time_report="$OUT/$family-$rung.llama-bench.time.txt"
+    /usr/bin/time -v -o "$time_report" "$LLAMA_BENCH" "${args[@]}" > "$target"
+    rss="$(grep "Maximum resident" "$time_report" | awk '{print $NF}')"
   else
-    "$LLAMA_BENCH" -m "$model" -p 8 -n 16 -t "$THREADS" -r 3 > "$target"
+    "$LLAMA_BENCH" "${args[@]}" > "$target"
   fi
   append_summary "$(printf '{"benchmark":"llama-bench","model":"%s","commit":"%s","threads":%s,"peak_rss_kb":%s,"raw":%s}' \
     "$family-$rung" "$LLAMA_CPP_COMMIT" "$THREADS" "${rss:-null}" "$(python3 -c "import json,sys;print(json.dumps(open('$target').read()))")")"
