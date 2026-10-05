@@ -233,10 +233,7 @@ Python 3.11+ interpreter and run the applicable CI checks:
   --model smoke:dummy.gguf --generate-tokens 1 --dry-run
 .venv/bin/python scripts/check_docs.py
 .venv/bin/python -m pytest tests probes/test_probe_workflows.py -q
-for script in bench_compare.sh probes/run_all_5k.sh \
-  scripts/research_example_capture_patch.sh scripts/conference_demo.sh \
-  scripts/validate_k_parity.sh tools/crossover_sweep.sh \
-  tools/verify_k_quant_llamacpp.sh scripts/ci_local.sh .githooks/pre-push; do
+for script in $(git ls-files '*.sh') .githooks/pre-push; do
   bash -n "$script"   # one per call: extra paths would be passed as arguments
 done
 ```

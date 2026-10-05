@@ -16,6 +16,10 @@ cargo-fuzz = true
 # would otherwise resolve the outer checkout's workspace and refuse to build.
 [workspace]
 
+# Line tables for crash backtraces (cargo fuzz builds in release).
+[profile.release]
+debug = 1
+
 [dependencies]
 libfuzzer-sys = "0.4"
 ember = { path = "..", default-features = false }
