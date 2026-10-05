@@ -72,8 +72,6 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
     let tokenizer = EmberTokenizer::from_file(&command.tokenizer)
         .with_context(|| format!("failed to load tokenizer {}", command.tokenizer))?;
 
-    let video = load_video(command)?;
-
     let sampling = match command.sampling.as_str() {
         "uniform" => FrameSampling::Uniform {
             max_frames: command.max_frames,
@@ -84,6 +82,7 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
         },
         other => anyhow::bail!("unknown --sampling {other} (uniform|fps)"),
     };
+    let (video, _) = load_video(command, &sampling)?;
 
     // bind videos to <video> placeholders in order (single-video CLI here;
     // multiple placeholders fail closed inside render_prompt)
@@ -96,11 +95,10 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
         ContentPart::Video(video),
     ];
 
-    // apply the wrapper's sampling policy by pre-sampling is NOT how the
-    // API works — instead clone the model's policy via a scoped override:
-    // SmolVlmVideo exposes `sampling` publicly; set it before building.
+    // load_video already applied `sampling` so that only the frames it
+    // selects get decoded; the model keeps every frame it is handed.
     let mut model = model;
-    model.sampling = sampling;
+    model.sampling = KEEP_ALL_FRAMES;
 
     let (generated, text, timings) =
         model.generate_with_parts(&backend, &tokenizer, &parts, command.max_tokens)?;
@@ -119,14 +117,34 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
     }
 
     if let Some(dir) = &command.dump_dir {
-        dump_validation_artifacts(&model, &backend, &tokenizer, command, dir)?;
+        dump_validation_artifacts(&model, &backend, &tokenizer, command, &sampling, dir)?;
     }
     Ok(())
 }
 
-/// Decode the numbered PNGs in `--frames-dir` (sorted by name), timestamped
-/// at `--source-fps`.
-fn load_video(command: &VideoCommand) -> Result<VideoInput> {
+/// Identity sampling for frames that were sampled before decoding:
+/// `Uniform` keeps index `i * total / total = i` for every frame.
+const KEEP_ALL_FRAMES: FrameSampling = FrameSampling::Uniform {
+    max_frames: usize::MAX,
+};
+
+/// Decoded frames one request may hold, in f32 bytes: each decoded frame
+/// can reach ~1 GiB, so the frame-count cap alone does not bound memory.
+const MAX_DECODED_VIDEO_BYTES: usize = 4 << 30;
+
+/// Where the decoded frames came from, for the validation manifest.
+struct FrameProvenance {
+    source_indices: Vec<usize>,
+    total_source_frames: usize,
+}
+
+/// Decode the frames `sampling` selects from the numbered PNGs in
+/// `--frames-dir` (sorted by file name, like the reference script, so
+/// numbers should be zero-padded), timestamped at `--source-fps`.
+fn load_video(
+    command: &VideoCommand,
+    sampling: &FrameSampling,
+) -> Result<(VideoInput, FrameProvenance)> {
     anyhow::ensure!(
         command.source_fps.is_finite() && command.source_fps > 0.0,
         "--source-fps must be a finite rate > 0, got {}",
@@ -144,20 +162,53 @@ fn load_video(command: &VideoCommand) -> Result<VideoInput> {
         "{} frames exceed the {MAX_VIDEO_FRAMES}-frame admission limit",
         names.len()
     );
-    let mut frames = Vec::with_capacity(names.len());
-    for p in &names {
-        frames.push(ember::multimodal::image::decode_rgb(p)?);
-    }
-    let n = frames.len();
-    let timestamps_ms: Vec<f64> = (0..n)
+    let n = names.len();
+    let all_timestamps_ms: Vec<f64> = (0..n)
         .map(|i| i as f64 * 1000.0 / command.source_fps)
         .collect();
-    Ok(VideoInput::Frames(VideoFrames {
-        frames,
-        timestamps_ms,
-        source_fps: Some(command.source_fps),
-        source_duration_s: Some(n as f64 / command.source_fps),
-    }))
+    let source_indices = sampling.select_indices(&all_timestamps_ms)?;
+    let mut frames: Vec<CpuTensor> = Vec::with_capacity(source_indices.len());
+    for &i in &source_indices {
+        let frame = ember::multimodal::image::decode_rgb(&names[i])?;
+        if let Some(first) = frames.first() {
+            anyhow::ensure!(
+                frame.shape() == first.shape(),
+                "frame {} is {:?}, unlike the first sampled frame's {:?}",
+                names[i].display(),
+                frame.shape(),
+                first.shape()
+            );
+        } else {
+            let total = frame
+                .data()
+                .len()
+                .saturating_mul(std::mem::size_of::<f32>())
+                .saturating_mul(source_indices.len());
+            anyhow::ensure!(
+                total <= MAX_DECODED_VIDEO_BYTES,
+                "{} frames of {:?} need {total} bytes decoded, over the {MAX_DECODED_VIDEO_BYTES}-byte budget; sample fewer frames",
+                source_indices.len(),
+                frame.shape()
+            );
+        }
+        frames.push(frame);
+    }
+    let timestamps_ms = source_indices
+        .iter()
+        .map(|&i| all_timestamps_ms[i])
+        .collect();
+    Ok((
+        VideoInput::Frames(VideoFrames {
+            frames,
+            timestamps_ms,
+            source_fps: Some(command.source_fps),
+            source_duration_s: Some(n as f64 / command.source_fps),
+        }),
+        FrameProvenance {
+            source_indices,
+            total_source_frames: n,
+        },
+    ))
 }
 
 /// Progressive-validation dumps matching scripts/ref_smolvlm2_video.py.
@@ -166,13 +217,14 @@ fn dump_validation_artifacts(
     backend: &CpuBackend,
     tokenizer: &EmberTokenizer,
     command: &VideoCommand,
+    sampling: &FrameSampling,
     dir: &Path,
 ) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut shapes: Vec<(String, Vec<usize>)> = Vec::new();
 
     // rebuild through build_inputs_parts for the trace
-    let video = load_video(command)?;
+    let (video, provenance) = load_video(command, sampling)?;
     let parts = vec![
         ContentPart::Text(command.prompt.clone()),
         ContentPart::Video(video),
@@ -216,9 +268,9 @@ fn dump_validation_artifacts(
         "max_frames": command.max_frames,
         "prompt": command.prompt,
         "input_ids_len": trace.input_ids.len(),
-        "sampled_indices": trace.sampled.source_indices,
+        "sampled_indices": provenance.source_indices,
         "sampled_timestamps_ms": trace.sampled.timestamps_ms,
-        "total_source_frames": trace.sampled.total_source_frames,
+        "total_source_frames": provenance.total_source_frames,
         "shapes": shapes
             .into_iter()
             .map(|(k, v)| (k, serde_json::json!(v)))

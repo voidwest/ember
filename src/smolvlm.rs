@@ -234,38 +234,33 @@ impl SmolVlm {
             "request has {} images, exceeding the {MAX_IMAGES_PER_REQUEST}-image admission limit",
             image_inputs.len()
         );
-        // 1. decode everything once through the validated seam (image-crate
-        // limits applied); content ids come from the decoded pixels.
+        // 1. decode each image once through the validated seam (image-crate
+        // limits applied; content ids come from the decoded pixels), consult
+        // the cache, and preprocess a miss right away. One decoded image is
+        // alive at a time: a full-size decode is up to 1 GiB of f32, so
+        // holding all sixteen at once could need 16 GiB.
         let t_media = Instant::now();
-        let mut decoded = Vec::with_capacity(image_inputs.len());
+        let mut original_dims = Vec::with_capacity(image_inputs.len());
         let mut keys = Vec::with_capacity(image_inputs.len());
-        for img in image_inputs {
-            let validated = ValidatedImageInput::decode(img)?;
-            let d = validated.rgb;
-            keys.push(self.cache_key(crate::multimodal::request::MediaId::from_tensor(&d)));
-            decoded.push(d);
-        }
-
-        // 2. consult the cache
-        let mut cached: Vec<Option<CpuTensor>> = vec![None; decoded.len()];
-        if let Some(cache) = &self.feature_cache {
-            let mut cache = cache.lock().expect("feature cache poisoned");
-            for (i, key) in keys.iter().enumerate() {
-                if let Some(f) = cache.lookup(key) {
-                    cached[i] = Some(f.clone());
-                }
-            }
-        }
-
-        // 3. preprocess + encode only the misses (grouped by geometry)
+        let mut cached: Vec<Option<CpuTensor>> = Vec::with_capacity(image_inputs.len());
         let mut miss_idx: Vec<usize> = Vec::new();
         let mut processed: Vec<PreprocessedImage> = Vec::new();
-        for (i, d) in decoded.iter().enumerate() {
-            if cached[i].is_none() {
+        for (i, img) in image_inputs.iter().enumerate() {
+            let d = ValidatedImageInput::decode(img)?.rgb;
+            let key = self.cache_key(crate::multimodal::request::MediaId::from_tensor(&d));
+            let hit = self.feature_cache.as_ref().and_then(|cache| {
+                let mut cache = cache.lock().expect("feature cache poisoned");
+                cache.lookup(&key).cloned()
+            });
+            if hit.is_none() {
                 miss_idx.push(i);
-                processed.push(preprocess(d, &self.preprocess_config)?);
+                processed.push(preprocess(&d, &self.preprocess_config)?);
             }
+            original_dims.push((d.shape()[1], d.shape()[2]));
+            keys.push(key);
+            cached.push(hit);
         }
+
         let t_encode = Instant::now();
         let (miss_features, traces, projector_output) = self.encode_images(backend, &processed)?;
         debug_assert_eq!(miss_features.len(), miss_idx.len());
@@ -277,12 +272,12 @@ impl SmolVlm {
 
         // 4. interleave hits and fresh features in request order, inserting
         //    fresh entries into the cache
-        let mut ordered = Vec::with_capacity(decoded.len());
+        let mut ordered = Vec::with_capacity(cached.len());
         let mut miss_pos = 0usize;
-        for i in 0..decoded.len() {
+        for i in 0..cached.len() {
             if let Some(f) = cached[i].take() {
                 let grid = crate::multimodal::image::tile_grid_for(
-                    (decoded[i].shape()[1], decoded[i].shape()[2]),
+                    original_dims[i],
                     &self.preprocess_config,
                 );
                 ordered.push(ImageFeatures {
