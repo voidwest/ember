@@ -161,9 +161,10 @@ pub fn compare_loaded(
     let outputs_a = read_outputs(a)?;
     let outputs_b = read_outputs(b)?;
     let mut outputs = Vec::new();
-    for (input_a, input_b) in outputs_a.iter().zip(outputs_b.iter()) {
+    let pairs = pair_outputs_by_input(&outputs_a, &outputs_b);
+    for (input_a, input_b, in_both) in &pairs {
         let tokens_equal = input_a.generated_token_ids == input_b.generated_token_ids;
-        let first_divergence = if tokens_equal {
+        let first_divergence = if tokens_equal && *in_both {
             None
         } else {
             input_a
@@ -182,9 +183,9 @@ pub fn compare_loaded(
         };
         outputs.push(OutputComparison {
             input_id: input_a.input_id.clone(),
-            generated_tokens_equal: tokens_equal,
-            generated_text_equal: input_a.generated_text == input_b.generated_text,
-            final_top1_equal: input_a.final_top1 == input_b.final_top1,
+            generated_tokens_equal: tokens_equal && *in_both,
+            generated_text_equal: input_a.generated_text == input_b.generated_text && *in_both,
+            final_top1_equal: input_a.final_top1 == input_b.final_top1 && *in_both,
             first_divergence_step: first_divergence,
             generated_count_a: input_a.generated_token_ids.len(),
             generated_count_b: input_b.generated_token_ids.len(),
@@ -255,6 +256,7 @@ pub fn compare_loaded(
     let mut interventions: Vec<InterventionComparison> = Vec::new();
     let mut seen_interventions: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
+    let defusion_route_equal = plan_fusion_summary(a)? == plan_fusion_summary(b)?;
     for event_a in &events_a {
         if !seen_interventions.insert(event_a.intervention_id.clone()) {
             continue;
@@ -265,13 +267,23 @@ pub fn compare_loaded(
         let operation_equal = event_b
             .map(|event_b| event_b.operation == event_a.operation)
             .unwrap_or(false);
-        let selected_equal = event_b
-            .map(|event_b| {
-                event_b.positions == event_a.positions
-                    && event_b.layer == event_a.layer
-                    && event_b.site == event_a.site
-            })
-            .unwrap_or(false);
+        // Every event of the intervention, in order: a difference in a later
+        // event must not hide behind an equal first one.
+        let of = |events: &[InterventionEventLine]| {
+            events
+                .iter()
+                .filter(|event| event.intervention_id == event_a.intervention_id)
+                .map(|event| {
+                    (
+                        event.input_id.clone(),
+                        event.positions.clone(),
+                        event.layer,
+                        event.site,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let selected_equal = event_b.is_some() && of(&events_a) == of(&events_b);
         interventions.push(InterventionComparison {
             intervention_id: event_a.intervention_id.clone(),
             operation_equal,
@@ -285,7 +297,7 @@ pub fn compare_loaded(
                 .map(|event_b| event_b.layer == event_a.layer)
                 .unwrap_or(false),
             selected_tokens_equal: selected_equal,
-            defusion_route_equal: plan_fusion_summary(a)? == plan_fusion_summary(b)?,
+            defusion_route_equal,
             events_in_a: events_a
                 .iter()
                 .filter(|event| event.intervention_id == event_a.intervention_id)
@@ -305,7 +317,7 @@ pub fn compare_loaded(
                 site_equal: false,
                 layer_equal: false,
                 selected_tokens_equal: false,
-                defusion_route_equal: plan_fusion_summary(a)? == plan_fusion_summary(b)?,
+                defusion_route_equal,
                 events_in_a: 0,
                 events_in_b: events_b
                     .iter()
@@ -444,12 +456,42 @@ fn read_tokenization_ids(bundle: &LoadedBundle) -> Result<Vec<Vec<u32>>, String>
     Ok(ids)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct OutputLine {
     input_id: String,
     generated_token_ids: Vec<u32>,
     generated_text: String,
     final_top1: Option<FinalTop1>,
+}
+
+/// Pair outputs by input id. Bundles with different inputs must not be
+/// silently truncated or compared row against unrelated row: an input
+/// present in only one bundle is paired with an empty generation and
+/// `false` (not in both).
+fn pair_outputs_by_input(
+    a: &[OutputLine],
+    b: &[OutputLine],
+) -> Vec<(OutputLine, OutputLine, bool)> {
+    let absent = |input_id: &str| OutputLine {
+        input_id: input_id.to_string(),
+        ..OutputLine::default()
+    };
+    let mut pairs = Vec::new();
+    for input_a in a {
+        match b
+            .iter()
+            .find(|input_b| input_b.input_id == input_a.input_id)
+        {
+            Some(input_b) => pairs.push((input_a.clone(), input_b.clone(), true)),
+            None => pairs.push((input_a.clone(), absent(&input_a.input_id), false)),
+        }
+    }
+    for input_b in b {
+        if !a.iter().any(|input_a| input_a.input_id == input_b.input_id) {
+            pairs.push((absent(&input_b.input_id), input_b.clone(), false));
+        }
+    }
+    pairs
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -538,6 +580,31 @@ mod tests {
         assert_eq!(first, second);
         let _ = std::fs::remove_dir_all(&root_a);
         let _ = std::fs::remove_dir_all(&root_b);
+    }
+
+    #[test]
+    fn outputs_pair_by_input_id_without_truncation() {
+        let line = |id: &str, tokens: &[u32]| OutputLine {
+            input_id: id.into(),
+            generated_token_ids: tokens.to_vec(),
+            ..OutputLine::default()
+        };
+        let a = [line("x", &[1]), line("y", &[2])];
+        let b = [line("y", &[2]), line("z", &[3])];
+        let pairs = pair_outputs_by_input(&a, &b);
+        let summary: Vec<(&str, &str, bool)> = pairs
+            .iter()
+            .map(|(a, b, both)| (a.input_id.as_str(), b.input_id.as_str(), *both))
+            .collect();
+        assert_eq!(
+            summary,
+            [("x", "x", false), ("y", "y", true), ("z", "z", false)]
+        );
+        assert_eq!(
+            pairs[1].0.generated_token_ids,
+            pairs[1].1.generated_token_ids
+        );
+        assert!(pairs[2].0.generated_token_ids.is_empty());
     }
 
     #[test]
