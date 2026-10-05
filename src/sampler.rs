@@ -179,18 +179,35 @@ pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
 /// the smallest probability value in the set whose cumulative sum reaches `p`.
 /// returns `0.0` if the cumulative sum never reaches `p` (shouldn't happen
 /// for a valid probability distribution).
+///
+/// Only the largest probabilities are ever summed, so instead of sorting the
+/// whole vocabulary this selects the top `m` (doubling `m` until the
+/// nucleus fits) and sorts just those. The descending prefix, and therefore
+/// every partial sum, is the one a full sort produces: tied values are equal,
+/// so their order cannot change a sum.
 fn nucleus_cutoff(probs: &[f32], p: f32, scratch: &mut Vec<f32>) -> f32 {
-    scratch.clear();
-    scratch.extend_from_slice(probs);
-    scratch.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(core::cmp::Ordering::Equal));
-    let mut cum = 0.0;
-    for &prob in scratch.iter() {
-        cum += prob;
-        if cum >= p {
-            return prob;
+    let descending = |a: &f32, b: &f32| b.partial_cmp(a).unwrap_or(core::cmp::Ordering::Equal);
+    let mut m = probs.len().min(64);
+    loop {
+        scratch.clear();
+        scratch.extend_from_slice(probs);
+        if m < scratch.len() {
+            scratch.select_nth_unstable_by(m - 1, descending);
         }
+        let top = &mut scratch[..m];
+        top.sort_unstable_by(descending);
+        let mut cum = 0.0;
+        for &prob in top.iter() {
+            cum += prob;
+            if cum >= p {
+                return prob;
+            }
+        }
+        if m == probs.len() {
+            return 0.0;
+        }
+        m = (m * 2).min(probs.len());
     }
-    0.0
 }
 
 /// sample from a categorical distribution using inverse cdf sampling.
@@ -316,6 +333,36 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn nucleus_cutoff_matches_a_full_sort() {
+        let full_sort = |probs: &[f32], p: f32| {
+            let mut sorted = probs.to_vec();
+            sorted.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap());
+            let mut cum = 0.0;
+            for &prob in &sorted {
+                cum += prob;
+                if cum >= p {
+                    return prob;
+                }
+            }
+            0.0
+        };
+        let mut scratch = Vec::new();
+        for len in [1usize, 5, 63, 64, 65, 1000, 40_000] {
+            let logits: Vec<f32> = (0..len)
+                .map(|i| ((i * 7919 % 1009) as f32 - 504.0) / 37.0)
+                .collect();
+            let probs = softmax_1d(&logits);
+            for p in [0.0, 0.1, 0.5, 0.9, 0.999, 1.0, 1.5] {
+                assert_eq!(
+                    nucleus_cutoff(&probs, p, &mut scratch).to_bits(),
+                    full_sort(&probs, p).to_bits(),
+                    "len={len}, p={p}"
+                );
             }
         }
     }
