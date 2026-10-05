@@ -1271,7 +1271,9 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Plan fixtures shared by this crate's tests and `ember`'s. Not API.
+/// Plan fixtures shared by this crate's tests and `ember`'s (test builds
+/// only, see `llama::testkit`). Not API.
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub mod testkit {
     use super::*;

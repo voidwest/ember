@@ -39,5 +39,12 @@ sha2 = { version = "0.10", features = ["asm-aarch64"] }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rustix = { version = "1.1.4", features = ["fs"] }
 
+[features]
+# Test fixtures for the `ember` crate's tests (synthetic models, plan
+# fixtures, an in-memory loader that skips the parser's limits). Enabled only
+# through `ember`'s dev-dependency, so normal builds, the Python wheel and the
+# fuzz targets never contain them.
+testkit = []
+
 [lints]
 workspace = true

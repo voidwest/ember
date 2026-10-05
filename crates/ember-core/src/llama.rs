@@ -3360,12 +3360,14 @@ impl<B: Backend> Llama<B> {
     /// create a kv cache sized for this model's parameters.
     ///
     /// Whether the LM head reuses the token embedding (no `output.weight`).
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     pub fn head_tied(&self) -> bool {
         self.head_tied
     }
 
     /// Whether a planned decode session has been built (the planned path ran).
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     pub fn has_planned_session(&self) -> bool {
         self.decode_state.borrow().is_some()
@@ -3986,7 +3988,9 @@ impl Llama<CpuBackend> {
 }
 
 /// Synthetic models shared by this crate's tests and the `ember` crate's
-/// (which cannot reach `Llama`'s private fields). Not API.
+/// (which cannot reach `Llama`'s private fields). Test builds only: the
+/// `testkit` feature, enabled by `ember`'s dev-dependency. Not API.
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub mod testkit {
     use super::*;

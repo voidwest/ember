@@ -118,6 +118,7 @@ all = "warn"
 undocumented_unsafe_blocks = "warn"
 
 [dev-dependencies]
+ember-core = { path = "crates/ember-core", version = "1.0.0", features = ["testkit"] }
 # Compress historical metadata without changing the frozen bundle bytes.
 flate2 = "1.1.9"
 proptest = "1.11"

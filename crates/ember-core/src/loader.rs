@@ -361,9 +361,11 @@ pub fn require_tensors(loader: &GgufLoader, names: &[String]) -> Result<()> {
     }
 }
 
+#[cfg(any(test, feature = "testkit"))]
 impl GgufLoader {
     /// In-memory loader for synthetic test models: eager K strategy, no
-    /// K decisions or tensor records. Not API; shared with `ember`'s tests.
+    /// K decisions or tensor records, and none of the parser's hostile-input
+    /// limits. Test builds only (`testkit`); not API.
     #[doc(hidden)]
     pub fn for_test(
         metadata: HashMap<String, GgufValue>,
