@@ -1070,6 +1070,97 @@ fn wav_unsupported_format_tag_is_error_not_panic() {
     assert!(err.to_string().contains("unsupported wav format"), "{err}");
 }
 
+/// RIFF/WAVE bytes around an arbitrary `fmt ` chunk body.
+fn wav_with_fmt(fmt: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(b"WAVE");
+    body.extend_from_slice(b"fmt ");
+    body.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+    body.extend_from_slice(fmt);
+    if fmt.len() % 2 == 1 {
+        body.push(0);
+    }
+    body.extend_from_slice(b"data");
+    body.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    body.extend_from_slice(data);
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+/// The 16-byte `fmt ` fields shared by every layout.
+fn fmt_base(format_tag: u16, bits: u16, channels: u16, rate: u32) -> Vec<u8> {
+    let block_align = channels * bits / 8;
+    let mut fmt = Vec::new();
+    fmt.extend_from_slice(&format_tag.to_le_bytes());
+    fmt.extend_from_slice(&channels.to_le_bytes());
+    fmt.extend_from_slice(&rate.to_le_bytes());
+    fmt.extend_from_slice(&(rate * u32::from(block_align)).to_le_bytes());
+    fmt.extend_from_slice(&block_align.to_le_bytes());
+    fmt.extend_from_slice(&bits.to_le_bytes());
+    fmt
+}
+
+fn extensible_fmt(subformat: u16, bits: u16, rate: u32) -> Vec<u8> {
+    let mut fmt = fmt_base(0xFFFE, bits, 1, rate);
+    fmt.extend_from_slice(&22u16.to_le_bytes()); // cbSize
+    fmt.extend_from_slice(&bits.to_le_bytes()); // valid bits
+    fmt.extend_from_slice(&4u32.to_le_bytes()); // channel mask
+    fmt.extend_from_slice(&subformat.to_le_bytes());
+    fmt.extend_from_slice(&[
+        0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+    ]);
+    fmt
+}
+
+#[test]
+fn wav_extensible_subformat_selects_pcm_or_float() {
+    use ember::multimodal::audio::decode_wav_bytes;
+    // KSDATAFORMAT_SUBTYPE_PCM, 16-bit: half scale
+    let pcm = decode_wav_bytes(&wav_with_fmt(
+        &extensible_fmt(1, 16, 16_000),
+        &16_384i16.to_le_bytes(),
+    ))
+    .expect("extensible PCM decodes");
+    assert_eq!(pcm.samples, vec![0.5]);
+    // 32-bit integer PCM must not be read as float just because of its width
+    let pcm32 = decode_wav_bytes(&wav_with_fmt(
+        &extensible_fmt(1, 32, 16_000),
+        &(1i32 << 30).to_le_bytes(),
+    ))
+    .expect("extensible 32-bit PCM decodes");
+    assert_eq!(pcm32.samples, vec![0.5]);
+    let float = decode_wav_bytes(&wav_with_fmt(
+        &extensible_fmt(3, 32, 16_000),
+        &0.25f32.to_le_bytes(),
+    ))
+    .expect("extensible float decodes");
+    assert_eq!(float.samples, vec![0.25]);
+    // another subformat GUID is refused, not guessed from the bit depth
+    let mut odd = extensible_fmt(1, 16, 16_000);
+    *odd.last_mut().unwrap() ^= 1;
+    let err = decode_wav_bytes(&wav_with_fmt(&odd, &[0, 0])).expect_err("unknown GUID");
+    assert!(err.to_string().contains("extensible subformat"), "{err}");
+}
+
+#[test]
+fn wav_fmt_chunk_length_is_respected() {
+    use ember::multimodal::audio::decode_wav_bytes;
+    // An 18-byte PCM fmt (cbSize = 0) is common; its tail must not be read
+    // as the next chunk header.
+    let mut fmt = fmt_base(1, 16, 1, 16_000);
+    fmt.extend_from_slice(&0u16.to_le_bytes());
+    let decoded = decode_wav_bytes(&wav_with_fmt(&fmt, &16_384i16.to_le_bytes()))
+        .expect("18-byte fmt decodes");
+    assert_eq!(decoded.samples, vec![0.5]);
+    assert_eq!(decoded.sample_rate, 16_000);
+    // a short fmt chunk cannot borrow bytes from the chunk after it
+    let short = &fmt_base(1, 16, 1, 16_000)[..14];
+    let err = decode_wav_bytes(&wav_with_fmt(short, &[0, 0])).expect_err("short fmt");
+    assert!(err.to_string().contains("fmt chunk"), "{err}");
+}
+
 #[test]
 fn wav_zero_sample_rate_is_rejected() {
     use ember::multimodal::audio::decode_wav_bytes;
