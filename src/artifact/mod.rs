@@ -177,7 +177,7 @@ impl CaptureSelection {
 
     /// Load a capture config from a TOML file path.
     pub fn from_toml_path(path: &str) -> Result<Self, String> {
-        let text = std::fs::read_to_string(path)
+        let text = read_text_capped(path, MAX_CAPTURE_CONFIG_BYTES)
             .map_err(|e| format!("failed to read capture config '{path}': {e}"))?;
         Self::from_toml_str(&text).map_err(|e| format!("{e} (in '{path}')"))
     }
@@ -390,9 +390,32 @@ pub fn resolve_unique_record<'a>(
     }
 }
 
+/// Upper bounds for the two text documents read from user-supplied paths;
+/// far above real files, so a wrong path (a device, a huge file) fails
+/// instead of exhausting memory.
+const MAX_CAPTURE_CONFIG_BYTES: u64 = 1 << 20;
+const MAX_ACTIVATION_MANIFEST_BYTES: u64 = 256 << 20;
+
+/// Read a UTF-8 file, failing once it exceeds `cap` bytes (the read itself is
+/// bounded, so a file that grows or never ends cannot exhaust memory).
+fn read_text_capped(path: &str, cap: u64) -> std::io::Result<String> {
+    use std::io::Read as _;
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take(cap + 1)
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > cap {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("larger than the {cap}-byte limit"),
+        ));
+    }
+    Ok(text)
+}
+
 /// Load and structurally validate a v0.2 manifest from `manifest.json`.
 pub fn load_manifest(path: &str) -> Result<ActivationManifest, String> {
-    let text = std::fs::read_to_string(path)
+    let text = read_text_capped(path, MAX_ACTIVATION_MANIFEST_BYTES)
         .map_err(|e| format!("failed to read manifest '{path}': {e}"))?;
     let manifest: ActivationManifest = serde_json::from_str(&text)
         .map_err(|e| format!("failed to parse manifest '{path}': {e}"))?;
@@ -684,4 +707,27 @@ pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<()
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn oversized_or_endless_inputs_fail_instead_of_loading() {
+        let dir = std::env::temp_dir().join(format!("ember-capped-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("capture.toml");
+        std::fs::write(
+            &big,
+            vec![b'#'; (super::MAX_CAPTURE_CONFIG_BYTES + 1) as usize],
+        )
+        .unwrap();
+        let error = super::CaptureSelection::from_toml_path(big.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("byte limit"), "{error}");
+        #[cfg(unix)]
+        {
+            let error = super::read_text_capped("/dev/zero", 4096).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
