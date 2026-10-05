@@ -34,11 +34,14 @@ first fire and checksummed; `restore-original` reproduces it exactly.
 - `inline-vector { values }`: one row, broadcast to every selected row.
 - `capture-from-current-run { capture_id }`: rows from a capture in the
   same run; the capture must have fired earlier in execution order.
-- `capture-from-bundle { bundle_path, capture_id, input_id, layer }` :
-  rows from a verified bundle. The source bundle must pass full offline
-  verification, and the model/tokenizer hashes must match unless an
-  explicit expert compatibility override is set (recorded prominently in
-  provenance).
+- `capture-from-bundle { bundle_path, capture_id, input_id, layer,
+  semantic_hash? }` : rows from a verified bundle. The source bundle must pass
+  full offline verification, and the model/tokenizer hashes must match unless
+  an explicit expert compatibility override is set; an override that a run
+  actually needed is recorded in the bundle's semantic `warnings`, with the
+  source's semantic hash and the mismatching identities. Set `semantic_hash`
+  (64 lowercase hex) to pin the source: without it, the source is whatever
+  bundle sits at `bundle_path` when the experiment runs or is reproduced.
 - `zero`: an all-zero row.
 - `vector-file { path, sha256, tensor? }` (direction operations only): a
   `.npy` (little-endian `<f4`/`<f8`, C order) or `.safetensors` file. The

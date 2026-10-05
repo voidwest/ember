@@ -1146,7 +1146,13 @@ pub(crate) fn finish_bundle(
         },
         plan: (*active.plan).clone(),
         results: results.clone(),
-        warnings: Vec::new(),
+        // Overrides a cross-bundle source needed are part of the result's
+        // provenance (docs/interventions.md).
+        warnings: active
+            .bundle_sources
+            .iter()
+            .flat_map(|source| source.warnings.iter().cloned())
+            .collect(),
         runtime,
         artifacts,
     };

@@ -164,6 +164,11 @@ pub enum InterventionSource {
         capture_id: String,
         input_id: String,
         layer: usize,
+        /// Required semantic hash of the source bundle. Without it the
+        /// source is whatever bundle sits at `bundle_path` when the
+        /// experiment runs (or is reproduced).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        semantic_hash: Option<String>,
     },
     /// The zero tensor (for `replace`).
     Zero,
@@ -202,6 +207,8 @@ enum StrictInterventionSource {
         capture_id: String,
         input_id: String,
         layer: usize,
+        #[serde(default)]
+        semantic_hash: Option<String>,
     },
     /// The zero tensor (for `replace`).
     Zero {},
@@ -221,6 +228,13 @@ enum StrictInterventionSource {
     },
 }
 
+fn is_lower_hex_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 impl From<StrictInterventionSource> for InterventionSource {
     fn from(value: StrictInterventionSource) -> Self {
         match value {
@@ -233,11 +247,13 @@ impl From<StrictInterventionSource> for InterventionSource {
                 capture_id,
                 input_id,
                 layer,
+                semantic_hash,
             } => Self::CaptureFromBundle {
                 bundle_path,
                 capture_id,
                 input_id,
                 layer,
+                semantic_hash,
             },
             StrictInterventionSource::Zero {} => Self::Zero,
             StrictInterventionSource::VectorFile {
@@ -452,11 +468,7 @@ impl InterventionSpec {
                         self.id
                     ));
                 }
-                if sha256.len() != 64
-                    || !sha256
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                {
+                if !is_lower_hex_sha256(sha256) {
                     return Err(format!(
                         "intervention '{}': vector-file sha256 must be 64 lowercase hex \
                          characters (the file's SHA-256 is part of the experiment's identity)",
@@ -469,6 +481,16 @@ impl InterventionSpec {
                         self.id
                     ));
                 }
+            }
+            Some(InterventionSource::CaptureFromBundle {
+                semantic_hash: Some(hash),
+                ..
+            }) if !is_lower_hex_sha256(hash) => {
+                return Err(format!(
+                    "intervention '{}': source bundle semantic_hash must be 64 lowercase hex \
+                     characters",
+                    self.id
+                ));
             }
             Some(InterventionSource::Contrastive {
                 positive,
