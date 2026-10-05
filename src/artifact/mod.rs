@@ -396,21 +396,11 @@ pub fn resolve_unique_record<'a>(
 const MAX_CAPTURE_CONFIG_BYTES: u64 = 1 << 20;
 const MAX_ACTIVATION_MANIFEST_BYTES: u64 = 256 << 20;
 
-/// Read a UTF-8 file, failing once it exceeds `cap` bytes (the read itself is
-/// bounded, so a file that grows or never ends cannot exhaust memory).
+/// Read a UTF-8 regular file of at most `cap` bytes.
 fn read_text_capped(path: &str, cap: u64) -> std::io::Result<String> {
-    use std::io::Read as _;
-    let mut text = String::new();
-    std::fs::File::open(path)?
-        .take(cap + 1)
-        .read_to_string(&mut text)?;
-    if text.len() as u64 > cap {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("larger than the {cap}-byte limit"),
-        ));
-    }
-    Ok(text)
+    let bytes = crate::bounded_read::read_existing_regular_file(Path::new(path), cap)?;
+    String::from_utf8(bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 /// Load and structurally validate a v0.2 manifest from `manifest.json`.
@@ -725,8 +715,7 @@ mod tests {
         assert!(error.contains("byte limit"), "{error}");
         #[cfg(unix)]
         {
-            let error = super::read_text_capped("/dev/zero", 4096).unwrap_err();
-            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(super::read_text_capped("/dev/zero", 4096).is_err());
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }

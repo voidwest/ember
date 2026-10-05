@@ -868,41 +868,12 @@ pub fn load(path: impl AsRef<Path>) -> Result<AppStore, StoreError> {
 /// few megabytes.
 const MAX_STORE_BYTES: u64 = 64 << 20;
 
-/// Read a small configuration file, or `None` if it does not exist.
-///
-/// The file is opened without blocking and must be a regular file (a link to
-/// one is fine), and at most `cap` bytes are read: a FIFO, a device or a
-/// huge file in the config directory fails instead of hanging or exhausting
-/// memory on every launch.
+/// Read a small configuration file, or `None` if it does not exist (see
+/// [`crate::bounded_read::read_regular_file`]: a FIFO, a device or a huge
+/// file in the config directory fails instead of hanging or exhausting
+/// memory on every launch).
 pub fn read_config_file(path: &Path, cap: u64) -> std::io::Result<Option<Vec<u8>>> {
-    use std::io::Read as _;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
-    }
-    let file = match options.open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if !file.metadata()?.is_file() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "not a regular file",
-        ));
-    }
-    let mut bytes = Vec::new();
-    file.take(cap + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > cap {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("larger than the {cap}-byte limit"),
-        ));
-    }
-    Ok(Some(bytes))
+    crate::bounded_read::read_regular_file(path, cap)
 }
 
 /// Ember's per-user configuration directory: `$XDG_CONFIG_HOME/ember`, then

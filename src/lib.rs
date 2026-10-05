@@ -38,8 +38,8 @@ static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::Count
 // them in generated documentation; see docs/api-stability.md.
 #[doc(hidden)]
 pub use ember_core::{
-    alloc_counter, atomic_file, decode_profile, k_matmul, k_quant_matmul, planned_decode,
-    quant_fault, residency, simd, workspace,
+    alloc_counter, atomic_file, bounded_read, decode_profile, k_matmul, k_quant_matmul,
+    planned_decode, quant_fault, residency, simd, workspace,
 };
 pub use ember_core::{
     backend, cancel, gemma4, half_weight, kv_cache, llama, loader, model, packed_cache, plan,

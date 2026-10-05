@@ -341,7 +341,13 @@ pub fn evaluate_external(runtime: ExternalRuntime, file: &Path, timeout: Duratio
 pub fn evaluate_ember(file: &Path) -> SideReport {
     let outcome: DiffOutcome;
     let start = std::time::Instant::now();
-    let bytes = match std::fs::read(file) {
+    // A regular file within the loader's own size cap, read without
+    // blocking: `diff` is for hostile inputs, and a device, FIFO or huge
+    // file must fail here rather than hang or exhaust memory.
+    let bytes = match crate::bounded_read::read_existing_regular_file(
+        file,
+        crate::loader::limits::MAX_GGUF_FILE_BYTES,
+    ) {
         Ok(bytes) => bytes,
         Err(error) => {
             return SideReport {

@@ -40,6 +40,8 @@ pub mod alloc_counter;
 pub mod atomic_file;
 mod attention_kernels;
 pub mod backend;
+#[doc(hidden)]
+pub mod bounded_read;
 pub mod cancel;
 mod decode_pool;
 #[doc(hidden)]

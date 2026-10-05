@@ -83,6 +83,19 @@ pub struct InspectReport {
 pub fn inspect_path(path: &Path, sha256: bool) -> anyhow::Result<InspectReport> {
     let kind = detect_kind(path);
     let sha256 = if sha256 && matches!(kind, FileKind::Gguf | FileKind::Tokenizer) {
+        // Hash only a regular file within the parsers' own size caps: a
+        // link to /dev/zero or a FIFO would otherwise spin or block here,
+        // before any validation runs.
+        let cap = match kind {
+            FileKind::Gguf => crate::loader::limits::MAX_GGUF_FILE_BYTES,
+            _ => crate::tokenizer::MAX_TOKENIZER_BYTES,
+        };
+        let metadata = std::fs::metadata(path).with_context(|| "failed to stat file")?;
+        anyhow::ensure!(
+            metadata.is_file() && metadata.len() <= cap,
+            "{} is not a regular file of at most {cap} bytes",
+            path.display()
+        );
         Some(
             sha256_file_result(path.to_string_lossy().as_ref())
                 .with_context(|| "failed to hash file")?,

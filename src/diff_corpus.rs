@@ -664,9 +664,11 @@ fn load_default_seeds(mode: CorpusMode) -> anyhow::Result<(Vec<String>, Vec<Vec<
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("corpus case {id} has no fixture"))?;
         let path = comp.join(fixture);
-        let bytes = std::fs::read(&path).map_err(|e| {
-            anyhow::anyhow!("cannot read seed fixture {id} ({}): {e}", path.display())
-        })?;
+        let bytes = crate::bounded_read::read_existing_regular_file(
+            &path,
+            crate::loader::limits::MAX_GGUF_FILE_BYTES,
+        )
+        .map_err(|e| anyhow::anyhow!("cannot read seed fixture {id} ({}): {e}", path.display()))?;
         names.push(id.to_string());
         blobs.push(bytes);
     }
@@ -683,8 +685,11 @@ fn load_override_seeds(paths: &[String]) -> anyhow::Result<(Vec<String>, Vec<Vec
     let mut blobs = Vec::new();
     for p in paths {
         let path = PathBuf::from(p);
-        let bytes = std::fs::read(&path)
-            .map_err(|e| anyhow::anyhow!("cannot read --seeds file '{}': {e}", path.display()))?;
+        let bytes = crate::bounded_read::read_existing_regular_file(
+            &path,
+            crate::loader::limits::MAX_GGUF_FILE_BYTES,
+        )
+        .map_err(|e| anyhow::anyhow!("cannot read --seeds file '{}': {e}", path.display()))?;
         names.push(path.display().to_string());
         blobs.push(bytes);
     }
@@ -873,7 +878,10 @@ fn save_crash(
     blob_path: &Path,
     report: &SideReport,
 ) -> anyhow::Result<()> {
-    let bytes = std::fs::read(blob_path)?;
+    let bytes = crate::bounded_read::read_existing_regular_file(
+        blob_path,
+        crate::loader::limits::MAX_GGUF_FILE_BYTES,
+    )?;
     let digest = crate::extraction::sha256_bytes(&bytes);
     let short = digest[..16].to_string();
     let key = (report.runtime.clone(), short.clone());
