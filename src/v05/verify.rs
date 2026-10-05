@@ -820,13 +820,26 @@ fn verify_and_load(
         );
     }
 
+    // The bundle's spec, resolved once for the derived-report checks below;
+    // a failure is reported as itself rather than as a missing section.
+    let resolved_spec = std::str::from_utf8(&files["experiment.toml"])
+        .map_err(|error| format!("experiment.toml is not UTF-8: {error}"))
+        .and_then(|text| {
+            crate::v05::spec::RawExperimentSpec::from_toml_str(text)
+                .map_err(|error| error.to_string())
+        })
+        .and_then(|raw| raw.resolve().map_err(|error| error.to_string()));
+    let missing_section = |section: &str| match &resolved_spec {
+        Ok(_) => format!("{section} artifacts without an [{section}] section in the spec"),
+        Err(error) => format!("{section} artifacts, but experiment.toml does not resolve: {error}"),
+    };
+
     // attribution report: present when the spec asks for one, internally
     // consistent, and its CSV is its table.
-    let spec_attribution = std::str::from_utf8(&files["experiment.toml"])
+    let spec_attribution = resolved_spec
+        .as_ref()
         .ok()
-        .and_then(|text| crate::v05::spec::RawExperimentSpec::from_toml_str(text).ok())
-        .and_then(|raw| raw.resolve().ok())
-        .and_then(|spec| spec.attribution);
+        .and_then(|spec| spec.attribution.clone());
     let spec_has_attribution = spec_attribution.is_some();
     let has_attribution_files = listed_artifacts
         .iter()
@@ -842,7 +855,7 @@ fn verify_and_load(
                 files.get(relative).cloned()
             });
         match &spec_attribution {
-            None => errors.push("attribution artifacts without an [attribution] spec".into()),
+            None => errors.push(missing_section("attribution")),
             Some(spec) => {
                 let recorded = files
                     .get(crate::v05::attribution::ATTRIBUTION_JSON)
@@ -879,11 +892,10 @@ fn verify_and_load(
 
     // probe bridge report: present when the spec asks for one and consistent
     // with the spec, its direction tensor and its table.
-    let spec_probe = std::str::from_utf8(&files["experiment.toml"])
+    let spec_probe = resolved_spec
+        .as_ref()
         .ok()
-        .and_then(|text| crate::v05::spec::RawExperimentSpec::from_toml_str(text).ok())
-        .and_then(|raw| raw.resolve().ok())
-        .and_then(|spec| spec.probe);
+        .and_then(|spec| spec.probe.clone());
     let has_probe_files = listed_artifacts
         .iter()
         .any(|name| name.starts_with("artifacts/probe/"));
@@ -899,7 +911,7 @@ fn verify_and_load(
                     files.get(relative).cloned()
                 })
             }
-            None => vec!["probe artifacts without a [probe] spec".into()],
+            None => vec![missing_section("probe")],
         };
         for name in &listed_artifacts {
             if name.starts_with("artifacts/probe/")
