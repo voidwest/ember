@@ -37,16 +37,7 @@ pub struct PatchTarget {
 
 impl core::fmt::Display for PatchTarget {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{}:{}:{}",
-            self.layer,
-            self.stage,
-            match self.phase {
-                ExecutionPhase::Prefill => "prefill",
-                ExecutionPhase::Decode => "decode",
-            }
-        )?;
+        write!(f, "{}:{}:{}", self.layer, self.stage, self.phase.name())?;
         if let Some(position) = self.position {
             write!(f, ":{position}")?;
         }
@@ -134,10 +125,7 @@ impl ActivationPatch {
         let manifest = load_manifest(source_manifest).map_err(ExperimentError::new)?;
         let mut patches = Vec::with_capacity(targets.len());
         for target in targets {
-            let phase_name = match target.phase {
-                ExecutionPhase::Prefill => "prefill",
-                ExecutionPhase::Decode => "decode",
-            };
+            let phase_name = target.phase.name();
             let record = resolve_unique_record(
                 &manifest.records,
                 target.layer,
@@ -215,9 +203,10 @@ impl ActivationPatch {
             }
             patch.hook_reached = true;
             if let Some(position) = patch.target.position {
-                let matches_position = match ctx.execution.phase {
-                    ExecutionPhase::Prefill => ctx.execution.start_position == position,
-                    ExecutionPhase::Decode => ctx.execution.token_position() == Some(position),
+                let matches_position = if ctx.execution.phase == ExecutionPhase::Prefill {
+                    ctx.execution.start_position == position
+                } else {
+                    ctx.execution.token_position() == Some(position)
                 };
                 if !matches_position {
                     continue;

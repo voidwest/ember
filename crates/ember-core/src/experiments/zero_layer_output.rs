@@ -1,7 +1,7 @@
 use super::{
     Experiment, ExperimentError, GenerationContext, LayerContext, ModelContext, TensorAccess,
 };
-use crate::artifact::ActivationStage;
+use crate::hook_types::ActivationStage;
 use core::str::FromStr;
 
 /// Supported intervention points for the example zero-layer-output experiment.

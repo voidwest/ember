@@ -732,7 +732,7 @@ directory = "runs/bundle-test"
             },
             plan: {
                 let mut plan =
-                    crate::plan::tests::sample_plan(ExecutionMode::Planned, HookMode::Disabled);
+                    crate::plan::testkit::sample_plan(ExecutionMode::Planned, HookMode::Disabled);
                 plan.plan_hash = crate::plan::plan_hash(&plan);
                 plan
             },

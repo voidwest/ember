@@ -28,7 +28,8 @@ const PARALLEL_Q8_DECODE_MIN_WORK: usize = 1_048_576;
 
 /// Whether this CPU can execute the interleaved Q8_0 decode kernel.
 #[inline]
-pub(crate) fn interleaved_q8_0_supported() -> bool {
+#[doc(hidden)]
+pub fn interleaved_q8_0_supported() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         is_x86_feature_detected!("avx512vnni")
@@ -3967,9 +3968,10 @@ mod tests {
     #[test]
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     fn arm_dot_matches_retained_reference_lengths_and_tails() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/dot-reference/arm-f32.json"))
-                .unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/dot-reference/arm-f32.json"
+        ))
+        .unwrap();
         for record in fixture["records"].as_array().unwrap() {
             let decode = |key: &str| -> Vec<f32> {
                 record[key]

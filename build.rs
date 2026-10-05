@@ -1,8 +1,8 @@
-//! Build-time environment capture for execution-plan provenance.
-//!
-//! Records the Rust compiler, target, and workspace git commit when available.
-//! Consumers use explicit `EMBER_*` names so Cargo/build-script-only variables
-//! are never mistaken for variables available to crate compilation.
+// Build-time environment capture for execution-plan provenance.
+//
+// Records the Rust compiler, target, and workspace git commit when available.
+// Consumers use explicit `EMBER_*` names so Cargo/build-script-only variables
+// are never mistaken for variables available to crate compilation.
 
 use std::path::Path;
 

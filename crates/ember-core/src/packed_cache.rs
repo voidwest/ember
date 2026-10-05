@@ -35,6 +35,7 @@
 //! shape mismatch) degrades to the in-memory packing path.
 
 use crate::loader::{GgufLoader, GgufValue};
+use crate::plan::hex;
 use crate::quant::{QuantizedWeightInterleaved, QuantizedWeightVnni};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -964,14 +965,6 @@ fn cache_key(model_path: &Path, loader: &GgufLoader) -> String {
     }
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hex(&hasher.finalize())[..32].to_string()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 #[cfg(test)]

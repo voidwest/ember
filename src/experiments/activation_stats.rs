@@ -93,10 +93,7 @@ impl ActivationStats {
     ) {
         let values = compute_tensor_values(tensor.values());
         self.records.push(ActivationStatsRecord {
-            phase: match ctx.phase {
-                super::ExecutionPhase::Prefill => "prefill",
-                super::ExecutionPhase::Decode => "decode",
-            },
+            phase: ctx.phase.name(),
             stage,
             layer_index,
             start_position: ctx.start_position,

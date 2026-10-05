@@ -1,0 +1,43 @@
+[package]
+name = "ember-core"
+version.workspace = true
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+description = "Kernels, models, execution plans and hook framework behind the ember crate"
+repository = "https://github.com/voidwest/ember"
+# An implementation crate: use `ember`, which re-exports every module here at
+# its established path. Splitting it out lets research, CLI and GUI changes
+# rebuild without recompiling the kernels.
+publish = false
+
+[dependencies]
+# Only what Ember uses: loading tokenizer.json, encode/decode, and the
+# pre-tokenizer/normalizer regexes (`onig`, the default regex engine, kept so
+# encodings stay byte-identical). The default `progressbar` (indicatif ->
+# unmaintained number_prefix) and `esaxx_fast` (C++ suffix arrays for Unigram
+# *training*) features are not needed.
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+thiserror = "1"
+anyhow = "1"
+memmap2 = "0.9"
+libm = "0.2.16"
+half = "2.7.1"
+matrixmultiply = "0.3.10"
+log = "0.4"
+rand = "0.8"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` as in the root manifest, so legacy-hash verification is
+# the same when this crate is built on its own.
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "0.10", features = ["asm-aarch64"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
+
+[lints]
+workspace = true

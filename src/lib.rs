@@ -28,25 +28,29 @@ extern crate alloc;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
-pub mod agent;
-#[doc(hidden)]
-pub mod app_store;
+// Kernels, models, plans and the hook framework live in the `ember-core`
+// crate (so research, CLI and GUI changes do not recompile them); they are
+// re-exported here at their established paths.
+//
 // These modules are kept source-visible for the package's separate binary
 // target and existing integrations, but are implementation details rather than
 // supported API. `doc(hidden)` preserves current paths without advertising
 // them in generated documentation; see docs/api-stability.md.
 #[doc(hidden)]
-pub mod alloc_counter;
+pub use ember_core::{
+    alloc_counter, atomic_file, decode_profile, k_matmul, k_quant_matmul, planned_decode,
+    quant_fault, residency, simd, workspace,
+};
+pub use ember_core::{
+    backend, cancel, gemma4, half_weight, kv_cache, llama, loader, model, packed_cache, plan,
+    quant, quant_k, runtime_schedule, sampler, support, tensor, tokenizer, trace,
+};
+
+pub mod agent;
+#[doc(hidden)]
+pub mod app_store;
 pub mod artifact;
-#[doc(hidden)]
-pub mod atomic_file;
-mod attention_kernels;
-pub mod backend;
-pub mod cancel;
 pub mod compare;
-mod decode_pool;
-#[doc(hidden)]
-pub mod decode_profile;
 pub mod diff_corpus;
 pub mod diff_outcome;
 pub mod duplex;
@@ -54,52 +58,19 @@ pub mod duplex;
 pub mod embedding;
 pub mod experiments;
 pub mod extraction;
-pub mod gemma4;
-pub mod half_weight;
 pub mod inspect;
-#[doc(hidden)]
-pub mod k_matmul;
-#[doc(hidden)]
-pub mod k_quant_matmul;
-pub mod kv_cache;
 pub mod kv_compare;
 pub mod kv_diagnostics;
 pub mod kv_snapshot;
 pub mod kv_transfer;
-pub mod llama;
-pub mod loader;
-pub mod model;
 #[doc(hidden)]
 pub mod model_backend;
 pub mod multimodal;
 #[doc(hidden)]
 pub mod npy;
-pub mod packed_cache;
-pub mod plan;
-mod plan_build;
-#[doc(hidden)]
-pub mod planned_decode;
-#[cfg(target_arch = "aarch64")]
-mod q8_gemm;
-pub mod quant;
-#[doc(hidden)]
-pub mod quant_fault;
-pub mod quant_k;
-#[doc(hidden)]
-pub mod residency;
-pub mod runtime_schedule;
-pub mod sampler;
-#[doc(hidden)]
-pub mod simd;
 pub mod smolvlm;
 pub mod smolvlm_video;
 pub mod subprocess;
-pub mod support;
-pub mod tensor;
-pub mod tokenizer;
-pub mod trace;
 pub mod tts;
 pub mod ultravox;
 pub mod v05;
-#[doc(hidden)]
-pub mod workspace;

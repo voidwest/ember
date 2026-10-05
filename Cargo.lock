@@ -1866,6 +1866,7 @@ dependencies = [
  "cpal",
  "ctrlc",
  "ed25519-dalek",
+ "ember-core",
  "env_logger",
  "flate2",
  "gpui-kit",
@@ -1873,8 +1874,6 @@ dependencies = [
  "image",
  "libm",
  "log",
- "matrixmultiply",
- "memmap2",
  "proptest",
  "rand 0.8.6",
  "rayon",
@@ -1885,9 +1884,28 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 1.0.69",
  "tiny_http",
- "tokenizers",
  "toml 0.8.23",
  "unicode-normalization",
+]
+
+[[package]]
+name = "ember-core"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "half",
+ "libm",
+ "log",
+ "matrixmultiply",
+ "memmap2",
+ "rand 0.8.6",
+ "rayon",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokenizers",
 ]
 
 [[package]]

@@ -473,16 +473,16 @@ def main() -> int:
 
     environment_record = inspect_environment(binary, args.threads)
     tested_source_paths = [
-        ROOT / "src/atomic_file.rs",
+        ROOT / "crates/ember-core/src/atomic_file.rs",
         ROOT / "src/cli_kv.rs",
-        ROOT / "src/kv_cache.rs",
+        ROOT / "crates/ember-core/src/kv_cache.rs",
         ROOT / "src/kv_snapshot.rs",
         ROOT / "src/kv_transfer/mod.rs",
         ROOT / "src/kv_transfer/rope.rs",
-        ROOT / "src/llama.rs",
+        ROOT / "crates/ember-core/src/llama.rs",
         ROOT / "src/main.rs",
         ROOT / "src/npy.rs",
-        ROOT / "src/plan.rs",
+        ROOT / "crates/ember-core/src/plan.rs",
         Path(__file__).resolve(),
     ]
     manifest = {

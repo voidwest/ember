@@ -988,10 +988,7 @@ impl Experiment for V05Experiment {
             ActivationStage::BeforeLogits => SemanticHookSite::FinalNormOutput,
             ActivationStage::AfterLogits => SemanticHookSite::Logits,
         };
-        let phase_matches = |generated: bool| match phase {
-            ExecutionPhase::Prefill => !generated,
-            ExecutionPhase::Decode => generated,
-        };
+        let phase_matches = |generated: bool| (phase == ExecutionPhase::Prefill) != generated;
         let layer_matches = |layers: &crate::v05::capture::LayerSelector| {
             if !site.is_per_layer() {
                 return layer.is_none();

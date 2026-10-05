@@ -19,8 +19,8 @@
 //! function the full forward uses.
 
 use super::{ActiveHooks, ExecutionContext, ExecutionPhase, ExperimentRunner};
-use crate::artifact::DispatchPath;
 use crate::backend::{CpuBackend, CpuError};
+use crate::hook_types::DispatchPath;
 use crate::kv_cache::KVCache;
 use crate::llama::Llama;
 use crate::tensor::CpuTensor;

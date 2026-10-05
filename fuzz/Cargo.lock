@@ -491,13 +491,12 @@ dependencies = [
  "clap",
  "ctrlc",
  "ed25519-dalek",
+ "ember-core",
  "env_logger",
  "half",
  "image",
  "libm",
  "log",
- "matrixmultiply",
- "memmap2",
  "rand",
  "rayon",
  "rtrb",
@@ -507,9 +506,28 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tiny_http",
- "tokenizers",
  "toml",
  "unicode-normalization",
+]
+
+[[package]]
+name = "ember-core"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "half",
+ "libm",
+ "log",
+ "matrixmultiply",
+ "memmap2",
+ "rand",
+ "rayon",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokenizers",
 ]
 
 [[package]]

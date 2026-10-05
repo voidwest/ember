@@ -334,7 +334,8 @@ impl KVCache {
     /// Unlike the live allocation, the returned head stride is
     /// `sequence_length * head_dim`; unused capacity is not serialized.
     /// This is a read-only copy and never mutates or aliases the cache.
-    pub(crate) fn export_compact_prefix(
+    #[doc(hidden)]
+    pub fn export_compact_prefix(
         &self,
         sequence_length: usize,
     ) -> Result<(Vec<f16>, Vec<f16>), String> {
@@ -383,7 +384,8 @@ impl KVCache {
     /// This is restricted to the snapshot layer so external callers cannot
     /// bypass compatibility validation. The copy owns its destination and
     /// therefore never aliases snapshot memory.
-    pub(crate) fn import_compact_prefix(
+    #[doc(hidden)]
+    pub fn import_compact_prefix(
         &mut self,
         sequence_length: usize,
         keys: &[f16],

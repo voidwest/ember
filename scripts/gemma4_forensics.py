@@ -4,7 +4,7 @@
 Path A ("hf"): the validated fp32 transformers model stepped manually
   (mirroring modeling_gemma4.py) with every intermediate dumped.
 Path B ("gguf"): identical math, but every weight taken from the Q8_0/BF16
-  GGUF via dequantization and structured exactly like src/gemma4.rs
+  GGUF via dequantization and structured exactly like crates/ember-core/src/gemma4.rs
   (same names, same order, same scales).
 
 A-vs-B isolates *algorithm* differences from weight-quantization noise:

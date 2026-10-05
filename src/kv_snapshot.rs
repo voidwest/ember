@@ -1807,7 +1807,7 @@ pub(crate) mod tests {
 
     #[test]
     fn execution_fingerprint_ignores_capacity_but_not_execution() {
-        use crate::plan::tests::sample_plan;
+        use crate::plan::testkit::sample_plan;
         use crate::plan::{ExecutionMode, HookMode};
 
         let small = sample_plan(ExecutionMode::Planned, HookMode::Disabled).finalize();
@@ -2156,5 +2156,163 @@ pub(crate) mod tests {
             snapshot(5, 8).manifest().provenance.prefix_token_ids_sha256,
             Some(hash_token_ids(&tokens))
         );
+    }
+}
+
+/// Moved from `llama`'s unit tests when the models moved to `ember-core`:
+/// they exercise this module against a real (synthetic Q8_0) model.
+#[cfg(test)]
+mod llama_model_tests {
+    use crate::backend::CpuBackend;
+    use crate::model::ForwardModel;
+    use crate::plan::{ExecutionMode, HookMode};
+
+    #[test]
+    fn kv_snapshot_same_model_replay_is_bit_exact() {
+        use crate::kv_snapshot::{KvCompatibilityTarget, KvSnapshot};
+
+        let model = crate::llama::testkit::q8_llama_without_fast_decode(2);
+        model.set_execution_mode(ExecutionMode::Planned);
+        let backend = CpuBackend;
+        let capacity = 8;
+        let prompt = [3u32, 1, 7];
+        let model_hash = "aa".repeat(32);
+        let tokenizer_hash = "bb".repeat(32);
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                capacity,
+                Some(&model_hash),
+                Some(&tokenizer_hash),
+            )
+            .unwrap();
+        let target = KvCompatibilityTarget::from_execution_plan(&plan).unwrap();
+
+        // A: uninterrupted native path.
+        let mut native_cache = model.create_cache(&backend, capacity);
+        let mut native_logits = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &prompt,
+            &mut native_cache,
+            0,
+        )
+        .unwrap();
+
+        // B: independent prefill, deterministic disk artifact, original cache
+        // dropped, then import into fresh owned storage.
+        let mut replay_source = model.create_cache(&backend, capacity);
+        let replay_prefill_logits = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &prompt,
+            &mut replay_source,
+            0,
+        )
+        .unwrap();
+        assert_eq!(native_logits.data(), replay_prefill_logits.data());
+        let resume_token = crate::sampler::argmax_token(replay_prefill_logits.data()) as u32;
+        let exported = KvSnapshot::export_native(
+            &replay_source,
+            target.clone(),
+            Some(&prompt),
+            Some(resume_token),
+        )
+        .unwrap();
+        let snapshot_hash = exported.manifest().snapshot_hash.clone();
+        let root = std::env::temp_dir().join(format!(
+            "ember-kv-replay-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        exported.save_dir(&root, false).unwrap();
+        drop(replay_source);
+        let loaded = KvSnapshot::load_dir(&root).unwrap();
+        assert_eq!(loaded.manifest().snapshot_hash, snapshot_hash);
+        let mut replay_cache = loaded.import_cache(&target).unwrap();
+        assert_eq!(replay_cache.cursor(), prompt.len());
+        assert_eq!(native_cache.cursor(), replay_cache.cursor());
+        let imported_export = KvSnapshot::export_native(
+            &replay_cache,
+            target.clone(),
+            Some(&prompt),
+            Some(resume_token),
+        )
+        .unwrap();
+        assert_eq!(loaded.keys(), imported_export.keys());
+        assert_eq!(loaded.values(), imported_export.values());
+        assert_eq!(
+            loaded.manifest().snapshot_hash,
+            imported_export.manifest().snapshot_hash
+        );
+
+        let mut replay_logits = replay_prefill_logits;
+        let mut native_tokens = Vec::new();
+        let mut replay_tokens = Vec::new();
+        const CONTINUATION: usize = 4;
+        for step in 0..CONTINUATION {
+            assert_eq!(
+                native_logits.data(),
+                replay_logits.data(),
+                "replayed logits differ at continuation step {step}"
+            );
+            let native_token = crate::sampler::argmax_token(native_logits.data()) as u32;
+            let replay_token = crate::sampler::argmax_token(replay_logits.data()) as u32;
+            native_tokens.push(native_token);
+            replay_tokens.push(replay_token);
+            assert_eq!(native_token, replay_token);
+            if step + 1 < CONTINUATION {
+                let native_start = native_cache.cursor();
+                let replay_start = replay_cache.cursor();
+                assert_eq!(native_start, replay_start);
+                native_logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[native_token],
+                    &mut native_cache,
+                    native_start,
+                )
+                .unwrap();
+                replay_logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[replay_token],
+                    &mut replay_cache,
+                    replay_start,
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(native_tokens, replay_tokens);
+        assert_eq!(native_cache.cursor(), replay_cache.cursor());
+
+        // Snapshot import must not contaminate subsequent ordinary planned
+        // decode with checksum/metadata work or per-token allocations. The
+        // only permitted allocations are the existing logits CpuTensor's
+        // shape, strides, and data vectors (Gate E's bound of three).
+        let next_input = *replay_tokens.last().unwrap();
+        let replay_start = replay_cache.cursor();
+        assert!(crate::alloc_counter::counting_active());
+        let (result, allocations) = crate::alloc_counter::count_allocations(|| {
+            ForwardModel::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[next_input],
+                &mut replay_cache,
+                replay_start,
+            )
+        });
+        result.unwrap();
+        assert!(
+            allocations <= 3,
+            "planned decode after snapshot import allocated {allocations} times"
+        );
+        assert!(model.has_planned_session(), "planned path did not run");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
