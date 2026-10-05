@@ -437,7 +437,7 @@ pub fn collect_run_metadata(thread_count: usize) -> RunMetadata {
         hash
     };
 
-    let rust_version = option_env!("EMBER_RUST_VERSION")
+    let rust_version = option_env!("EMBER_RUSTC_VERSION")
         .map(str::to_string)
         .or_else(|| {
             std::process::Command::new("rustc")
