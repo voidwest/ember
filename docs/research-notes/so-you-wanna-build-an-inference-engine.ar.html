@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="ember-mini: محرك inference لـGPT-2 في حوالي 700 سطر Rust، شلت منه الأساس عشان تكتبه أنت. ومعاه إيش علمني بناء Ember عن قياس أي محرك.">
+        <meta property="og:title" content="طيب، تبغى تبني inference engine؟">
+        <meta property="og:description" content="مستودع تمارين تكتب فيه inference engine لـGPT-2 بنفسك: 19 todo!() و17 اختبار. ومعاه أغلاط القياس اللي طلعت لي وأنا أبني واحد حقيقي.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/so-you-wanna-build-an-inference-engine.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary_large_image">
+        <title>طيب، تبغى تبني inference engine؟</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/so-you-wanna-build-an-inference-engine.html">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html">
+<bdi>research notes</bdi>
+</a>
+        </div>
+<h1>طيب، تبغى تبني <bdi>inference engine</bdi>؟</h1>
+<div class="meta">
+<bdi>2026-10-06</bdi> · <bdi>GPT-2 small</bdi> · حوالي <bdi>700</bdi> سطر <bdi>Rust</bdi> · <bdi>19 todo!()</bdi> و<bdi>17</bdi> اختبار
+</div>
+<p>أكيد شفت ضجة الـ<bdi>inference</bdi> الفترة هذي، وسألت نفسك: هذولا إيش يسوون بالضبط طول اليوم؟ جزء كبير من الشغل هذا يصير تحت، في مناجم الـ<bdi>systems programming.</bdi></p>
+<p>وأسرع طريقة أعرفها عشان تفهم هذا الشغل إنك تبني <bdi>engine</bdi> بنفسك. فأخذت أول نسخة من الـ<bdi>engine</bdi> اللي أشتغل عليه، وقصيتها حتى ما بقى إلا الأساس، وبعدين شلت الأجزاء المهمة. وأنت اللي ترجعها.</p>
+<div class="callout observation">
+<div class="label">باختصار</div>
+<p><a href="https://github.com/voidwest/ember-mini"><bdi>ember-mini</bdi></a> مستودع تعليمي بـ<bdi>Rust</bdi>: <bdi>inference engine</bdi> لـ<bdi>GPT-2</bdi> في حوالي <bdi>700</bdi> سطر، و<bdi>19</bdi> دالة فيه متروكة <code>todo!()</code>. كل وحدة محافظة على نفس الـ<bdi>signature</bdi>، وفيها تلميحات في التعليقات، و<bdi>17</bdi> اختبار يقولون لك متى شغلك صح. الكود الكامل في فرع <code>solution</code>. وهو مو <bdi>library</bdi>، ومو معمول للـ<bdi>production.</bdi></p>
+</div>
+<h2>إيش يعني <bdi>inference engine</bdi>؟</h2>
+<p>تعرف النماذج، وتعرف الأوزان، وأكيد تعرف الـ<bdi>tokens.</bdi> بس بين ملف النموذج والـ<bdi>tokens</bdi> اللي تقرأها فيه شغل كثير يصير، وهذا الشغل هو الـ<bdi>inference engine.</bdi> وأساسه كله يدخل في كم سطر:</p>
+<pre><code class="language-plaintext">load weights
+tokenize input
+loop:
+    run the transformer on the newest token
+    get logits (one score for every token in the vocabulary)
+    pick the next token
+    append it</code></pre>
+<p>بالعربي البسيط: هو المكان اللي رياضيات النموذج تشتغل فيه فعلاً، وتتحول للمخرجات اللي كلنا نعرفها.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-loop-dark.png" alt="الـloop: النص The capital of France is يتحول لـtoken ids هي 464 و3139 و286 و4881 و318، ويشتغل عليها GPT-2، والـsoftmax يعطي احتمالات الـtoken الجاي. الـtoken اللي يفوز هو the بـ6.1%، وParis سادس بـ3.1%. وسهم يرجع الـtoken المختار للـids.">
+<img class="chart theme-chart-light" src="figures/ember-mini-loop-light.png" alt="الـloop: النص The capital of France is يتحول لـtoken ids هي 464 و3139 و286 و4881 و318، ويشتغل عليها GPT-2، والـsoftmax يعطي احتمالات الـtoken الجاي. الـtoken اللي يفوز هو the بـ6.1%، وParis سادس بـ3.1%. وسهم يرجع الـtoken المختار للـids.">
+<figcaption>أرقام حقيقية من <bdi>ember-mini</bdi> على <bdi>GPT-2 small</bdi> بأوزان <bdi>Q8_0.</bdi></figcaption>
+</figure>
+<p>لـ<code>The capital of France is</code>، <bdi>GPT-2 small</bdi> يعطي <code>" the"</code> <bdi>6.1%</bdi> و<code>" Paris"</code> <bdi>3.1%</bdi> بس، يعني باريس في المركز السادس. والـ<bdi>greedy decoding</bdi> يختار <code>" the"</code> ويكتب <bdi>"the capital of France, and it is the capital of France."</bdi></p>
+<p><bdi>GPT-2 small</bdi> مو ذكي، وهذا مو المقصود أصلاً. بس هو صغير لدرجة إنك تقدر تمسكه كله في راسك، وكل جزء من أي <bdi>engine</bdi> حديث موجود فيه أصلاً.</p>
+<h2>ليش تبنيه بنفسك؟</h2>
+<p>تقدر تقرأ عن الـ<bdi>transformers</bdi> قد ما تبغى، ولسه ما تحس كيف يشتغل من جوا. بس لو كتبت الـ<bdi>loop</bdi> كله بنفسك، يصير عندك أجزاء واضحة تفككها وتتبعها خطوة خطوة. هذي أشياء ما فهمتها صح إلا بعد ما كتبته أول مرة:</p>
+<ul>
+<li>كل <bdi>token</bdi> جديد لسه يعدي على كل الـ<bdi>layers.</bdi> الـ<bdi>KV cache</bdi> بس يوفر عليك إنك تحسب الـ<bdi>keys</bdi> والـ<bdi>values</bdi> القديمة من جديد.</li>
+<li>الـ<bdi>prefill</bdi> والـ<bdi>decode</bdi> شغلتين مختلفة. الـ<bdi>prefill</bdi> يعالج <bdi>tokens</bdi> الـ<bdi>prompt</bdi> مع بعض (<bdi>matrix × matrix</bdi>). والتوليد <bdi>token</bdi> واحد في كل مرة (<bdi>matrix × vector</bdi>): يقرأ كل وزن في النموذج عشان يسوي شوي حسابات بس.</li>
+<li>تشوف كل <bdi>allocation</bdi>، لأنك أنت اللي كتبتها.</li>
+<li>شكل الـ<bdi>kernel</bdi> يفرق. نفس الـ<bdi>dot product</bdi> ممكن يكون سريع أو بطيء، على حسب كيف البيانات مرتبة في الذاكرة.</li>
+<li>الـ<bdi>inference optimization</bdi> يوقف يكون سحر أسود، ويصير <bdi>loop</bdi> ثاني: دور إيش البطيء، قيس، غير شيء واحد، وقيس مرة ثانية.</li>
+</ul>
+<h2>إيش في المستودع؟</h2>
+<p><bdi>ember-mini</bdi> هو أول <bdi>engine</bdi> سويته لـ<bdi>GPT-2</bdi>، بس مقصوص عشان أنت تركبه من جديد. يغطي الأساسيات بس، وما فيه <bdi>abstractions</bdi> تستخبى وراها: كل عملية دالة عادية على <bdi>slices</bdi> من نوع <code>f32</code>، والـ<bdi>dependencies</bdi> الوحيدة هي <code>tokenizers</code> و<code>half</code>.</p>
+<p>كل دالة ناقصة محافظة على نفس الـ<bdi>signature.</bdi> والتعليقات تقول لك إيش تحسب وإيش اللي عادةً يخرب، بس ما تقول لك كيف تكتبه.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-hints-dark.png" alt="تمرين الـsoftmax في فرع main: الـsignature، وتلميحات في التعليقات تشرح المعادلة ومشكلة الـoverflow، وtodo!(&quot;softmax&quot;) مكان الكود. وجنبه الحل من فرع solution.">
+<img class="chart theme-chart-light" src="figures/ember-mini-hints-light.png" alt="تمرين الـsoftmax في فرع main: الـsignature، وتلميحات في التعليقات تشرح المعادلة ومشكلة الـoverflow، وtodo!(&quot;softmax&quot;) مكان الكود. وجنبه الحل من فرع solution.">
+<figcaption>وحدة من الـ<bdi>19</bdi> في فرع <code>main</code>، وجنبها الحل.</figcaption>
+</figure>
+<p>فيه ست تمارين بالترتيب: الرياضيات، والبايتات لأرقام، والـ<bdi>KV cache</bdi>، وقارئ الـ<bdi>GGUF</bdi>، والـ<bdi>forward pass</bdi>، وآخر شيء الـ<bdi>generation loop.</bdi> وكل واحد له أمر اختبار خاص فيه.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-exercises-dark.png" alt="قائمة بالست تمارين: ops.rs وquant.rs وkv_cache.rs وloader.rs وmodel.rs وmain.rs، وجنب كل واحد إيش يغطي وأمر اختباره، من cargo test ops إلى cargo run.">
+<img class="chart theme-chart-light" src="figures/ember-mini-exercises-light.png" alt="قائمة بالست تمارين: ops.rs وquant.rs وkv_cache.rs وloader.rs وmodel.rs وmain.rs، وجنب كل واحد إيش يغطي وأمر اختباره، من cargo test ops إلى cargo run.">
+</figure>
+<p>تبدأ من <bdi>0</bdi> من <bdi>17</bdi> اختبار ناجح، وتوقف لما <bdi>GPT-2</bdi> يتكلم.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-tests-dark.png" alt="مقطعين من الـterminal. في فرع main، الأمر cargo test يطلع 0 passed و17 failed مع not yet implemented: dot. وبعد التمارين، الـ17 اختبار تنجح، والأمر cargo run يكمل The capital of France is بنص من GPT-2.">
+<img class="chart theme-chart-light" src="figures/ember-mini-tests-light.png" alt="مقطعين من الـterminal. في فرع main، الأمر cargo test يطلع 0 passed و17 failed مع not yet implemented: dot. وبعد التمارين، الـ17 اختبار تنجح، والأمر cargo run يكمل The capital of France is بنص من GPT-2.">
+<figcaption>مخرجات حقيقية: فرع <code>main</code> في البداية، وفرع <code>solution</code>.</figcaption>
+</figure>
+<h2>إيش يخبي كل سطر في الـ<bdi>loop</bdi>؟</h2>
+<h3>تحميل الأوزان</h3>
+<p>ملف <bdi>GGUF</bdi>، صيغة <bdi>llama.cpp</bdi>، فيه أربع أجزاء: <bdi>header</bdi>، والـ<bdi>metadata</bdi>، والـ<bdi>tensor infos</bdi>، وبعدها بيانات الـ<bdi>tensors.</bdi> ملف <bdi>GPT-2</bdi> فيه <bdi>1.7 MB</bdi> من الـ<bdi>metadata</bdi> قبل أول وزن، لأن كل الـ<bdi>vocabulary</bdi> اللي يستخدمه الـ<bdi>tokenizer</bdi> ساكن هناك.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-gguf-dark.png" alt="ترتيب ملف gpt2.Q8_0.gguf: header فيه version 3 و149 tensor و17 key، وmetadata مثل gpt2.block_count = 12، وtensor infos مثل blk.0.attn_qkv.weight بأبعاد [768, 2304]، و175.9 MB من بيانات الـtensors تبدأ من البايت 1,775,072. وتحت، block واحد من Q8_0: scale حجمه بايتين و32 قيمة كل وحدة بايت.">
+<img class="chart theme-chart-light" src="figures/ember-mini-gguf-light.png" alt="ترتيب ملف gpt2.Q8_0.gguf: header فيه version 3 و149 tensor و17 key، وmetadata مثل gpt2.block_count = 12، وtensor infos مثل blk.0.attn_qkv.weight بأبعاد [768, 2304]، و175.9 MB من بيانات الـtensors تبدأ من البايت 1,775,072. وتحت، block واحد من Q8_0: scale حجمه بايتين و32 قيمة كل وحدة بايت.">
+<figcaption>قيم مقروءة من <code>gpt2.Q8_0.gguf</code>.</figcaption>
+</figure>
+<p>أماكن ممكن تنفجر فيك:</p>
+<ul>
+<li>الـ<bdi>GGUF</bdi> يكتب الـ<bdi>dimension</bdi> الداخلي أول. مصفوفة فيها <bdi>2,304</bdi> صف و<bdi>768</bdi> عمود تنحفظ كذا: <code>[768, 2304]</code>. لو نسيت تقلبها، ولا شيء يركب. وأنا سويتها أكثر من مرة.</li>
+<li>الـ<bdi>Q8_0</bdi> هو <bdi>32</bdi> قيمة <bdi>int8</bdi> ومعاها <bdi>scale</bdi> واحد <bdi>f16</bdi>: يعني <bdi>34</bdi> بايت لـ<bdi>32</bdi> وزن، أو <bdi>8.5</bdi> بت للوزن. <bdi>ember-mini</bdi> يحول كل شيء لـ<bdi>f32</bdi> وقت التحميل. هذا سهل، بس ياخذ أربع أضعاف الذاكرة.</li>
+<li>مصفوفة الـ<bdi>output</bdi> موجودة في الملف مرتين. <bdi>GPT-2</bdi> يرجع يستخدم الـ<bdi>token embedding</bdi> نفسه كـ<bdi>output layer</bdi>، والملف هذا حافظ نسخة منها كمان، فيطلع فيه <bdi>163M</bdi> وزن لنموذج حجمه <bdi>124M parameter.</bdi></li>
+</ul>
+<h3>تشغيل الـ<bdi>transformer</bdi></h3>
+<p><bdi>forward pass</bdi> واحد: خذ صف الـ<bdi>token</bdi> في الـ<bdi>token embedding</bdi>، وزود عليه صف موقعه في الـ<bdi>position embedding</bdi>، وكذا يصير عندك <bdi>768</bdi> رقم. شغل <bdi>12 block</bdi> من <code>x = x + attention(norm(x))</code> وبعدها <code>x = x + mlp(norm(x))</code>. وفي الآخر <bdi>norm</bdi> أخير والـ<bdi>output layer</bdi> يعطونك <bdi>50,257 logit.</bdi> وفي <bdi>ember-mini</bdi> الـ<bdi>forward pass</bdi> كله <bdi>51</bdi> سطر.</p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-forward-dark.png" alt="forward pass واحد: الـembedding يدخل الـresidual stream اللي اسمه x، ويمر على block فيه layernorm وattention وblock فيه layernorm وMLP، وكل واحد يزود نتيجته على x، وهذا يتكرر 12 مرة، وبعدها layernorm أخير والـoutput layer يعطون 50,257 score.">
+<img class="chart theme-chart-light" src="figures/ember-mini-forward-light.png" alt="forward pass واحد: الـembedding يدخل الـresidual stream اللي اسمه x، ويمر على block فيه layernorm وattention وblock فيه layernorm وMLP، وكل واحد يزود نتيجته على x، وهذا يتكرر 12 مرة، وبعدها layernorm أخير والـoutput layer يعطون 50,257 score.">
+</figure>
+<h3>الـ<bdi>logits</bdi> واختيار الـ<bdi>token</bdi> الجاي</h3>
+<p>الـ<bdi>logits</bdi> الخام اللي يطلعها <bdi>GPT-2</bdi> لهذا الـ<bdi>prompt</bdi> كلها حوالي <bdi>−100.</bdi> وفي <bdi>f32</bdi>، <bdi>exp(−100.7)</bdi> يساوي <bdi>1.8e−44</bdi>: رقم <bdi>subnormal</bdi> باقي فيه حوالي <bdi>4</bdi> بت دقة بس. وتحت <bdi>−104</bdi>، الـ<bdi>exp</bdi> يرجع صفر بالضبط. يعني <bdi>softmax</bdi> عادي على <bdi>GPT-2</bdi> خربان وهو ساكت. اطرح أكبر قيمة أول. والاتجاه الثاني يخرب كمان: <bdi>exp(1000)</bdi> يطلع لانهاية، ولانهاية على لانهاية تطلع <bdi>NaN.</bdi></p>
+<p><bdi>ember-mini</bdi> يختار بـ<bdi>argmax</bdi>: <bdi>greedy decoding</bdi>، بدون <bdi>sampling</bdi> وبدون <bdi>temperature.</bdi></p>
+<h3>زود وكرر</h3>
+<p>بدون <bdi>cache</bdi>، كل <bdi>token</bdi> جديد يشغل النص كله من أوله، فـ<bdi>6 tokens</bdi> تكلف <bdi>21</bdi> مرور. ومع <bdi>KV cache</bdi>، النموذج يحفظ الـ<bdi>key</bdi> والـ<bdi>value</bdi> لكل <bdi>token</bdi> مرة وحدة ويرجع يقرأها بعدين، فـ<bdi>6 tokens</bdi> تكلف <bdi>6</bdi> مرورات بس. ولـ<bdi>GPT-2 small</bdi> على الـ<bdi>context</bdi> كامل، يعني <bdi>1,024 token</bdi>، الـ<bdi>cache</bdi> حجمه <bdi>72 MiB.</bdi></p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-kv-cache-dark.png" alt="شبكتين فيهم ست خطوات على tokens الجملة The capital of France is the. بدون cache، كل خطوة تشغل كل الـtokens حتى ذيك اللحظة: 21 مرور. ومع KV cache، كل خطوة تشغل الـtoken الجديد بس وتقرا الـkeys والـvalues القديمة: 6 مرورات.">
+<img class="chart theme-chart-light" src="figures/ember-mini-kv-cache-light.png" alt="شبكتين فيهم ست خطوات على tokens الجملة The capital of France is the. بدون cache، كل خطوة تشغل كل الـtokens حتى ذيك اللحظة: 21 مرور. ومع KV cache، كل خطوة تشغل الـtoken الجديد بس وتقرا الـkeys والـvalues القديمة: 6 مرورات.">
+</figure>
+<h2>إيش تعلمت بالطريقة الصعبة</h2>
+<p><bdi>ember-mini</bdi> يطلع حوالي <bdi>9 tokens</bdi> في الثانية على <bdi>thread</bdi> واحد، لأن الـ<bdi>dot product</bdi> فيه <bdi>loop</bdi> عادي بدون أي تسريع. الـ<bdi>engines</bdi> الأسرع تصطدم بجدار ثاني: الذاكرة. الـ<bdi>decode</bdi> يقرأ كل وزن مرة لكل <bdi>token</bdi>، ويسوي عليه عمليتين ثلاث بس. <bdi>Ember</bdi> يشغل <bdi>Llama-3.2-1B</bdi> بـ<bdi>Q8_0</bdi> بحوالي <bdi>58 token</bdi> في الثانية على الـ<bdi>CPU</bdi>، يعني تقريباً <bdi>1.3 GB × 58 ≈ 75 GB/s</bdi> من الأوزان تعدي من خلاله. وهنا السؤال ما يصير "كم سرعة الضرب عندي"، يصير "كم أقدر أنقل بايتات".</p>
+<p>أشياء كثير خربت وأنا أبني <bdi>Ember.</bdi> هذي بعضها:</p>
+<p><strong><bdi>kernel</bdi> أسرع خلى الـ<bdi>engine</bdi> أبطأ.</strong> كتبت <bdi>tile</bdi> لـ<bdi>Q4_K</bdi> بأربع أعمدة، كل تحميل <bdi>activation</bdi> فيه يخدم أربع أعمدة أوزان. في اختبار <bdi>kernel</bdi> على <bdi>thread</bdi> واحد كان أسرع بـ<bdi>25–30%.</bdi> بس في الـ<bdi>engine</bdi> كامل على <bdi>4 threads</bdi>، الـ<bdi>decode</bdi> نزل من <bdi>68.2</bdi> إلى <bdi>64.9 token</bdi> في الثانية، فرفضته.</p>
+<p><strong>أكبر تحسين ما كان له دخل بالـ<bdi>kernel.</bdi></strong> عمليات الـ<bdi>matrix-vector</bdi> في الـ<bdi>K-quant</bdi> كانت تشتغل على شجرة <bdi>fork/join</bdi> في <bdi>Rayon</bdi>، ومعاها الـ<bdi>efficiency cores</bdi>، وفيه <bdi>fork/join</bdi> لكل <bdi>projection.</bdi> نقلتها لفريق صغير يسوي <bdi>spin-wait</bdi> على الـ<bdi>performance cores</bdi>، وبنفس الـ<bdi>kernel</bdi> بالبت. <bdi>Q4_K_M</bdi> طلع من <bdi>61.4</bdi> إلى <bdi>68.2 token</bdi> في الثانية على <bdi>4 threads</bdi>، ومن حوالي <bdi>70</bdi> إلى حوالي <bdi>87</bdi> على <bdi>8.</bdi></p>
+<figure>
+<img class="chart theme-chart-dark" src="figures/ember-mini-measure-dark.png" alt="تغييرين على decode الـQ4_K في Ember. المحاولة الأولى، tile بأربع أعمدة: أسرع بـ25 إلى 30% في اختبار kernel على thread واحد، بس الـengine كامل على 4 threads نزل من 68.2 إلى 64.9 token في الثانية، فانرفض. المحاولة الثانية، نفس الـkernel بجدولة أحسن: من 61.4 إلى 68.2 token في الثانية على 4 threads، ومن حوالي 70 إلى 87 على 8، ونزل.">
+<img class="chart theme-chart-light" src="figures/ember-mini-measure-light.png" alt="تغييرين على decode الـQ4_K في Ember. المحاولة الأولى، tile بأربع أعمدة: أسرع بـ25 إلى 30% في اختبار kernel على thread واحد، بس الـengine كامل على 4 threads نزل من 68.2 إلى 64.9 token في الثانية، فانرفض. المحاولة الثانية، نفس الـkernel بجدولة أحسن: من 61.4 إلى 68.2 token في الثانية على 4 threads، ومن حوالي 70 إلى 87 على 8، ونزل.">
+<figcaption><bdi>decode</bdi> لـ<bdi>Llama-3.2-1B Q4_K_M</bdi> على <bdi>M1 Pro.</bdi></figcaption>
+</figure>
+<p><strong>الـ<bdi>prefill</bdi> والـ<bdi>decode</bdi> يبغون أشياء مختلفة.</strong> فريق الـ<bdi>spin-wait</bdi> ممتاز للـ<bdi>decode</bdi>، لأنه مهام صغيرة كثيرة. ولما حطيت <bdi>tiles</bdi> الـ<bdi>prefill</bdi> الكبيرة عليه، الـ<bdi>prefill</bdi> صار أبطأ بـ<bdi>15–25%</bdi> على <bdi>8 threads</bdi> مقارنة بالـ<bdi>work stealing</bdi> في <bdi>Rayon.</bdi></p>
+<p><strong>ترتيب الأوزان في الذاكرة مو تفصيل.</strong> <bdi>layout</bdi> متداخل لأوزان الـ<bdi>MLP</bdi> كان أسرع في كل اختبار لحاله. بس في الـ<bdi>process</bdi> كامل خلى كل عملية أبطأ، حتى الـ<bdi>output layer</bdi> اللي ما لمسها أصلاً. وما عرفت ليش حتى دحين، فما نزل.</p>
+<p><strong>مرجعك ممكن يكذب عليك.</strong> <bdi>llama-bench</bdi> يستخدم <bdi>Metal</bdi> افتراضياً. ومقارنتي "<bdi>CPU</bdi> مقابل <bdi>CPU</bdi>" كانت <bdi>112</bdi> مقابل <bdi>66 token</bdi> في الثانية، حتى زودت <code>-ngl 0</code>.</p>
+<p><strong>واللابتوب كمان يكذب.</strong> مع الحمل العادي على الجهاز، تشغيلات الـ<bdi>8 threads</bdi> كانت تنزل <bdi>20–30%</bdi> عشوائياً. ودحين كل مقارنة <bdi>A/B</bdi> تتناوب وتتكرر.</p>
+<p><strong>الصح والسريع مشكلتين منفصلة.</strong> <bdi>Ember</bdi> يوعد بإعادة تشغيل مطابقة بالبت، لأنه أداة بحث، فتغيير حرك الـ<bdi>sin</bdi> والـ<bdi>cos</bdi> في الـ<bdi>RoPE</bdi> بـ<bdi>ulp</bdi> واحد انرجع، مع إن ما أحد يلاحظه في النص. وكودي لـ<bdi>GPT-2</bdi> في <bdi>Ember</bdi> يستخدم الـ<bdi>GELU</bdi> الدقيق بـ<bdi>erf</bdi>، و<bdi>GPT-2</bdi> اتدرب على تقريب الـ<bdi>tanh.</bdi> <bdi>ember-mini</bdi> يستخدم <bdi>tanh</bdi>، وبأوزان <bdi>F32</bdi> يطابق <bdi>llama.cpp</bdi> <bdi>token</bdi> بـ<bdi>token</bdi> لـ<bdi>100 token</bdi> على أربع <bdi>prompts.</bdi> ومع ملف <bdi>Q8_0</bdi>، <bdi>llama.cpp</bdi> يضغط الـ<bdi>activations</bdi> كمان لـ<bdi>8</bdi> بت، والنص الـ<bdi>greedy</bdi> يبعد بعد كم <bdi>token.</bdi> نفس النموذج مو بالضرورة نفس الأرقام.</p>
+<p>طيب فين وصل <bdi>Ember</bdi>؟ <bdi>llama.cpp</bdi> لسه متقدم على الـ<bdi>CPU.</bdi> على <bdi>Llama-3.2-1B</bdi> و<bdi>M1 Pro</bdi> و<bdi>4 threads</bdi> بداية أكتوبر: <bdi>57.8</bdi> مقابل <bdi>65.8 token</bdi> في الثانية بـ<bdi>Q8_0</bdi>، و<bdi>67.5</bdi> مقابل <bdi>88.6</bdi> بـ<bdi>Q4_K_M.</bdi> سوي <bdi>profile</bdi> قبل ما تلمس أي شيء، وقيس الـ<bdi>engine</bdi> كامل، ولا تثق في رقم قسته مرة وحدة. شوي بارانويا في القياس ما تضر.</p>
+<h2>فين تصير الأمور مخيفة</h2>
+<p><bdi>ember-mini</bdi> نموذج واحد، وصيغة وحدة، و<bdi>thread</bdi> واحد. الـ<bdi>engines</bdi> الحقيقية تكبر في كل اتجاه مرة وحدة:</p>
+<ul>
+<li>الـ<bdi>architectures</bdi>: <bdi>Ember</bdi> يشغل <bdi>GPT-2</bdi> و<bdi>Llama</bdi> و<bdi>Qwen3</bdi> و<bdi>Gemma 4</bdi>، وكل واحد له <bdi>norms</bdi> و<bdi>positions</bdi> وتفاصيل <bdi>attention</bdi> خاصة فيه.</li>
+<li>صيغ الضغط: <bdi>Q8_0</bdi> و<bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi>، كل وحدة لها <bdi>block layout</bdi> و<bdi>kernels</bdi> خاصة فيها.</li>
+<li><bdi>kernels</bdi> لكل <bdi>instruction set</bdi>: مسارات <bdi>NEON</bdi> على <bdi>ARM</bdi>، ومسارات ثانية على <bdi>x86.</bdi></li>
+<li>الـ<bdi>threading</bdi>: <bdi>performance cores</bdi> مقابل <bdi>efficiency cores</bdi>، و<bdi>spin teams</bdi> مقابل <bdi>work stealing.</bdi></li>
+<li>الـ<bdi>batching</bdi> والـ<bdi>streaming</bdi> والصور والفيديو والصوت.</li>
+</ul>
+<p><bdi>Ember</bdi> اليوم حوالي <bdi>140,000</bdi> سطر <bdi>Rust</bdi>، موزعة بين <code>src/</code> والـ<bdi>crate</bdi> اللي اسمه <code>ember-core</code>. مو كله <bdi>inference</bdi>: فيه <bdi>GUI</bdi> وأدوات بحث وصوت كمان. وهنا الـ<bdi>loop</bdi> التعليمي الصغير يتحول لسطور كثير من المعاناة، بمساعدة <bdi>Claude.</bdi></p>
+<h2>جرب تبني النسخة الصغيرة</h2>
+<p>بناء <bdi>engine</bdi> يستاهل حتى لو ما نزلت واحد أبداً. يعطيك إحساس بأنظمة الـ<bdi>ML</bdi> ما تعطيك إياه الأوراق ولا الـ<bdi>libraries</bdi> اللي فوق: فين يروح الوقت، وفين تروح الذاكرة، وليش "نفس النموذج" ممكن يعطيك نص مختلف.</p>
+<p>سوي <bdi>clone</bdi> لـ<a href="https://github.com/voidwest/ember-mini"><bdi>ember-mini</bdi></a>، ونزل <bdi>GPT-2</bdi> (الـ<bdi>README</bdi> فيه الأمر والـ<bdi>checksum</bdi>)، وشغل <code>cargo test ops</code>.</p>
+<p>لو سألت نفسك مرة إيش يصير بين ملف النموذج و"<bdi>hello world</bdi>"، جرب تبني النسخة الصغيرة مرة وحدة. ولو وصلت لهنا: شكراً إنك قرأت.</p>
+<h2>من فين جت الأرقام</h2>
+<ul>
+<li><bdi>ember-mini</bdi>: <bdi>GPT-2 small</bdi>، ملف <code>gpt2.Q8_0.gguf</code> من <bdi>QuantFactory/gpt2-GGUF</bdi> (<bdi>SHA-256</bdi> <code>0afd77d8…</code>)، على <bdi>thread</bdi> واحد في <bdi>Apple M1 Pro.</bdi> ومقارنة <bdi>llama.cpp</bdi> استخدمت نسخة <bdi>F32</bdi> من نفس الأوزان سويتها بـ<code>llama-quantize --allow-requantize</code>، مع <code>--temp 0</code> و<code>-ngl 0</code>.</li>
+<li>تغيير الجدولة وأرقامه موجودة في الـ<bdi>commit</bdi> <a href="https://github.com/voidwest/ember/commit/32b72f63a977569f2acc6406d09843dda2227518"><bdi>32b72f6</bdi></a> في <bdi>Ember.</bdi> والـ<bdi>tile</bdi> أبو أربع أعمدة انقاس بـ<bdi>kernel probe</bdi> وبتشغيل <bdi>A/B</bdi> كامل قبل ما أرفضه، وكوده مو في المستودع.</li>
+<li>أرقام سرعة <bdi>Ember</bdi> و<bdi>llama.cpp</bdi> هي جدول <a href="https://github.com/voidwest/ember#performance"><bdi>README</bdi></a> في مستودع <bdi>Ember</bdi> (<bdi>2026-10-02</bdi>، <bdi>4 threads</bdi>، تشغيلات متناوبة).</li>
+<li>الـ<bdi>75 GB/s</bdi> تقدير: حجم ملف النموذج ضرب سرعة الـ<bdi>decode.</bdi> ما قسته.</li>
+</ul>
+<h2>ملاحظات لها علاقة في الموقع</h2>
+<ul>
+<li>
+<a href="/research-notes/crossover-point-cpu-llm-decode.ar.html">متى تساعد زيادة عدد الـ<bdi>threads</bdi> في مرحلة <bdi>decode</bdi>؟</a>: فين زيادة الـ<bdi>threads</bdi> توقف تفيد الـ<bdi>decode</bdi> على الـ<bdi>CPU.</bdi></li>
+<li>
+<a href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">الملف قال <bdi>Q4.</bdi> والـ<bdi>runtime</bdi> قال <bdi>f32.</bdi></a>: ليش لازم نتأكد من الضغط اللي ينفذه الـ<bdi>runtime</bdi> فعلاً، بدل ما نفترضه.</li>
+</ul>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
