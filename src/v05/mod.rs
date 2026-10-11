@@ -11,6 +11,7 @@ pub mod attribution;
 pub mod bundle;
 pub mod capture;
 pub mod compare;
+pub mod effect;
 pub mod hook;
 pub mod host_profile;
 pub mod intervention;

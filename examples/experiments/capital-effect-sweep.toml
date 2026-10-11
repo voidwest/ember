@@ -1,0 +1,146 @@
+# How much does each layer's attention output at the last token carry the
+# answer, across a set of prompts?
+#
+# Every point zeroes `attention-output` at the final prompt token in one
+# layer. `[sweep.effect]` measures logit(target) - logit(foil) in the
+# final logits row of every input, on the baseline and on each point, and
+# summarizes the change per layer over all eight prompts: the mean, a 95%
+# bootstrap interval, the sign counts and a two-sided sign test. The table
+# is printed, and written to sweep-effect.csv and sweep.json.
+#
+# The foil of each input is the capital of the next input (the last input
+# takes the first). A negative effect means that the ablation made the
+# margin of the correct capital over the foil smaller.
+#
+# Result on the pinned model (Apple M1 Pro, reference mode, 2026-10-08):
+# the baseline margin has a mean of 10.83 logits. Zeroing layer 9 or layer
+# 15 makes it smaller on all eight prompts (by 1.91 and 1.67 on average).
+# No other layer moves the mean by more than 0.7. One deterministic run on
+# one 16-layer model.
+#
+#   ember experiment validate examples/experiments/capital-effect-sweep.toml
+#   ember experiment run examples/experiments/capital-effect-sweep.toml
+#   ember experiment verify runs/capital-effect-sweep --tokenizer tokenizer.json
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "capital-effect-sweep"
+description = "Zero the final-token attention output per layer; effect on the capital logit difference over eight prompts."
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 4
+deterministic = true
+
+[generation]
+max_new_tokens = 4
+temperature = 0.0
+
+[[inputs]]
+id = "france"
+text = "The capital of France is the city of"
+
+[[inputs]]
+id = "germany"
+text = "The capital of Germany is the city of"
+
+[[inputs]]
+id = "japan"
+text = "The capital of Japan is the city of"
+
+[[inputs]]
+id = "egypt"
+text = "The capital of Egypt is the city of"
+
+[[inputs]]
+id = "poland"
+text = "The capital of Poland is the city of"
+
+[[inputs]]
+id = "portugal"
+text = "The capital of Portugal is the city of"
+
+[[inputs]]
+id = "italy"
+text = "The capital of Italy is the city of"
+
+[[inputs]]
+id = "spain"
+text = "The capital of Spain is the city of"
+
+# The final logits row of every input: the effect reads two entries of it.
+[[captures]]
+id = "answer"
+site = "logits"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "zero-attention"
+site = "attention-output"
+layers = [0]
+operation = { kind = "zero" }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "runs/capital-effect-sweep"
+overwrite = false
+
+[sweep]
+layers = "all"
+
+[sweep.effect]
+capture = "answer"
+confidence = 0.95
+resamples = 10000
+seed = 0
+
+[[sweep.effect.targets]]
+input = "france"
+target = " Paris"
+foil = " Berlin"
+
+[[sweep.effect.targets]]
+input = "germany"
+target = " Berlin"
+foil = " Tokyo"
+
+[[sweep.effect.targets]]
+input = "japan"
+target = " Tokyo"
+foil = " Cairo"
+
+[[sweep.effect.targets]]
+input = "egypt"
+target = " Cairo"
+foil = " Warsaw"
+
+[[sweep.effect.targets]]
+input = "poland"
+target = " Warsaw"
+foil = " Lisbon"
+
+[[sweep.effect.targets]]
+input = "portugal"
+target = " Lisbon"
+foil = " Rome"
+
+[[sweep.effect.targets]]
+input = "italy"
+target = " Rome"
+foil = " Madrid"
+
+[[sweep.effect.targets]]
+input = "spain"
+target = " Madrid"
+foil = " Paris"

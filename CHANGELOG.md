@@ -9,6 +9,22 @@ is still pre-1.0: versioned CLI/artifact contracts are the primary integration
 anchors, while undocumented or `#[doc(hidden)]` Rust modules are not supported
 API.
 
+## [Unreleased]
+
+Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
+
+### Added
+
+- Sweeps: `[sweep.effect]` measures `logit(target) - logit(foil)` in a
+  logits capture for every input, and summarizes the change from the
+  baseline over all inputs for each point: the mean, the sample standard
+  deviation and standard error, a seeded bootstrap interval of the mean, the
+  sign counts and a two-sided exact sign test. `sweep.json` gains optional
+  `effect` records, `sweep.csv` gains three columns, and `sweep-effect.csv`
+  has one row per point. `verify` recalculates all of it from the bundles. A
+  sweep without the table writes the same files and `sweep_hash` as before.
+  Example: `examples/experiments/capital-effect-sweep.toml`.
+
 ## [1.0.0] — release candidate (staged; pending external acceptance gates)
 
 This is the 1.0.0 changelog, staged for the release cut. The local release

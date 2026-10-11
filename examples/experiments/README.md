@@ -70,6 +70,13 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
    accuracy, and the effect of ablating and steering along it on three
    held-out prompts; the bundle carries `artifacts/probe/*`.
 
+8. `capital-effect-sweep.toml` — the final-token attention output zeroed in
+   each layer, over eight capital prompts. `[sweep.effect]` measures
+   `logit(target) - logit(foil)` for each prompt and gives, for each layer,
+   the mean change with a 95% bootstrap interval, the sign counts and a sign
+   test (`sweep-effect.csv`; see
+   `docs/experiments.md#effect-statistics-across-inputs`).
+
 ## Commands
 
 ```bash

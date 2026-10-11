@@ -253,6 +253,7 @@ bit-identical to running its derived spec alone.
 <sweep>/sweep.toml          the sweep spec, byte for byte
 <sweep>/sweep.json          ember.sweep.v1: identities, per-point metrics, sweep_hash
 <sweep>/sweep.csv           the same metrics as a table (one row per point and input)
+<sweep>/sweep-effect.csv    with [sweep.effect]: the effect summary, one row per point
 <sweep>/sweep-runtime.json  timings and each bundle's prefix-reuse path (not hashed)
 <sweep>/baseline/           bundle; experiment.toml is the derived baseline spec
 <sweep>/points/layer-07/    bundle per point (layer-07-pos-3 with positions)
@@ -296,6 +297,85 @@ Llama-3.2-1B (Apple M1 Pro, 8 threads) the example sweep takes about 13 s
 (4.9 s model load, 7.5 s for 17 bundles); running the baseline and the 16
 derived specs as separate `experiment run`s takes about 86 s, with
 hash-identical bundles.
+
+### Effect statistics across inputs
+
+A sweep point that changes one prompt tells you little. An effect table
+measures one number per input and summarizes the change over all inputs, for
+each point. Add `[sweep.effect]` to a sweep spec (see
+`examples/experiments/capital-effect-sweep.toml`):
+
+```toml
+[[captures]]
+id = "answer"
+site = "logits"                 # the effect reads this row
+[captures.tokens]
+kind = "prompt-final"
+
+[sweep.effect]
+capture = "answer"
+confidence = 0.95               # optional (default 0.95)
+resamples = 10000               # optional bootstrap resamples (default 10000)
+seed = 0                        # optional bootstrap seed (default 0)
+
+[[sweep.effect.targets]]        # one entry for each input
+input = "france"
+target = " Paris"               # token text (exactly one token) or a token id
+foil = " Berlin"
+```
+
+**Metric.** `m = logit(target) - logit(foil)` in the capture row of the
+input. The effect of a point on an input is `m(point) - m(baseline)`. A
+sweep with one point (`layers = [8]`) measures one intervention over the
+prompt set.
+
+**Rules.** The capture must be at site `logits`, store its rows (not
+`summary-only`), and apply to every input. Each input must have exactly one
+target. A token text that is not exactly one token, or a target that is the
+same token as its foil, fails before the sweep runs. The capture must give
+one row for each input; a `generated-step` capture fails when generation
+stops before that step.
+
+**Summary, per point.**
+
+- `n`, `mean`: the number of inputs and the mean effect.
+- `sd`, `standard_error`: the sample standard deviation (`n - 1`) and
+  `sd / sqrt(n)`.
+- `ci_low`, `ci_high`: a bootstrap percentile interval of the mean.
+  Ember draws `resamples` samples of `n` inputs with replacement (SplitMix64,
+  `seed`), takes each sample mean, and interpolates linearly between order
+  statistics (Hyndman-Fan type 7). Every point uses the same seed, so all
+  points use the same resampled input indices.
+- `positive`, `negative`, `zero`: the sign counts of the effects.
+- `sign_test_p`: a two-sided exact sign test over the non-zero effects
+  (`min(1, 2 P(X <= min(positive, negative)))`, `X ~ Binomial(m, 1/2)`).
+
+With one input, `sd`, `standard_error` and the interval are `null`. The
+interval and the test describe variation across the prompts that you
+supplied. They do not describe a population of prompts that you did not
+sample, and a sweep over many points makes many comparisons.
+
+**Outputs.** `sweep.json` gains an `effect` record (the metric, the
+interval settings, and the resolved target and foil tokens for each input).
+Each point gains an `effect` summary, and each input gains
+`baseline_metric`, `point_metric` and `effect`. `sweep.csv` gains these
+three columns, and `sweep-effect.csv` has one row for each point.
+`experiment run` and `experiment inspect` print the summary table. A sweep
+without `[sweep.effect]` writes the same files and the same `sweep_hash` as
+before.
+
+**Compatibility.** The new fields are optional additions. The sweep readers
+are strict, so an Ember binary without these fields rejects a sweep spec with
+`[sweep.effect]`, and a `sweep.json` with `effect` records. It does not reinterpret them. Point bundles do not change: each one
+is an ordinary `ember.bundle.v1` bundle.
+
+**Verification.** `verify` reads the effect from the bundles again,
+calculates the summary again from the recorded per-input effects, and
+compares both exactly. All calculations use IEEE addition, multiplication,
+division and square root in a fixed order, so the result is the same on
+every machine. `verify` compares token ids that the spec gives. It encodes
+token text again only with `--tokenizer`; without it, the `sweep effect`
+check says how many token texts it did not check.
 
 ## Attribution patching
 
