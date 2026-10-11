@@ -826,6 +826,20 @@ fn verify_and_load_sweep(
     );
     let definition = SweepDefinition::parse(&spec_text).map_err(|error| error.to_string())?;
     let baseline_spec = definition.baseline().map_err(|error| error.to_string())?;
+    // `layer_count` sizes the derived point list, so bound it before use. No
+    // model the loader accepts has more layers.
+    if manifest.layer_count > crate::loader::limits::MAX_LAYERS {
+        report.check(
+            "layer count",
+            false,
+            format!(
+                "{} layers exceeds the {}-layer model limit",
+                manifest.layer_count,
+                crate::loader::limits::MAX_LAYERS
+            ),
+        );
+        return Ok((report, manifest));
+    }
     let derived = definition
         .points(manifest.layer_count)
         .map_err(|error| error.to_string())?;

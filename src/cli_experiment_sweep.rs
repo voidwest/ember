@@ -667,6 +667,15 @@ kind = "prompt-final"
             .checks
             .iter()
             .any(|check| !check.ok && check.name == "point layer-02 metrics"));
+        // A forged layer count fails a check before it sizes anything.
+        let mut huge = manifest.clone();
+        huge.layer_count = usize::MAX / 2;
+        huge.sweep_hash = huge.compute_hash();
+        let report = reseal(&huge);
+        assert!(report
+            .checks
+            .iter()
+            .any(|check| !check.ok && check.name == "layer count"));
         let mut swapped = manifest.clone();
         swapped.points[1].bundle = swapped.points[2].bundle.clone();
         swapped.sweep_hash = swapped.compute_hash();
