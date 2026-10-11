@@ -232,7 +232,9 @@ Each *point* is the spec with the swept interventions at `layers = [L]`
 (and, with `positions`, `tokens = { kind = "absolute-token", index = P }`);
 everything else is unchanged. The *baseline* is the spec without
 interventions. Swept interventions must use per-layer sites; a
-`capture-from-bundle` source (fixed layer) cannot be swept, and a
+`capture-from-bundle` source (fixed layer) cannot be swept unless
+`move_bundle_sources = true` (see [Patching from a bundle across
+layers](#patching-from-a-bundle-across-layers)), and a
 `capture-from-current-run` source must be at the swept site and capture
 every swept layer. A sweep spec never resolves as a single experiment.
 
@@ -253,6 +255,7 @@ bit-identical to running its derived spec alone.
 <sweep>/sweep.toml          the sweep spec, byte for byte
 <sweep>/sweep.json          ember.sweep.v1: identities, per-point metrics, sweep_hash
 <sweep>/sweep.csv           the same metrics as a table (one row per point and input)
+<sweep>/sweep-effect.csv    with [sweep.effect]: the effect summary, one row per point
 <sweep>/sweep-runtime.json  timings and each bundle's prefix-reuse path (not hashed)
 <sweep>/baseline/           bundle; experiment.toml is the derived baseline spec
 <sweep>/points/layer-07/    bundle per point (layer-07-pos-3 with positions)
@@ -296,6 +299,127 @@ Llama-3.2-1B (Apple M1 Pro, 8 threads) the example sweep takes about 13 s
 (4.9 s model load, 7.5 s for 17 bundles); running the baseline and the 16
 derived specs as separate `experiment run`s takes about 86 s, with
 hash-identical bundles.
+
+### Patching from a bundle across layers
+
+Activation patching runs a corrupted prompt with a row from a clean run. A
+`capture-from-bundle` source names one layer. With
+`move_bundle_sources = true` in `[sweep]`, each point also sets the source
+`layer` of every swept `capture-from-bundle` source to the point's layer.
+Thus each point patches layer `L` with the clean row from layer `L`:
+
+```toml
+[[interventions]]
+id = "patch-france"
+site = "residual-pre-attention"
+layers = [0]                    # the sweep moves this
+inputs = ["france"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-residual", input_id = "france", layer = 0 }
+[interventions.tokens]
+kind = "prompt-final"
+
+[sweep]
+layers = "all"
+move_bundle_sources = true
+```
+
+The option needs `layers`, and at least one swept intervention must read a
+`capture-from-bundle` source. It cannot be combined with `positions`: the
+source moves to the point's layer, not to its token, so every position
+would receive the same source row. Before the sweep runs, Ember verifies each
+source bundle and checks that it holds the capture, for that input and
+site, at every swept layer. Each derived spec names its source layer, so a
+point bundle is still the bundle that its derived spec gives alone. All
+other source rules stay the same (see [interventions](interventions.md)): the
+source bundle must verify, its model and tokenizer must match, and the
+source and target layers must be equal. An unpinned source records a warning
+in each point bundle; set `semantic_hash` to pin it.
+
+With `[sweep.effect]`, the baseline is the corrupted run, so the effect of a
+point is the part of the clean-minus-corrupted metric gap that the patch
+recovers. See `examples/experiments/capital-clean.toml` and
+`examples/experiments/capital-patching-sweep.toml`.
+
+### Effect statistics across inputs
+
+A sweep point that changes one prompt tells you little. An effect table
+measures one number per input and summarizes the change over all inputs, for
+each point. Add `[sweep.effect]` to a sweep spec (see
+`examples/experiments/capital-effect-sweep.toml`):
+
+```toml
+[[captures]]
+id = "answer"
+site = "logits"                 # the effect reads this row
+[captures.tokens]
+kind = "prompt-final"
+
+[sweep.effect]
+capture = "answer"
+confidence = 0.95               # optional (default 0.95)
+resamples = 10000               # optional bootstrap resamples (default 10000)
+seed = 0                        # optional bootstrap seed (default 0)
+
+[[sweep.effect.targets]]        # one entry for each input
+input = "france"
+target = " Paris"               # token text (exactly one token) or a token id
+foil = " Berlin"
+```
+
+**Metric.** `m = logit(target) - logit(foil)` in the capture row of the
+input. The effect of a point on an input is `m(point) - m(baseline)`. A
+sweep with one point (`layers = [8]`) measures one intervention over the
+prompt set.
+
+**Rules.** The capture must be at site `logits`, store its rows (not
+`summary-only`), and apply to every input. Each input must have exactly one
+target. A token text that is not exactly one token, or a target that is the
+same token as its foil, fails before the sweep runs. The capture must give
+one row for each input; a `generated-step` capture fails when generation
+stops before that step.
+
+**Summary, per point.**
+
+- `n`, `mean`: the number of inputs and the mean effect.
+- `sd`, `standard_error`: the sample standard deviation (`n - 1`) and
+  `sd / sqrt(n)`.
+- `ci_low`, `ci_high`: a bootstrap percentile interval of the mean.
+  Ember draws `resamples` samples of `n` inputs with replacement (SplitMix64,
+  `seed`), takes each sample mean, and interpolates linearly between order
+  statistics (Hyndman-Fan type 7). Every point uses the same seed, so all
+  points use the same resampled input indices.
+- `positive`, `negative`, `zero`: the sign counts of the effects.
+- `sign_test_p`: a two-sided exact sign test over the non-zero effects
+  (`min(1, 2 P(X <= min(positive, negative)))`, `X ~ Binomial(m, 1/2)`).
+
+With one input, `sd`, `standard_error` and the interval are `null`. The
+interval and the test describe variation across the prompts that you
+supplied. They do not describe a population of prompts that you did not
+sample, and a sweep over many points makes many comparisons.
+
+**Outputs.** `sweep.json` gains an `effect` record (the metric, the
+interval settings, and the resolved target and foil tokens for each input).
+Each point gains an `effect` summary, and each input gains
+`baseline_metric`, `point_metric` and `effect`. `sweep.csv` gains these
+three columns, and `sweep-effect.csv` has one row for each point.
+`experiment run` and `experiment inspect` print the summary table. A sweep
+without `[sweep.effect]` writes the same files and the same `sweep_hash` as
+before.
+
+**Compatibility.** The new fields are optional additions. The sweep readers
+are strict, so an Ember binary without these fields rejects a sweep spec with
+`[sweep.effect]` or `move_bundle_sources`, and a `sweep.json` with `effect`
+records. It does not reinterpret them. Point bundles do not change: each one
+is an ordinary `ember.bundle.v1` bundle.
+
+**Verification.** `verify` reads the effect from the bundles again,
+calculates the summary again from the recorded per-input effects, and
+compares both exactly. All calculations use IEEE addition, multiplication,
+division and square root in a fixed order, so the result is the same on
+every machine. `verify` compares token ids that the spec gives. It encodes
+token text again only with `--tokenizer`; without it, the `sweep effect`
+check says how many token texts it did not check.
 
 ## Attribution patching
 

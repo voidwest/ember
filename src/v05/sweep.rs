@@ -14,6 +14,9 @@
 //! `tokens = { kind = "absolute-token", index = P }`); everything else is
 //! unchanged. A *baseline* experiment is the spec without interventions.
 //!
+//! `[sweep.effect]` adds a scalar metric for every input and its summary
+//! over the inputs for each point (`crate::v05::effect`).
+//!
 //! `alphas = [0.0, 2.0, 4.0]` sweeps the `alpha` of the swept interventions
 //! (`steer`, `interpolate`) as well, alone or crossed with layers (and
 //! positions): `layers` may then be omitted, and the swept interventions stay
@@ -28,6 +31,7 @@
 //! <sweep>/sweep.toml          the sweep spec, byte for byte
 //! <sweep>/sweep.json          ember.sweep.v1: identities + per-point metrics
 //! <sweep>/sweep.csv           the metrics as a table
+//! <sweep>/sweep-effect.csv    the effect summary (only with [sweep.effect])
 //! <sweep>/sweep-runtime.json  timings and prefix-reuse paths (not hashed)
 //! <sweep>/baseline/           bundle
 //! <sweep>/points/layer-07/    bundle (one per point)
@@ -43,6 +47,10 @@
 
 use crate::v05::capture::LayerSelector;
 use crate::v05::compare::compare_loaded;
+use crate::v05::effect::{
+    apply_effect, EffectDefinition, RawEffectSpec, SweepEffectRecord, SweepEffectSummary,
+    SWEEP_EFFECT_CSV_FILE,
+};
 use crate::v05::intervention::InterventionSource;
 use crate::v05::manifest::sha256_hex;
 use crate::v05::spec::{ExperimentSpecV1, RawExperimentSpec, SpecError};
@@ -76,6 +84,13 @@ pub struct RawSweepSpec {
     /// Intervention ids to sweep (default: every intervention).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interventions: Option<Vec<String>>,
+    /// Move the layer of every swept `capture-from-bundle` source with the
+    /// swept layer, so each point reads the source row at its own layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_bundle_sources: Option<bool>,
+    /// Effect statistics across the inputs (`crate::v05::effect`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<RawEffectSpec>,
 }
 
 /// A parsed and validated sweep specification.
@@ -92,6 +107,10 @@ pub struct SweepDefinition {
     pub alphas: Option<Vec<f64>>,
     /// Swept intervention ids, in declaration order.
     pub interventions: Vec<String>,
+    /// Swept `capture-from-bundle` sources read the point's layer.
+    pub move_bundle_sources: bool,
+    /// Effect statistics across the inputs, when `[sweep.effect]` is given.
+    pub effect: Option<EffectDefinition>,
     /// The spec without `[sweep]`, resolved (interventions at their
     /// declared layers). Model, execution and generation come from here.
     pub template: ExperimentSpecV1,
@@ -211,6 +230,37 @@ impl SweepDefinition {
                 Some(list)
             }
         };
+        let move_bundle_sources = sweep.move_bundle_sources.unwrap_or(false);
+        if move_bundle_sources {
+            if sweep.layers.is_none() {
+                return Err(SpecError::at(
+                    "sweep.move_bundle_sources",
+                    "bundle sources move with swept layers; add `layers`",
+                ));
+            }
+            // A source moves to the point's layer but not to its position, so
+            // every position would receive the source's own token row.
+            if sweep.positions.is_some() {
+                return Err(SpecError::at(
+                    "sweep.move_bundle_sources",
+                    "bundle sources move with layers only; a position sweep would patch \
+                     every position with the source's own token row",
+                ));
+            }
+            let moves_any = template.interventions.iter().any(|intervention| {
+                swept.contains(&intervention.id)
+                    && matches!(
+                        intervention.source,
+                        Some(InterventionSource::CaptureFromBundle { .. })
+                    )
+            });
+            if !moves_any {
+                return Err(SpecError::at(
+                    "sweep.move_bundle_sources",
+                    "no swept intervention reads a capture-from-bundle source",
+                ));
+            }
+        }
         for (index, intervention) in template.interventions.iter().enumerate() {
             if !swept.contains(&intervention.id) {
                 continue;
@@ -239,11 +289,12 @@ impl SweepDefinition {
                 ));
             }
             match &intervention.source {
-                Some(InterventionSource::CaptureFromBundle { .. }) => {
+                Some(InterventionSource::CaptureFromBundle { .. }) if !move_bundle_sources => {
                     return Err(SpecError::at(
                         format!("{path}.source"),
                         "a capture-from-bundle source names one fixed layer and cannot move \
-                         across a layer sweep",
+                         across a layer sweep (set sweep.move_bundle_sources = true to read \
+                         the source at each point's layer)",
                     ));
                 }
                 Some(InterventionSource::CaptureFromCurrentRun { capture_id }) => {
@@ -298,6 +349,10 @@ impl SweepDefinition {
                 Some(list)
             }
         };
+        let effect = sweep
+            .effect
+            .map(|raw| EffectDefinition::parse(raw, &template))
+            .transpose()?;
         Ok(SweepDefinition {
             text: text.to_string(),
             spec_sha256: sha256_hex(text.as_bytes()),
@@ -306,6 +361,8 @@ impl SweepDefinition {
             positions,
             alphas,
             interventions: swept,
+            move_bundle_sources,
+            effect,
             template,
             document,
         })
@@ -320,6 +377,61 @@ impl SweepDefinition {
                 .resolve(n_layers)
                 .map_err(|error| SpecError::at("sweep.layers", error)),
         }
+    }
+
+    /// With `move_bundle_sources`: check, before anything runs, that every
+    /// moved source bundle verifies and holds its capture at every swept
+    /// layer. Each point loads its source again when it runs.
+    pub fn check_moved_bundle_sources(&self, n_layers: usize) -> Result<(), String> {
+        if !self.move_bundle_sources {
+            return Ok(());
+        }
+        let layers = self
+            .resolve_layers(n_layers)
+            .map_err(|error| error.to_string())?;
+        let mut loaded: Vec<(PathBuf, LoadedBundle)> = Vec::new();
+        for intervention in &self.template.interventions {
+            let Some(InterventionSource::CaptureFromBundle {
+                bundle_path,
+                capture_id,
+                input_id,
+                ..
+            }) = &intervention.source
+            else {
+                continue;
+            };
+            if !self.interventions.contains(&intervention.id) {
+                continue;
+            }
+            let index = match loaded.iter().position(|(path, _)| path == bundle_path) {
+                Some(index) => index,
+                None => {
+                    let bundle = crate::v05::verify::load_bundle_for_source(bundle_path)
+                        .map_err(|error| format!("intervention {:?}: {error}", intervention.id))?;
+                    loaded.push((bundle_path.clone(), bundle));
+                    loaded.len() - 1
+                }
+            };
+            let bundle = &loaded[index].1;
+            if let Some(missing) = layers.iter().find(|&&layer| {
+                !bundle.capture_index.iter().any(|entry| {
+                    entry.capture_id == *capture_id
+                        && entry.input_id == *input_id
+                        && entry.site == intervention.site
+                        && entry.layer == layer
+                })
+            }) {
+                return Err(format!(
+                    "intervention {:?}: source bundle '{}' has no capture {capture_id:?} of \
+                     input {input_id:?} at {} layer {missing}; a sweep with \
+                     move_bundle_sources reads the source at every swept layer",
+                    intervention.id,
+                    bundle_path.display(),
+                    intervention.site
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn output_root(&self) -> String {
@@ -465,6 +577,15 @@ impl SweepDefinition {
                                     "layers".into(),
                                     toml::Value::Array(vec![toml::Value::Integer(layer as i64)]),
                                 );
+                                if self.move_bundle_sources
+                                    && let Some(toml::Value::Table(source)) =
+                                        table.get_mut("source")
+                                    && source.get("kind").and_then(toml::Value::as_str)
+                                        == Some("capture-from-bundle")
+                                {
+                                    source
+                                        .insert("layer".into(), toml::Value::Integer(layer as i64));
+                                }
                             }
                             if let (Some(alpha), Some(toml::Value::Table(operation))) =
                                 (alpha, table.get_mut("operation"))
@@ -541,6 +662,14 @@ pub struct SweepInputMetrics {
     pub peak_layer: Option<usize>,
     pub captures_compared: usize,
     pub captures_exact: usize,
+    /// With `[sweep.effect]`: the metric on the baseline and on the point,
+    /// and their difference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_metric: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub point_metric: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<f64>,
 }
 
 /// One point of a sweep.
@@ -556,6 +685,9 @@ pub struct SweepPointRecord {
     #[serde(flatten)]
     pub bundle: SweepBundleRef,
     pub inputs: Vec<SweepInputMetrics>,
+    /// With `[sweep.effect]`: the effect over every input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<SweepEffectSummary>,
 }
 
 /// `sweep.json`.
@@ -574,6 +706,10 @@ pub struct SweepManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alphas: Option<Vec<f64>>,
     pub interventions: Vec<String>,
+    /// With `[sweep.effect]`: the metric, interval settings and resolved
+    /// target/foil tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<SweepEffectRecord>,
     pub baseline: SweepBundleRef,
     pub points: Vec<SweepPointRecord>,
     /// SHA-256 over this manifest's canonical JSON with this field empty.
@@ -605,8 +741,15 @@ impl SweepManifest {
         out.push_str(
             "input_id,first_divergent_step,generated_text_equal,\
              peak_relative_l2,peak_capture_id,peak_site,peak_layer,captures_exact,\
-             captures_compared,semantic_hash\n",
+             captures_compared,semantic_hash",
         );
+        // Effect columns likewise exist only with `[sweep.effect]`.
+        let with_effect = self.effect.is_some();
+        out.push_str(if with_effect {
+            ",baseline_metric,point_metric,effect\n"
+        } else {
+            "\n"
+        });
         for point in &self.points {
             for input in &point.inputs {
                 let alpha = if with_alpha {
@@ -614,8 +757,18 @@ impl SweepManifest {
                 } else {
                     String::new()
                 };
+                let effect = if with_effect {
+                    format!(
+                        ",{},{},{}",
+                        opt(&input.baseline_metric),
+                        opt(&input.point_metric),
+                        opt(&input.effect)
+                    )
+                } else {
+                    String::new()
+                };
                 out.push_str(&format!(
-                    "{},{},{},{alpha}{},{},{},{},{},{},{},{},{},{}\n",
+                    "{},{},{},{alpha}{},{},{},{},{},{},{},{},{},{}{effect}\n",
                     point.id,
                     opt(&point.layer),
                     opt(&point.position),
@@ -633,6 +786,41 @@ impl SweepManifest {
             }
         }
         out
+    }
+
+    /// `sweep-effect.csv`: one row per point (only with `[sweep.effect]`).
+    pub fn to_effect_csv(&self) -> Option<String> {
+        fn opt<T: std::fmt::Display>(value: &Option<T>) -> String {
+            value.as_ref().map(ToString::to_string).unwrap_or_default()
+        }
+        self.effect.as_ref()?;
+        let mut out = String::from(
+            "point,layer,position,alpha,n,mean,sd,standard_error,ci_low,ci_high,positive,\
+             negative,zero,sign_test_p\n",
+        );
+        for point in &self.points {
+            let Some(effect) = &point.effect else {
+                continue;
+            };
+            out.push_str(&format!(
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                point.id,
+                opt(&point.layer),
+                opt(&point.position),
+                opt(&point.alpha),
+                effect.n,
+                effect.mean,
+                opt(&effect.sd),
+                opt(&effect.standard_error),
+                opt(&effect.ci_low),
+                opt(&effect.ci_high),
+                effect.positive,
+                effect.negative,
+                effect.zero,
+                opt(&effect.sign_test_p),
+            ));
+        }
+        Some(out)
     }
 }
 
@@ -701,9 +889,26 @@ pub fn point_metrics(
                 peak_layer: located.map(|(_, capture)| capture.layer),
                 captures_compared: compared,
                 captures_exact: exact,
+                baseline_metric: None,
+                point_metric: None,
+                effect: None,
             }
         })
         .collect())
+}
+
+/// [`point_metrics`] plus, with an effect record, the per-input effect and
+/// its summary over the inputs.
+pub fn point_metrics_with_effect(
+    baseline: &LoadedBundle,
+    point: &LoadedBundle,
+    effect: Option<&SweepEffectRecord>,
+) -> Result<(Vec<SweepInputMetrics>, Option<SweepEffectSummary>), String> {
+    let mut metrics = point_metrics(baseline, point)?;
+    let summary = effect
+        .map(|record| apply_effect(record, baseline, point, &mut metrics))
+        .transpose()?;
+    Ok((metrics, summary))
 }
 
 /// Resolve a manifest-relative bundle path, refusing anything that could
@@ -826,6 +1031,20 @@ fn verify_and_load_sweep(
     );
     let definition = SweepDefinition::parse(&spec_text).map_err(|error| error.to_string())?;
     let baseline_spec = definition.baseline().map_err(|error| error.to_string())?;
+    // `layer_count` sizes the derived point list, so bound it before use. No
+    // model the loader accepts has more layers.
+    if manifest.layer_count > crate::loader::limits::MAX_LAYERS {
+        report.check(
+            "layer count",
+            false,
+            format!(
+                "{} layers exceeds the {}-layer model limit",
+                manifest.layer_count,
+                crate::loader::limits::MAX_LAYERS
+            ),
+        );
+        return Ok((report, manifest));
+    }
     let derived = definition
         .points(manifest.layer_count)
         .map_err(|error| error.to_string())?;
@@ -841,6 +1060,71 @@ fn verify_and_load_sweep(
             && definition.interventions == manifest.interventions,
         "experiment name, layers, positions, alphas and swept interventions match the spec",
     );
+    match (&definition.effect, &manifest.effect) {
+        (None, None) => {}
+        (Some(declared), Some(recorded)) => {
+            // Re-encode only with the tokenizer the sweep ran with.
+            let tokenizer = options
+                .tokenizer_path
+                .as_ref()
+                .map(|path| {
+                    use crate::tokenizer::EmberTokenizer;
+                    let bytes = EmberTokenizer::read_file(path)
+                        .map_err(|error| format!("cannot read tokenizer: {error:#}"))?;
+                    let sha = sha256_hex(&bytes);
+                    if sha != manifest.tokenizer_sha256 {
+                        return Err(format!(
+                            "tokenizer '{}' hashes to {sha}, not the sweep's {}",
+                            path.display(),
+                            manifest.tokenizer_sha256
+                        ));
+                    }
+                    EmberTokenizer::from_bytes(&bytes)
+                        .map_err(|error| format!("cannot load tokenizer: {error:#}"))
+                })
+                .transpose();
+            match tokenizer {
+                Err(error) => report.check("sweep effect", false, error),
+                Ok(tokenizer) => {
+                    let (ok, unchecked) = declared.matches(recorded, |text| {
+                        tokenizer.as_ref().map(|tokenizer| {
+                            let ids = tokenizer
+                                .encode_no_special(text)
+                                .map_err(|error| error.to_string())?;
+                            match ids[..] {
+                                [id] => Ok(id),
+                                _ => Err(format!("token text {text:?} is {} tokens", ids.len())),
+                            }
+                        })
+                    });
+                    let detail = if unchecked == 0 {
+                        "capture, interval settings and target/foil tokens match the spec"
+                            .to_string()
+                    } else {
+                        format!(
+                            "capture, interval settings and token ids match the spec; \
+                             {unchecked} token text(s) not re-encoded (pass --tokenizer to \
+                             check them)"
+                        )
+                    };
+                    report.check("sweep effect", ok, detail);
+                }
+            }
+        }
+        (declared, _) => report.check(
+            "sweep effect",
+            false,
+            if declared.is_some() {
+                format!(
+                    "the spec has [sweep.effect] but {SWEEP_MANIFEST_FILE} has no effect record"
+                )
+            } else {
+                format!(
+                    "the spec has no [sweep.effect] but {SWEEP_MANIFEST_FILE} has an effect record"
+                )
+            },
+        ),
+    }
     let derived_ids: Vec<&str> = derived.iter().map(|point| point.id.as_str()).collect();
     let recorded_ids: Vec<&str> = manifest
         .points
@@ -954,10 +1238,10 @@ fn verify_and_load_sweep(
                 "the sweep spec does not derive this point",
             ),
         }
-        match point_metrics(&baseline, &bundle) {
-            Ok(metrics) => report.check(
+        match point_metrics_with_effect(&baseline, &bundle, manifest.effect.as_ref()) {
+            Ok((metrics, effect)) => report.check(
                 format!("{label} metrics"),
-                metrics == record.inputs,
+                metrics == record.inputs && effect == record.effect,
                 "recorded metrics equal the metrics recomputed from the bundles",
             ),
             Err(error) => report.check(format!("{label} metrics"), false, error),
@@ -971,6 +1255,16 @@ fn verify_and_load_sweep(
             "sweep.csv is the manifest's table",
         ),
         Err(error) => report.check("sweep csv", false, error.to_string()),
+    }
+    if let Some(table) = manifest.to_effect_csv() {
+        match read_sweep_file(&dir.join(SWEEP_EFFECT_CSV_FILE)) {
+            Ok(csv) => report.check(
+                "sweep effect csv",
+                csv == table.as_bytes(),
+                format!("{SWEEP_EFFECT_CSV_FILE} is the manifest's effect table"),
+            ),
+            Err(error) => report.check("sweep effect csv", false, error.to_string()),
+        }
     }
     Ok((report, manifest))
 }
@@ -1058,7 +1352,7 @@ pub fn compare_anchored_sweeps(
             present_in_b: pb.is_some(),
             semantic_hash_equal: matches!((pa, pb), (Some(x), Some(y)) if x.bundle.semantic_hash == y.bundle.semantic_hash),
             payload_hash_equal: matches!((pa, pb), (Some(x), Some(y)) if x.bundle.payload_hash == y.bundle.payload_hash),
-            metrics_equal: matches!((pa, pb), (Some(x), Some(y)) if x.inputs == y.inputs),
+            metrics_equal: matches!((pa, pb), (Some(x), Some(y)) if x.inputs == y.inputs && x.effect == y.effect),
         });
     }
     let exact = points
@@ -1235,6 +1529,56 @@ interventions = ["replace"]
     }
 
     #[test]
+    fn bundle_sources_move_only_when_asked() {
+        let bundle_spec = SPEC.replace(
+            "source = { kind = \"capture-from-current-run\", capture_id = \"rows\" }",
+            "source = { kind = \"capture-from-bundle\", bundle_path = \"runs/clean\", \
+             capture_id = \"rows\", input_id = \"a\", layer = 7 }",
+        );
+        assert_ne!(bundle_spec, SPEC);
+        let error = SweepDefinition::parse(&bundle_spec)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("move_bundle_sources = true"), "{error}");
+
+        let moving = format!("{bundle_spec}move_bundle_sources = true\n");
+        let definition = SweepDefinition::parse(&moving).unwrap();
+        assert!(definition.move_bundle_sources);
+        for point in definition.points(12).unwrap() {
+            let layer = point.layer.unwrap();
+            let replace = point
+                .resolved
+                .interventions
+                .iter()
+                .find(|i| i.id == "replace")
+                .unwrap();
+            match &replace.source {
+                Some(InterventionSource::CaptureFromBundle {
+                    layer: source_layer,
+                    ..
+                }) => assert_eq!(*source_layer, layer, "{}", point.id),
+                other => panic!("unexpected source {other:?}"),
+            }
+        }
+
+        // Sources do not move with positions, so the two are refused together.
+        let positions = format!("{moving}positions = [1, 2]\n");
+        let error = SweepDefinition::parse(&positions).unwrap_err().to_string();
+        assert!(error.contains("position sweep"), "{error}");
+
+        // The option needs layers and a swept bundle source.
+        let no_source = format!("{SPEC}move_bundle_sources = true\n");
+        let error = SweepDefinition::parse(&no_source).unwrap_err().to_string();
+        assert!(error.contains("no swept intervention reads"), "{error}");
+        let no_layers = moving.replace(
+            "layers = { start = 0, end = 12, step = 4 }",
+            "alphas = [1.0]",
+        );
+        let error = SweepDefinition::parse(&no_layers).unwrap_err().to_string();
+        assert!(error.contains("add `layers`"), "{error}");
+    }
+
+    #[test]
     fn stable_metrics_round_trip_through_json_exactly() {
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
         for _ in 0..20_000 {
@@ -1291,18 +1635,62 @@ interventions = ["replace"]
                     peak_layer: Some(1),
                     captures_compared: 2,
                     captures_exact: 1,
+                    baseline_metric: None,
+                    point_metric: None,
+                    effect: None,
                 }],
+                effect: None,
             }],
+            effect: None,
             sweep_hash: String::new(),
         };
         manifest.sweep_hash = manifest.compute_hash();
         let json = serde_json::to_string(&manifest).unwrap();
+        // A sweep without [sweep.effect] serializes exactly as before the
+        // effect fields existed, so earlier sweep hashes still verify.
+        for key in ["effect", "baseline_metric", "point_metric"] {
+            assert!(!json.contains(key), "{key} leaked into {json}");
+        }
         let back: SweepManifest = serde_json::from_str(&json).unwrap();
         assert_eq!(back, manifest);
         assert_eq!(back.compute_hash(), manifest.sweep_hash);
         assert!(manifest
             .to_csv()
             .contains("layer-01,1,,a,3,false,0.125,rows,residual-post-mlp,1,1,2,aa\n"));
+        assert!(manifest.to_effect_csv().is_none());
+
+        // With an effect record: extra CSV columns and the per-point table.
+        let token = |id| crate::v05::attribution::MetricToken {
+            token_id: id,
+            piece: format!("t{id}"),
+        };
+        manifest.effect = Some(SweepEffectRecord {
+            metric: crate::v05::effect::EFFECT_METRIC.into(),
+            interval: crate::v05::effect::EFFECT_INTERVAL.into(),
+            capture: "answer".into(),
+            confidence: 0.95,
+            resamples: 100,
+            seed: 0,
+            targets: vec![crate::v05::effect::SweepEffectTarget {
+                input_id: "a".into(),
+                target: token(1),
+                foil: token(2),
+            }],
+        });
+        let input = &mut manifest.points[0].inputs[0];
+        input.baseline_metric = Some(2.5);
+        input.point_metric = Some(1.0);
+        input.effect = Some(-1.5);
+        manifest.points[0].effect = Some(crate::v05::effect::summarize(&[-1.5], 0.95, 100, 0));
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: SweepManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, manifest);
+        assert!(manifest.to_csv().contains(",aa,2.5,1,-1.5\n"));
+        assert_eq!(
+            manifest.to_effect_csv().unwrap(),
+            "point,layer,position,alpha,n,mean,sd,standard_error,ci_low,ci_high,positive,\
+             negative,zero,sign_test_p\nlayer-01,1,,,1,-1.5,,,,,0,1,0,1\n"
+        );
         assert!(inside(Path::new("/s"), "../x").is_err());
         assert!(inside(Path::new("/s"), "/abs").is_err());
         assert!(inside(Path::new("/s"), "points/layer-01").is_ok());

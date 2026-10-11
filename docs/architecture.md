@@ -100,8 +100,8 @@ ember (src/)
 research layer (docs/v05-research-contract.md)
   v05/                 experiment specs, hook sites, captures, interventions,
                        the runner, bundle writer and offline verifier, plus
-                       sweeps, logit lens, steering, attribution and the
-                       probe bridge
+                       sweeps with effect statistics, logit lens,
+                       steering, attribution and the probe bridge
   experiments/         the v0.2 capture writer, activation patch and stats
                        experiments (re-exports the core hook framework)
   artifact/, compare.rs, extraction.rs   v0.2 activation artifacts

@@ -18,11 +18,12 @@ use crate::cli_experiment::{
 use anyhow::Context;
 use ember::plan::ExecutionMode;
 use ember::quant_k::KStrategy;
+use ember::v05::effect::SWEEP_EFFECT_CSV_FILE;
 use ember::v05::spec::ExperimentSpecV1;
 use ember::v05::sweep::{
-    point_metrics, verify_sweep, DerivedSpec, SweepBundleRef, SweepDefinition, SweepManifest,
-    SweepPointRecord, SweepVerification, SWEEP_CSV_FILE, SWEEP_MANIFEST_FILE, SWEEP_RUNTIME_FILE,
-    SWEEP_SCHEMA_V1, SWEEP_SPEC_FILE,
+    point_metrics_with_effect, verify_sweep, DerivedSpec, SweepBundleRef, SweepDefinition,
+    SweepManifest, SweepPointRecord, SweepVerification, SWEEP_CSV_FILE, SWEEP_MANIFEST_FILE,
+    SWEEP_RUNTIME_FILE, SWEEP_SCHEMA_V1, SWEEP_SPEC_FILE,
 };
 use ember::v05::verify::{load_bundle_for_source, VerifyOptions};
 use std::path::{Path, PathBuf};
@@ -71,6 +72,14 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
                 "layers": layers,
                 "positions": definition.positions,
                 "alphas": definition.alphas,
+                "move_bundle_sources": definition.move_bundle_sources,
+                "effect": definition.effect.as_ref().map(|effect| serde_json::json!({
+                    "capture": effect.capture,
+                    "targets": effect.targets.len(),
+                    "confidence": effect.confidence,
+                    "resamples": effect.resamples,
+                    "seed": effect.seed,
+                })),
                 "baseline_interventions": baseline.resolved.interventions.len(),
             }))?
         );
@@ -96,12 +105,26 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
         if let Some(alphas) = &definition.alphas {
             println!("  alphas: {alphas:?}");
         }
+        if definition.move_bundle_sources {
+            println!("  bundle sources: read at each point's layer (move_bundle_sources)");
+        }
         let checked = crate::cli_experiment_steering::check_direction_files(&definition.template)?;
         if checked > 0 {
             println!("  direction files: {checked} (hash and shape checked)");
         }
         if let Some(positions) = &definition.positions {
             println!("  positions: {positions:?}");
+        }
+        if let Some(effect) = &definition.effect {
+            println!(
+                "  effect: logit(target) - logit(foil) in capture '{}' for {} input(s); {}% \
+                 interval from {} bootstrap resamples (seed {}); tokens resolved at run time",
+                effect.capture,
+                effect.targets.len(),
+                effect.confidence * 100.0,
+                effect.resamples,
+                effect.seed
+            );
         }
         println!("  outputs: one bundle per point plus a baseline, and sweep.json/sweep.csv");
     }
@@ -140,6 +163,22 @@ pub(crate) fn run_sweep(
     let mut prepared = prepare_run(&template, k_strategy, k_allow_fallback)?;
     let load_ms = load_started.elapsed().as_secs_f64() * 1000.0;
     let n_layers = prepared.n_layers;
+    definition
+        .check_moved_bundle_sources(n_layers)
+        .map_err(anyhow::Error::msg)?;
+    // Resolve the effect tokens before anything runs, so a target that is
+    // not one token fails without a wasted sweep.
+    let effect = definition
+        .effect
+        .as_ref()
+        .map(|effect| {
+            effect.record(|token| {
+                crate::cli_experiment_attribution::resolve_token(&prepared, token)
+                    .map_err(|error| format!("{error:#}"))
+            })
+        })
+        .transpose()
+        .map_err(|error| anyhow::anyhow!("sweep.effect: {error}"))?;
     let mut baseline = definition
         .baseline()
         .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -199,13 +238,17 @@ pub(crate) fn run_sweep(
     let mut records = Vec::with_capacity(points.len());
     for (point, outcome) in points.iter().zip(&outcomes) {
         let bundle = load_bundle_for_source(&outcome.path).map_err(anyhow::Error::msg)?;
+        let (inputs, point_effect) =
+            point_metrics_with_effect(&baseline_bundle, &bundle, effect.as_ref())
+                .map_err(anyhow::Error::msg)?;
         records.push(SweepPointRecord {
             id: point.id.clone(),
             layer: point.layer,
             position: point.position,
             alpha: point.alpha,
             bundle: reference(outcome, &point.relative_dir),
-            inputs: point_metrics(&baseline_bundle, &bundle).map_err(anyhow::Error::msg)?,
+            inputs,
+            effect: point_effect,
         });
     }
     let mut manifest = SweepManifest {
@@ -222,6 +265,7 @@ pub(crate) fn run_sweep(
         positions: definition.positions.clone(),
         alphas: definition.alphas.clone(),
         interventions: definition.interventions.clone(),
+        effect,
         baseline: reference(&base, &baseline.relative_dir),
         points: records,
         sweep_hash: String::new(),
@@ -249,6 +293,9 @@ pub(crate) fn run_sweep(
     };
     write(SWEEP_SPEC_FILE, text.as_bytes())?;
     write(SWEEP_CSV_FILE, manifest.to_csv().as_bytes())?;
+    if let Some(table) = manifest.to_effect_csv() {
+        write(SWEEP_EFFECT_CSV_FILE, table.as_bytes())?;
+    }
     let mut runtime_bytes = serde_json::to_vec_pretty(&runtime)?;
     runtime_bytes.push(b'\n');
     write(SWEEP_RUNTIME_FILE, &runtime_bytes)?;
@@ -374,6 +421,78 @@ fn print_table(manifest: &SweepManifest) {
                 }
             );
         }
+    }
+    let Some(effect) = &manifest.effect else {
+        return;
+    };
+    let percent = effect.confidence * 100.0;
+    println!(
+        "effect: logit(target) - logit(foil) in capture '{}', point minus baseline, over {} \
+         input(s); {percent}% bootstrap interval ({} resamples, seed {})",
+        effect.capture,
+        effect.targets.len(),
+        effect.resamples,
+        effect.seed
+    );
+    // The baseline margin gives the scale of the effects.
+    let baseline: Vec<f64> = manifest
+        .points
+        .first()
+        .map(|point| {
+            point
+                .inputs
+                .iter()
+                .filter_map(|input| input.baseline_metric)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !baseline.is_empty() {
+        println!(
+            "  baseline metric: mean {:.4} over {} input(s)",
+            baseline.iter().sum::<f64>() / baseline.len() as f64,
+            baseline.len()
+        );
+    }
+    println!(
+        "  {:<24} {:>5} {:>7} {:>12} {:>27} {:>9} {:>10}",
+        "point", "layer", "alpha", "mean", "interval", "+/-/0", "sign p"
+    );
+    let number = |value: Option<f64>| {
+        value
+            .map(|value| format!("{value:.4}"))
+            .unwrap_or_else(|| "-".into())
+    };
+    for point in &manifest.points {
+        let Some(summary) = &point.effect else {
+            continue;
+        };
+        let interval = match (summary.ci_low, summary.ci_high) {
+            (Some(low), Some(high)) => format!("[{low:.4}, {high:.4}]"),
+            _ => "-".into(),
+        };
+        println!(
+            "  {:<24} {:>5} {:>7} {:>12} {:>27} {:>9} {:>10}",
+            point.id,
+            point
+                .layer
+                .map(|layer| layer.to_string())
+                .unwrap_or_else(|| "-".into()),
+            point
+                .alpha
+                .map(|alpha| alpha.to_string())
+                .unwrap_or_else(|| "-".into()),
+            number(Some(summary.mean)),
+            interval,
+            format!("{}/{}/{}", summary.positive, summary.negative, summary.zero),
+            summary
+                .sign_test_p
+                .map(|p| if p >= 1e-3 {
+                    format!("{p:.4}")
+                } else {
+                    format!("{p:.2e}")
+                })
+                .unwrap_or_else(|| "-".into()),
+        );
     }
 }
 
@@ -667,6 +786,15 @@ kind = "prompt-final"
             .checks
             .iter()
             .any(|check| !check.ok && check.name == "point layer-02 metrics"));
+        // A forged layer count fails a check before it sizes anything.
+        let mut huge = manifest.clone();
+        huge.layer_count = usize::MAX / 2;
+        huge.sweep_hash = huge.compute_hash();
+        let report = reseal(&huge);
+        assert!(report
+            .checks
+            .iter()
+            .any(|check| !check.ok && check.name == "layer count"));
         let mut swapped = manifest.clone();
         swapped.points[1].bundle = swapped.points[2].bundle.clone();
         swapped.sweep_hash = swapped.compute_hash();
@@ -676,6 +804,399 @@ kind = "prompt-final"
             .iter()
             .any(|check| !check.ok && check.name == "point layer-01 derivation"));
         assert!(reseal(&manifest).ok);
+    }
+
+    const EFFECT_BODY: &str = r#"
+[[inputs]]
+id = "a"
+text = "w3 w17 w5 w40 w9"
+
+[[inputs]]
+id = "b"
+text = "w8 w1 w33"
+
+[[inputs]]
+id = "c"
+text = "w2 w2 w60 w7"
+
+[[captures]]
+id = "answer"
+site = "logits"
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "scale"
+site = "residual-post-mlp"
+layers = [0]
+operation = { kind = "scale", factor = -3.0 }
+[interventions.tokens]
+kind = "prompt-final"
+"#;
+
+    const EFFECT_TABLE: &str = r#"
+[sweep]
+layers = "all"
+
+[sweep.effect]
+capture = "answer"
+resamples = 500
+seed = 3
+
+[[sweep.effect.targets]]
+input = "a"
+target = 10
+foil = 11
+
+[[sweep.effect.targets]]
+input = "c"
+target = "w20"
+foil = 21
+
+[[sweep.effect.targets]]
+input = "b"
+target = "w12"
+foil = "w13"
+"#;
+
+    #[test]
+    fn effect_statistics_cover_every_input_and_verify() {
+        let model = tiny_model("sweep-effect", 3, 64, false);
+        let text = format!(
+            "{}{EFFECT_TABLE}",
+            spec_text(&model, "reference", 2, EFFECT_BODY)
+        );
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        let effect_check = |report: &SweepVerification| {
+            report
+                .checks
+                .iter()
+                .find(|check| check.name == "sweep effect")
+                .cloned()
+                .unwrap()
+        };
+        // Two token texts ("w20", and "w12"/"w13" count as two) need a
+        // tokenizer to re-encode.
+        assert!(effect_check(&report)
+            .detail
+            .contains("3 token text(s) not re-encoded"));
+        let deep = VerifyOptions {
+            tokenizer_path: Some(model.tokenizer.clone()),
+            ..VerifyOptions::default()
+        };
+        let report = verify_sweep(&out, &deep).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        assert!(!effect_check(&report).detail.contains("not re-encoded"));
+        // Another tokenizer file is refused, not used to re-encode.
+        let other = model.dir.join("other-tokenizer.json");
+        let mut bytes = std::fs::read(&model.tokenizer).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(&other, bytes).unwrap();
+        let wrong = VerifyOptions {
+            tokenizer_path: Some(other),
+            ..VerifyOptions::default()
+        };
+        let check = effect_check(&verify_sweep(&out, &wrong).unwrap());
+        assert!(!check.ok && check.detail.contains("hashes to"), "{check:?}");
+
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        let effect = manifest.effect.as_ref().unwrap();
+        // Targets follow input order, whatever order the spec lists them in.
+        let resolved: Vec<(&str, u32, u32)> = effect
+            .targets
+            .iter()
+            .map(|t| (t.input_id.as_str(), t.target.token_id, t.foil.token_id))
+            .collect();
+        assert_eq!(resolved, [("a", 10, 11), ("b", 12, 13), ("c", 20, 21)]);
+        assert_eq!((effect.resamples, effect.seed), (500, 3));
+        for point in &manifest.points {
+            let summary = point.effect.as_ref().unwrap();
+            assert_eq!(summary.n, 3);
+            assert_eq!(summary.positive + summary.negative + summary.zero, 3);
+            let effects: Vec<f64> = point.inputs.iter().map(|i| i.effect.unwrap()).collect();
+            assert_eq!(
+                *summary,
+                ember::v05::effect::summarize(&effects, 0.95, 500, 3),
+                "the summary is a function of the recorded per-input effects"
+            );
+            for input in &point.inputs {
+                let (before, after) = (input.baseline_metric.unwrap(), input.point_metric.unwrap());
+                assert!((after - before - input.effect.unwrap()).abs() < 1e-6);
+            }
+        }
+        // Scaling the block output by -3 moves the logits somewhere.
+        assert!(manifest
+            .points
+            .iter()
+            .any(|point| point.effect.as_ref().unwrap().mean != 0.0));
+        let table = std::fs::read_to_string(out.join(SWEEP_EFFECT_CSV_FILE)).unwrap();
+        assert_eq!(table.lines().count(), 1 + manifest.points.len());
+        assert!(std::fs::read_to_string(out.join(SWEEP_CSV_FILE))
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with(",baseline_metric,point_metric,effect"));
+
+        // Tampering is caught.
+        let reseal = |manifest: &SweepManifest| {
+            std::fs::write(out.join(SWEEP_CSV_FILE), manifest.to_csv()).unwrap();
+            if let Some(table) = manifest.to_effect_csv() {
+                std::fs::write(out.join(SWEEP_EFFECT_CSV_FILE), table).unwrap();
+            }
+            std::fs::write(
+                out.join(SWEEP_MANIFEST_FILE),
+                serde_json::to_vec(manifest).unwrap(),
+            )
+            .unwrap();
+            verify_sweep(&out, &VerifyOptions::default()).unwrap()
+        };
+        let failed = |report: &SweepVerification, name: &str| {
+            report.checks.iter().any(|c| !c.ok && c.name == name)
+        };
+        let mut forged = manifest.clone();
+        forged.points[1].effect.as_mut().unwrap().mean += 1.0;
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "point layer-01 metrics"));
+        // A token id the spec names cannot be changed.
+        let mut forged = manifest.clone();
+        forged.effect.as_mut().unwrap().targets[0].foil.token_id = 12;
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "sweep effect"));
+        // Without the effect record the spec and sweep.json disagree.
+        let mut forged = manifest.clone();
+        forged.effect = None;
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "sweep effect"));
+        // Forged interval settings fail the checks; they never size an
+        // allocation or index the bootstrap.
+        for (confidence, resamples) in [(0.95, 0), (1.5, 500), (0.95, 1usize << 40)] {
+            let mut forged = manifest.clone();
+            let effect = forged.effect.as_mut().unwrap();
+            effect.confidence = confidence;
+            effect.resamples = resamples;
+            forged.sweep_hash = forged.compute_hash();
+            let report = reseal(&forged);
+            assert!(failed(&report, "sweep effect"), "{confidence} {resamples}");
+            assert!(failed(&report, "point layer-00 metrics"));
+        }
+        assert!(reseal(&manifest).ok);
+        std::fs::write(out.join(SWEEP_EFFECT_CSV_FILE), "point\n").unwrap();
+        assert!(failed(
+            &verify_sweep(&out, &VerifyOptions::default()).unwrap(),
+            "sweep effect csv"
+        ));
+    }
+
+    #[test]
+    fn patching_sweeps_read_the_source_at_each_point_layer() {
+        let model = tiny_model("sweep-patching", 3, 64, false);
+        // The clean run: the residual entering every block at the final
+        // token of each input.
+        let clean_body = r#"
+[[inputs]]
+id = "a"
+text = "w3 w17 w5 w40 w9"
+
+[[inputs]]
+id = "b"
+text = "w8 w1 w33"
+
+[[captures]]
+id = "rows"
+site = "residual-pre-attention"
+layers = "all"
+[captures.tokens]
+kind = "prompt-final"
+"#;
+        let clean_dir = model.dir.join("clean");
+        let clean_text = spec_text(&model, "reference", 0, clean_body).replace(
+            "directory = \"unused\"",
+            &format!("directory = {clean_dir:?}"),
+        );
+        let mut prepared = prepare_run(
+            &crate::experiment_testutil::resolve(&clean_text),
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        execute_prepared(
+            &mut prepared,
+            &crate::experiment_testutil::resolve(&clean_text),
+            &clean_text,
+            &clean_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        // The corrupted inputs differ before the final token, which they
+        // share with the clean inputs.
+        let source = |input: &str| {
+            format!(
+                "source = {{ kind = \"capture-from-bundle\", bundle_path = {clean_dir:?}, \
+                 capture_id = \"rows\", input_id = \"{input}\", layer = 0 }}"
+            )
+        };
+        let body = format!(
+            r#"
+[[inputs]]
+id = "a"
+text = "w3 w18 w6 w41 w9"
+
+[[inputs]]
+id = "b"
+text = "w7 w2 w33"
+
+[[captures]]
+id = "answer"
+site = "logits"
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-a"
+site = "residual-pre-attention"
+layers = [0]
+inputs = ["a"]
+operation = {{ kind = "replace" }}
+{}
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-b"
+site = "residual-pre-attention"
+layers = [0]
+inputs = ["b"]
+operation = {{ kind = "replace" }}
+{}
+[interventions.tokens]
+kind = "prompt-final"
+"#,
+            source("a"),
+            source("b")
+        );
+        let table = r#"
+[sweep]
+layers = "all"
+move_bundle_sources = true
+
+[sweep.effect]
+capture = "answer"
+resamples = 200
+
+[[sweep.effect.targets]]
+input = "a"
+target = 10
+foil = 11
+
+[[sweep.effect.targets]]
+input = "b"
+target = 12
+foil = 13
+"#;
+        let text = format!("{}{table}", spec_text(&model, "reference", 0, &body));
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        // Layer 0 reads the embedding of the shared final token: a no-op.
+        let first = &manifest.points[0];
+        assert_eq!(first.id, "layer-00");
+        assert!(first.inputs.iter().all(|input| input.effect == Some(0.0)));
+        // A later layer carries the clean prefix into the final token.
+        assert!(manifest.points[1..]
+            .iter()
+            .any(|point| point.inputs.iter().any(|input| input.effect != Some(0.0))));
+        // Each point's bundle names its own source layer.
+        for point in &manifest.points {
+            let toml =
+                std::fs::read_to_string(out.join(&point.bundle.bundle).join("experiment.toml"))
+                    .unwrap();
+            let layer = point.layer.unwrap();
+            assert_eq!(
+                toml.matches(&format!("layer = {layer}")).count(),
+                2,
+                "{}: {toml}",
+                point.id
+            );
+        }
+
+        // A source bundle without one of the swept layers fails before
+        // anything runs.
+        let narrow_dir = model.dir.join("clean-narrow");
+        let narrow_text = clean_text
+            .replace("layers = \"all\"", "layers = [0, 1]")
+            .replace(&format!("{clean_dir:?}"), &format!("{narrow_dir:?}"));
+        execute_prepared(
+            &mut prepared,
+            &crate::experiment_testutil::resolve(&narrow_text),
+            &narrow_text,
+            &narrow_dir,
+            false,
+            None,
+        )
+        .unwrap();
+        let text = text.replace(&format!("{clean_dir:?}"), &format!("{narrow_dir:?}"));
+        let out = model.dir.join("sweep-narrow");
+        let error = run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("at residual-pre-attention layer 2"),
+            "{error}"
+        );
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn effect_targets_must_be_single_tokens_before_anything_runs() {
+        let model = tiny_model("sweep-effect-token", 2, 64, false);
+        let text = format!(
+            "{}{}",
+            spec_text(&model, "reference", 0, EFFECT_BODY),
+            EFFECT_TABLE.replace("target = \"w12\"", "target = \"w12 w14\"")
+        );
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        let error = run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("encodes to 2 tokens"), "{error}");
+        assert!(!out.exists(), "nothing ran");
     }
 
     #[test]
