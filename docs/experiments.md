@@ -232,7 +232,9 @@ Each *point* is the spec with the swept interventions at `layers = [L]`
 (and, with `positions`, `tokens = { kind = "absolute-token", index = P }`);
 everything else is unchanged. The *baseline* is the spec without
 interventions. Swept interventions must use per-layer sites; a
-`capture-from-bundle` source (fixed layer) cannot be swept, and a
+`capture-from-bundle` source (fixed layer) cannot be swept unless
+`move_bundle_sources = true` (see [Patching from a bundle across
+layers](#patching-from-a-bundle-across-layers)), and a
 `capture-from-current-run` source must be at the swept site and capture
 every swept layer. A sweep spec never resolves as a single experiment.
 
@@ -297,6 +299,47 @@ Llama-3.2-1B (Apple M1 Pro, 8 threads) the example sweep takes about 13 s
 (4.9 s model load, 7.5 s for 17 bundles); running the baseline and the 16
 derived specs as separate `experiment run`s takes about 86 s, with
 hash-identical bundles.
+
+### Patching from a bundle across layers
+
+Activation patching runs a corrupted prompt with a row from a clean run. A
+`capture-from-bundle` source names one layer. With
+`move_bundle_sources = true` in `[sweep]`, each point also sets the source
+`layer` of every swept `capture-from-bundle` source to the point's layer.
+Thus each point patches layer `L` with the clean row from layer `L`:
+
+```toml
+[[interventions]]
+id = "patch-france"
+site = "residual-pre-attention"
+layers = [0]                    # the sweep moves this
+inputs = ["france"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-residual", input_id = "france", layer = 0 }
+[interventions.tokens]
+kind = "prompt-final"
+
+[sweep]
+layers = "all"
+move_bundle_sources = true
+```
+
+The option needs `layers`, and at least one swept intervention must read a
+`capture-from-bundle` source. It cannot be combined with `positions`: the
+source moves to the point's layer, not to its token, so every position
+would receive the same source row. Before the sweep runs, Ember verifies each
+source bundle and checks that it holds the capture, for that input and
+site, at every swept layer. Each derived spec names its source layer, so a
+point bundle is still the bundle that its derived spec gives alone. All
+other source rules stay the same (see [interventions](interventions.md)): the
+source bundle must verify, its model and tokenizer must match, and the
+source and target layers must be equal. An unpinned source records a warning
+in each point bundle; set `semantic_hash` to pin it.
+
+With `[sweep.effect]`, the baseline is the corrupted run, so the effect of a
+point is the part of the clean-minus-corrupted metric gap that the patch
+recovers. See `examples/experiments/capital-clean.toml` and
+`examples/experiments/capital-patching-sweep.toml`.
 
 ### Effect statistics across inputs
 
@@ -366,7 +409,8 @@ before.
 
 **Compatibility.** The new fields are optional additions. The sweep readers
 are strict, so an Ember binary without these fields rejects a sweep spec with
-`[sweep.effect]`, and a `sweep.json` with `effect` records. It does not reinterpret them. Point bundles do not change: each one
+`[sweep.effect]` or `move_bundle_sources`, and a `sweep.json` with `effect`
+records. It does not reinterpret them. Point bundles do not change: each one
 is an ordinary `ember.bundle.v1` bundle.
 
 **Verification.** `verify` reads the effect from the bundles again,

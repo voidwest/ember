@@ -72,6 +72,7 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
                 "layers": layers,
                 "positions": definition.positions,
                 "alphas": definition.alphas,
+                "move_bundle_sources": definition.move_bundle_sources,
                 "effect": definition.effect.as_ref().map(|effect| serde_json::json!({
                     "capture": effect.capture,
                     "targets": effect.targets.len(),
@@ -103,6 +104,9 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
         }
         if let Some(alphas) = &definition.alphas {
             println!("  alphas: {alphas:?}");
+        }
+        if definition.move_bundle_sources {
+            println!("  bundle sources: read at each point's layer (move_bundle_sources)");
         }
         let checked = crate::cli_experiment_steering::check_direction_files(&definition.template)?;
         if checked > 0 {
@@ -159,6 +163,9 @@ pub(crate) fn run_sweep(
     let mut prepared = prepare_run(&template, k_strategy, k_allow_fallback)?;
     let load_ms = load_started.elapsed().as_secs_f64() * 1000.0;
     let n_layers = prepared.n_layers;
+    definition
+        .check_moved_bundle_sources(n_layers)
+        .map_err(anyhow::Error::msg)?;
     // Resolve the effect tokens before anything runs, so a target that is
     // not one token fails without a wasted sweep.
     let effect = definition
@@ -991,6 +998,182 @@ foil = "w13"
             &verify_sweep(&out, &VerifyOptions::default()).unwrap(),
             "sweep effect csv"
         ));
+    }
+
+    #[test]
+    fn patching_sweeps_read_the_source_at_each_point_layer() {
+        let model = tiny_model("sweep-patching", 3, 64, false);
+        // The clean run: the residual entering every block at the final
+        // token of each input.
+        let clean_body = r#"
+[[inputs]]
+id = "a"
+text = "w3 w17 w5 w40 w9"
+
+[[inputs]]
+id = "b"
+text = "w8 w1 w33"
+
+[[captures]]
+id = "rows"
+site = "residual-pre-attention"
+layers = "all"
+[captures.tokens]
+kind = "prompt-final"
+"#;
+        let clean_dir = model.dir.join("clean");
+        let clean_text = spec_text(&model, "reference", 0, clean_body).replace(
+            "directory = \"unused\"",
+            &format!("directory = {clean_dir:?}"),
+        );
+        let mut prepared = prepare_run(
+            &crate::experiment_testutil::resolve(&clean_text),
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        execute_prepared(
+            &mut prepared,
+            &crate::experiment_testutil::resolve(&clean_text),
+            &clean_text,
+            &clean_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        // The corrupted inputs differ before the final token, which they
+        // share with the clean inputs.
+        let source = |input: &str| {
+            format!(
+                "source = {{ kind = \"capture-from-bundle\", bundle_path = {clean_dir:?}, \
+                 capture_id = \"rows\", input_id = \"{input}\", layer = 0 }}"
+            )
+        };
+        let body = format!(
+            r#"
+[[inputs]]
+id = "a"
+text = "w3 w18 w6 w41 w9"
+
+[[inputs]]
+id = "b"
+text = "w7 w2 w33"
+
+[[captures]]
+id = "answer"
+site = "logits"
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-a"
+site = "residual-pre-attention"
+layers = [0]
+inputs = ["a"]
+operation = {{ kind = "replace" }}
+{}
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-b"
+site = "residual-pre-attention"
+layers = [0]
+inputs = ["b"]
+operation = {{ kind = "replace" }}
+{}
+[interventions.tokens]
+kind = "prompt-final"
+"#,
+            source("a"),
+            source("b")
+        );
+        let table = r#"
+[sweep]
+layers = "all"
+move_bundle_sources = true
+
+[sweep.effect]
+capture = "answer"
+resamples = 200
+
+[[sweep.effect.targets]]
+input = "a"
+target = 10
+foil = 11
+
+[[sweep.effect.targets]]
+input = "b"
+target = 12
+foil = 13
+"#;
+        let text = format!("{}{table}", spec_text(&model, "reference", 0, &body));
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        // Layer 0 reads the embedding of the shared final token: a no-op.
+        let first = &manifest.points[0];
+        assert_eq!(first.id, "layer-00");
+        assert!(first.inputs.iter().all(|input| input.effect == Some(0.0)));
+        // A later layer carries the clean prefix into the final token.
+        assert!(manifest.points[1..]
+            .iter()
+            .any(|point| point.inputs.iter().any(|input| input.effect != Some(0.0))));
+        // Each point's bundle names its own source layer.
+        for point in &manifest.points {
+            let toml =
+                std::fs::read_to_string(out.join(&point.bundle.bundle).join("experiment.toml"))
+                    .unwrap();
+            let layer = point.layer.unwrap();
+            assert_eq!(
+                toml.matches(&format!("layer = {layer}")).count(),
+                2,
+                "{}: {toml}",
+                point.id
+            );
+        }
+
+        // A source bundle without one of the swept layers fails before
+        // anything runs.
+        let narrow_dir = model.dir.join("clean-narrow");
+        let narrow_text = clean_text
+            .replace("layers = \"all\"", "layers = [0, 1]")
+            .replace(&format!("{clean_dir:?}"), &format!("{narrow_dir:?}"));
+        execute_prepared(
+            &mut prepared,
+            &crate::experiment_testutil::resolve(&narrow_text),
+            &narrow_text,
+            &narrow_dir,
+            false,
+            None,
+        )
+        .unwrap();
+        let text = text.replace(&format!("{clean_dir:?}"), &format!("{narrow_dir:?}"));
+        let out = model.dir.join("sweep-narrow");
+        let error = run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("at residual-pre-attention layer 2"),
+            "{error}"
+        );
+        assert!(!out.exists());
     }
 
     #[test]

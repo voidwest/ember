@@ -84,6 +84,10 @@ pub struct RawSweepSpec {
     /// Intervention ids to sweep (default: every intervention).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interventions: Option<Vec<String>>,
+    /// Move the layer of every swept `capture-from-bundle` source with the
+    /// swept layer, so each point reads the source row at its own layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_bundle_sources: Option<bool>,
     /// Effect statistics across the inputs (`crate::v05::effect`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<RawEffectSpec>,
@@ -103,6 +107,8 @@ pub struct SweepDefinition {
     pub alphas: Option<Vec<f64>>,
     /// Swept intervention ids, in declaration order.
     pub interventions: Vec<String>,
+    /// Swept `capture-from-bundle` sources read the point's layer.
+    pub move_bundle_sources: bool,
     /// Effect statistics across the inputs, when `[sweep.effect]` is given.
     pub effect: Option<EffectDefinition>,
     /// The spec without `[sweep]`, resolved (interventions at their
@@ -224,6 +230,37 @@ impl SweepDefinition {
                 Some(list)
             }
         };
+        let move_bundle_sources = sweep.move_bundle_sources.unwrap_or(false);
+        if move_bundle_sources {
+            if sweep.layers.is_none() {
+                return Err(SpecError::at(
+                    "sweep.move_bundle_sources",
+                    "bundle sources move with swept layers; add `layers`",
+                ));
+            }
+            // A source moves to the point's layer but not to its position, so
+            // every position would receive the source's own token row.
+            if sweep.positions.is_some() {
+                return Err(SpecError::at(
+                    "sweep.move_bundle_sources",
+                    "bundle sources move with layers only; a position sweep would patch \
+                     every position with the source's own token row",
+                ));
+            }
+            let moves_any = template.interventions.iter().any(|intervention| {
+                swept.contains(&intervention.id)
+                    && matches!(
+                        intervention.source,
+                        Some(InterventionSource::CaptureFromBundle { .. })
+                    )
+            });
+            if !moves_any {
+                return Err(SpecError::at(
+                    "sweep.move_bundle_sources",
+                    "no swept intervention reads a capture-from-bundle source",
+                ));
+            }
+        }
         for (index, intervention) in template.interventions.iter().enumerate() {
             if !swept.contains(&intervention.id) {
                 continue;
@@ -252,11 +289,12 @@ impl SweepDefinition {
                 ));
             }
             match &intervention.source {
-                Some(InterventionSource::CaptureFromBundle { .. }) => {
+                Some(InterventionSource::CaptureFromBundle { .. }) if !move_bundle_sources => {
                     return Err(SpecError::at(
                         format!("{path}.source"),
                         "a capture-from-bundle source names one fixed layer and cannot move \
-                         across a layer sweep",
+                         across a layer sweep (set sweep.move_bundle_sources = true to read \
+                         the source at each point's layer)",
                     ));
                 }
                 Some(InterventionSource::CaptureFromCurrentRun { capture_id }) => {
@@ -323,6 +361,7 @@ impl SweepDefinition {
             positions,
             alphas,
             interventions: swept,
+            move_bundle_sources,
             effect,
             template,
             document,
@@ -338,6 +377,61 @@ impl SweepDefinition {
                 .resolve(n_layers)
                 .map_err(|error| SpecError::at("sweep.layers", error)),
         }
+    }
+
+    /// With `move_bundle_sources`: check, before anything runs, that every
+    /// moved source bundle verifies and holds its capture at every swept
+    /// layer. Each point loads its source again when it runs.
+    pub fn check_moved_bundle_sources(&self, n_layers: usize) -> Result<(), String> {
+        if !self.move_bundle_sources {
+            return Ok(());
+        }
+        let layers = self
+            .resolve_layers(n_layers)
+            .map_err(|error| error.to_string())?;
+        let mut loaded: Vec<(PathBuf, LoadedBundle)> = Vec::new();
+        for intervention in &self.template.interventions {
+            let Some(InterventionSource::CaptureFromBundle {
+                bundle_path,
+                capture_id,
+                input_id,
+                ..
+            }) = &intervention.source
+            else {
+                continue;
+            };
+            if !self.interventions.contains(&intervention.id) {
+                continue;
+            }
+            let index = match loaded.iter().position(|(path, _)| path == bundle_path) {
+                Some(index) => index,
+                None => {
+                    let bundle = crate::v05::verify::load_bundle_for_source(bundle_path)
+                        .map_err(|error| format!("intervention {:?}: {error}", intervention.id))?;
+                    loaded.push((bundle_path.clone(), bundle));
+                    loaded.len() - 1
+                }
+            };
+            let bundle = &loaded[index].1;
+            if let Some(missing) = layers.iter().find(|&&layer| {
+                !bundle.capture_index.iter().any(|entry| {
+                    entry.capture_id == *capture_id
+                        && entry.input_id == *input_id
+                        && entry.site == intervention.site
+                        && entry.layer == layer
+                })
+            }) {
+                return Err(format!(
+                    "intervention {:?}: source bundle '{}' has no capture {capture_id:?} of \
+                     input {input_id:?} at {} layer {missing}; a sweep with \
+                     move_bundle_sources reads the source at every swept layer",
+                    intervention.id,
+                    bundle_path.display(),
+                    intervention.site
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn output_root(&self) -> String {
@@ -483,6 +577,15 @@ impl SweepDefinition {
                                     "layers".into(),
                                     toml::Value::Array(vec![toml::Value::Integer(layer as i64)]),
                                 );
+                                if self.move_bundle_sources
+                                    && let Some(toml::Value::Table(source)) =
+                                        table.get_mut("source")
+                                    && source.get("kind").and_then(toml::Value::as_str)
+                                        == Some("capture-from-bundle")
+                                {
+                                    source
+                                        .insert("layer".into(), toml::Value::Integer(layer as i64));
+                                }
                             }
                             if let (Some(alpha), Some(toml::Value::Table(operation))) =
                                 (alpha, table.get_mut("operation"))
@@ -1423,6 +1526,56 @@ interventions = ["replace"]
             error.message.contains("does not capture layer 8"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn bundle_sources_move_only_when_asked() {
+        let bundle_spec = SPEC.replace(
+            "source = { kind = \"capture-from-current-run\", capture_id = \"rows\" }",
+            "source = { kind = \"capture-from-bundle\", bundle_path = \"runs/clean\", \
+             capture_id = \"rows\", input_id = \"a\", layer = 7 }",
+        );
+        assert_ne!(bundle_spec, SPEC);
+        let error = SweepDefinition::parse(&bundle_spec)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("move_bundle_sources = true"), "{error}");
+
+        let moving = format!("{bundle_spec}move_bundle_sources = true\n");
+        let definition = SweepDefinition::parse(&moving).unwrap();
+        assert!(definition.move_bundle_sources);
+        for point in definition.points(12).unwrap() {
+            let layer = point.layer.unwrap();
+            let replace = point
+                .resolved
+                .interventions
+                .iter()
+                .find(|i| i.id == "replace")
+                .unwrap();
+            match &replace.source {
+                Some(InterventionSource::CaptureFromBundle {
+                    layer: source_layer,
+                    ..
+                }) => assert_eq!(*source_layer, layer, "{}", point.id),
+                other => panic!("unexpected source {other:?}"),
+            }
+        }
+
+        // Sources do not move with positions, so the two are refused together.
+        let positions = format!("{moving}positions = [1, 2]\n");
+        let error = SweepDefinition::parse(&positions).unwrap_err().to_string();
+        assert!(error.contains("position sweep"), "{error}");
+
+        // The option needs layers and a swept bundle source.
+        let no_source = format!("{SPEC}move_bundle_sources = true\n");
+        let error = SweepDefinition::parse(&no_source).unwrap_err().to_string();
+        assert!(error.contains("no swept intervention reads"), "{error}");
+        let no_layers = moving.replace(
+            "layers = { start = 0, end = 12, step = 4 }",
+            "alphas = [1.0]",
+        );
+        let error = SweepDefinition::parse(&no_layers).unwrap_err().to_string();
+        assert!(error.contains("add `layers`"), "{error}");
     }
 
     #[test]

@@ -77,6 +77,14 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
    test (`sweep-effect.csv`; see
    `docs/experiments.md#effect-statistics-across-inputs`).
 
+9. `capital-clean.toml` and `capital-patching-sweep.toml` — activation
+   patching across layers over eight prompt pairs. The clean run captures
+   the final-token residual stream at every layer. The sweep patches it into
+   the corrupted prompts one layer at a time
+   (`move_bundle_sources = true`), and `[sweep.effect]` reports how much of
+   the clean-minus-corrupted logit gap each layer recovers. Run the clean
+   spec first (see `docs/experiments.md#patching-from-a-bundle-across-layers`).
+
 ## Commands
 
 ```bash

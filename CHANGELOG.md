@@ -24,6 +24,14 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
   has one row per point. `verify` recalculates all of it from the bundles. A
   sweep without the table writes the same files and `sweep_hash` as before.
   Example: `examples/experiments/capital-effect-sweep.toml`.
+- Sweeps: `move_bundle_sources = true` lets a layer sweep move
+  `capture-from-bundle` sources with the swept layer, so each point patches
+  layer `L` with the source row from layer `L`. Before the sweep runs, Ember
+  checks that each source bundle holds the capture at every swept layer.
+  With `[sweep.effect]`, this gives activation patching across layers with
+  statistics over prompt pairs. Examples:
+  `examples/experiments/capital-clean.toml` and
+  `examples/experiments/capital-patching-sweep.toml`.
 
 ## [1.0.0] — release candidate (staged; pending external acceptance gates)
 
