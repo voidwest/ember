@@ -1,0 +1,2 @@
+{"final_top1":{"logit":3.4619953632354736,"token_id":18},"generated_text":"w36 w18","generated_token_ids":[36,18],"input_id":"a"}
+{"final_top1":{"logit":4.39107608795166,"token_id":43},"generated_text":"w16 w43","generated_token_ids":[16,43],"input_id":"b"}

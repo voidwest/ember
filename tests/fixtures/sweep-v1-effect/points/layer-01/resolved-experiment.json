@@ -1,0 +1,168 @@
+{
+  "captures": [
+    {
+      "dtype": "f32",
+      "id": "rows",
+      "inputs": "all",
+      "layers": "all",
+      "site": "residual-post-mlp",
+      "storage": "selected-rows",
+      "tokens": {
+        "kind": "prompt-final"
+      }
+    },
+    {
+      "dtype": "f32",
+      "id": "answer",
+      "inputs": "all",
+      "layers": "all",
+      "site": "logits",
+      "storage": "selected-rows",
+      "tokens": {
+        "kind": "prompt-final"
+      }
+    }
+  ],
+  "defaults": [
+    {
+      "field": "experiment.seed",
+      "value": "0"
+    },
+    {
+      "field": "model.expected_sha256",
+      "value": ""
+    },
+    {
+      "field": "model.tokenizer_expected_sha256",
+      "value": ""
+    },
+    {
+      "field": "model.arch",
+      "value": "auto"
+    },
+    {
+      "field": "execution.deterministic",
+      "value": "true"
+    },
+    {
+      "field": "generation.temperature",
+      "value": "0.0"
+    },
+    {
+      "field": "output.tensor_format",
+      "value": "safetensors"
+    },
+    {
+      "field": "output.overwrite",
+      "value": "false"
+    },
+    {
+      "field": "captures[0].dtype",
+      "value": "f32"
+    },
+    {
+      "field": "captures[0].inputs",
+      "value": "all"
+    },
+    {
+      "field": "captures[0].storage",
+      "value": "selected-rows"
+    },
+    {
+      "field": "captures[1].dtype",
+      "value": "f32"
+    },
+    {
+      "field": "captures[1].inputs",
+      "value": "all"
+    },
+    {
+      "field": "captures[1].layers",
+      "value": "all"
+    },
+    {
+      "field": "captures[1].storage",
+      "value": "selected-rows"
+    },
+    {
+      "field": "interventions[0].compatibility.allow_model_mismatch",
+      "value": "false"
+    },
+    {
+      "field": "interventions[0].compatibility.allow_tokenizer_mismatch",
+      "value": "false"
+    },
+    {
+      "field": "interventions[0].inputs",
+      "value": "all"
+    },
+    {
+      "field": "interventions[0].shape_policy",
+      "value": "strict"
+    },
+    {
+      "field": "interventions[0].source",
+      "value": "null"
+    }
+  ],
+  "execution": {
+    "deterministic": true,
+    "mode": "reference",
+    "threads": 1
+  },
+  "experiment": {
+    "description": "Frozen sweep fixture on a synthetic 2-layer model.",
+    "name": "sweep-v1-effect.layer-01",
+    "seed": 0
+  },
+  "generation": {
+    "max_new_tokens": 2,
+    "temperature": 0.0
+  },
+  "inputs": [
+    {
+      "id": "a",
+      "text": "w3 w17 w5 w40 w9"
+    },
+    {
+      "id": "b",
+      "text": "w8 w1 w33"
+    }
+  ],
+  "interventions": [
+    {
+      "compatibility": {
+        "allow_model_mismatch": false,
+        "allow_tokenizer_mismatch": false
+      },
+      "id": "scale",
+      "inputs": "all",
+      "layers": [
+        1
+      ],
+      "operation": {
+        "factor": -3.0,
+        "kind": "scale"
+      },
+      "shape_policy": "strict",
+      "site": "residual-post-mlp",
+      "source": null,
+      "tokens": {
+        "kind": "prompt-final"
+      }
+    }
+  ],
+  "model": {
+    "arch": "auto",
+    "expected_sha256": "",
+    "path": "tiny.gguf",
+    "tokenizer": "tokenizer.json",
+    "tokenizer_expected_sha256": ""
+  },
+  "output": {
+    "directory": "sweep-v1-effect/points/layer-01",
+    "overwrite": false,
+    "tensor_format": "safetensors"
+  },
+  "schema": "ember.experiment.v1"
+}

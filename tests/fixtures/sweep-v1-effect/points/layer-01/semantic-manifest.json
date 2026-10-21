@@ -1,0 +1,308 @@
+{
+  "bundle_schema": "ember.bundle.v1",
+  "experiment_schema": "ember.experiment.v1",
+  "hook_schema": 1,
+  "plan_schema": 1,
+  "ember_version": "1.0.0",
+  "ember_commit": "8226c84b89a7bd51e345f5ab9afda9415cc17539",
+  "experiment": {
+    "name": "sweep-v1-effect.layer-01",
+    "description": "Frozen sweep fixture on a synthetic 2-layer model.",
+    "seed": 0
+  },
+  "model": {
+    "sha256": "80ffe29839bc0d26f132cd294c2d7b366ed3022f10915e34b1e3a45f10c44f9b",
+    "architecture": "llama",
+    "layer_count": 2,
+    "embed_dim": 64,
+    "vocab_size": 64,
+    "quantization": "f32:21"
+  },
+  "tokenizer": {
+    "sha256": "e299b8b95ed363ace6bda53ade5d4f85770781ce74491431f53ddcc8b672647e",
+    "vocab_size": 64
+  },
+  "execution": {
+    "mode": "reference",
+    "deterministic": true,
+    "plan_hash": "d16ac10472d6520421867cbb042e9e60ce758faad98e172b005bc9763e47e0fb"
+  },
+  "inputs": [
+    {
+      "id": "a",
+      "prompt_hash": "308455d92d2f1b4db51c168bd3314ae735bbe8c7761b761bff4ed7e61e82c5b0"
+    },
+    {
+      "id": "b",
+      "prompt_hash": "04678f55fdac1ea5884d5ffe881ad788ea2ac303158c7629afe7ebba86b146a2"
+    }
+  ],
+  "token_selections": [
+    {
+      "selector": {
+        "kind": "prompt-final"
+      },
+      "rule": "prompt-final",
+      "input_text": "w3 w17 w5 w40 w9",
+      "normalized_text": "w3 w17 w5 w40 w9",
+      "token_ids": [
+        3,
+        17,
+        5,
+        40,
+        9
+      ],
+      "pieces": [
+        "w3",
+        "w17",
+        "w5",
+        "w40",
+        "w9"
+      ],
+      "byte_offsets": [
+        [
+          0,
+          2
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          7,
+          9
+        ],
+        [
+          10,
+          13
+        ],
+        [
+          14,
+          16
+        ]
+      ],
+      "matched_byte_span": null,
+      "selected_indices": [
+        4
+      ],
+      "coverage": "exact",
+      "boundary_expansion": null,
+      "ambiguity": "resolved",
+      "round_trip": "not-applicable",
+      "note": null
+    },
+    {
+      "selector": {
+        "kind": "prompt-final"
+      },
+      "rule": "prompt-final",
+      "input_text": "w3 w17 w5 w40 w9",
+      "normalized_text": "w3 w17 w5 w40 w9",
+      "token_ids": [
+        3,
+        17,
+        5,
+        40,
+        9
+      ],
+      "pieces": [
+        "w3",
+        "w17",
+        "w5",
+        "w40",
+        "w9"
+      ],
+      "byte_offsets": [
+        [
+          0,
+          2
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          7,
+          9
+        ],
+        [
+          10,
+          13
+        ],
+        [
+          14,
+          16
+        ]
+      ],
+      "matched_byte_span": null,
+      "selected_indices": [
+        4
+      ],
+      "coverage": "exact",
+      "boundary_expansion": null,
+      "ambiguity": "resolved",
+      "round_trip": "not-applicable",
+      "note": null
+    },
+    {
+      "selector": {
+        "kind": "prompt-final"
+      },
+      "rule": "prompt-final",
+      "input_text": "w8 w1 w33",
+      "normalized_text": "w8 w1 w33",
+      "token_ids": [
+        8,
+        1,
+        33
+      ],
+      "pieces": [
+        "w8",
+        "w1",
+        "w33"
+      ],
+      "byte_offsets": [
+        [
+          0,
+          2
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          6,
+          9
+        ]
+      ],
+      "matched_byte_span": null,
+      "selected_indices": [
+        2
+      ],
+      "coverage": "exact",
+      "boundary_expansion": null,
+      "ambiguity": "resolved",
+      "round_trip": "not-applicable",
+      "note": null
+    },
+    {
+      "selector": {
+        "kind": "prompt-final"
+      },
+      "rule": "prompt-final",
+      "input_text": "w8 w1 w33",
+      "normalized_text": "w8 w1 w33",
+      "token_ids": [
+        8,
+        1,
+        33
+      ],
+      "pieces": [
+        "w8",
+        "w1",
+        "w33"
+      ],
+      "byte_offsets": [
+        [
+          0,
+          2
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          6,
+          9
+        ]
+      ],
+      "matched_byte_span": null,
+      "selected_indices": [
+        2
+      ],
+      "coverage": "exact",
+      "boundary_expansion": null,
+      "ambiguity": "resolved",
+      "round_trip": "not-applicable",
+      "note": null
+    }
+  ],
+  "captures": [
+    {
+      "id": "rows",
+      "site": "residual-post-mlp",
+      "layers": "all",
+      "tokens": {
+        "kind": "prompt-final"
+      },
+      "inputs": "all",
+      "storage": "selected-rows",
+      "dtype": "f32"
+    },
+    {
+      "id": "answer",
+      "site": "logits",
+      "layers": "all",
+      "tokens": {
+        "kind": "prompt-final"
+      },
+      "inputs": "all",
+      "storage": "selected-rows",
+      "dtype": "f32"
+    }
+  ],
+  "interventions": [
+    {
+      "id": "scale",
+      "site": "residual-post-mlp",
+      "layers": [
+        1
+      ],
+      "tokens": {
+        "kind": "prompt-final"
+      },
+      "inputs": "all",
+      "operation": {
+        "kind": "scale",
+        "factor": -3.0
+      },
+      "source": null,
+      "shape_policy": "strict",
+      "compatibility": {
+        "allow_model_mismatch": false,
+        "allow_tokenizer_mismatch": false
+      }
+    }
+  ],
+  "generated": {
+    "token_ids": [
+      [
+        31,
+        56
+      ],
+      [
+        31,
+        49
+      ]
+    ],
+    "texts": [
+      "w31 w56",
+      "w31 w49"
+    ]
+  },
+  "payloads": {
+    "captures/index.jsonl": "40623a022285f794c024412122e41cf951cb755a05b0bdfde4b3a836e3b37357",
+    "captures/tensors.safetensors": "f366fd93995e7188f8f9801e0afd0639f5cc3cf9717046097cd9d90bf4108acb",
+    "execution-plan.json": "4ae81908c398cc213e92171c026a8a60c8f2caa89d74b28990c46cba73b003e3",
+    "experiment.toml": "d461042839d880b1b35328f03e406eb4a378d198948d0f4cbd8cf459684f6851",
+    "inputs.jsonl": "c31327bcbd08d23cab70f2c7a84bdc44a8eb3f75d084393a0c3a358ca4bd7ece",
+    "interventions/events.jsonl": "521c5e536153012e2e612266f3c3cf1aea8e435b296063f629673852c2f1a993",
+    "model.json": "85690d3636729c9b3997c6e450bbcb08af78ca02e2732c3b986c483ab6bface1",
+    "outputs.jsonl": "560f240a86058039c5c0a47677ff09cca28fa7daf366646d642b5ae99b31f942",
+    "tokenization.jsonl": "894576a35f2a8466e9583157073dec8589d5e99b1111014483a6f47ebe24d4a6",
+    "tokenizer.json": "5b8675865a46071db836c8458ca24d3ba7c6713ce9629147deeaea7583142efc",
+    "traces/events.jsonl": "6dde922c5c32f1237a6469c1f942bbd67b96d39f570a2385801e90a0e0270a03"
+  },
+  "warnings": [],
+  "complete": true
+}

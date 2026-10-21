@@ -1,0 +1,52 @@
+{
+  "timestamp": "epoch-seconds-1792588164",
+  "model_load_ms": 6.0095410000000005,
+  "compute_ms": 39.45225,
+  "threads": 1,
+  "note": "compute_ms covers the baseline, every point, bundle writing and self-verification; per-bundle generation time is in each runtime.json",
+  "bundles": [
+    {
+      "id": "baseline",
+      "prefix_reuse": {
+        "role": "base",
+        "note": "computed the shared prefix for 2 variant(s) and the generation for 0 co-baseline(s)"
+      }
+    },
+    {
+      "id": "layer-00",
+      "prefix_reuse": {
+        "role": "variant",
+        "inputs": [
+          {
+            "input_id": "a",
+            "path": "full-recompute",
+            "reason": "an intervention acts in block 0, so no computation precedes it"
+          },
+          {
+            "input_id": "b",
+            "path": "full-recompute",
+            "reason": "an intervention acts in block 0, so no computation precedes it"
+          }
+        ]
+      }
+    },
+    {
+      "id": "layer-01",
+      "prefix_reuse": {
+        "role": "variant",
+        "inputs": [
+          {
+            "input_id": "a",
+            "path": "resumed",
+            "resume_layer": 1
+          },
+          {
+            "input_id": "b",
+            "path": "resumed",
+            "resume_layer": 1
+          }
+        ]
+      }
+    }
+  ]
+}

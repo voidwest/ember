@@ -1,0 +1,24 @@
+{
+  "bundle_schema": "ember.bundle.v1",
+  "kind": "ember-experiment-bundle",
+  "status": "complete",
+  "semantic_hash": "7c562e9e10fc7b76715ccb0312ba15db902666a43737ccf9052ae79d36a728e4",
+  "payload_hash": "1ef66048cf97a19e4909e22e9df6c7ee716d94e31f2e25acfbeac1c24d11c27e",
+  "files": [
+    "captures/index.jsonl",
+    "captures/tensors.safetensors",
+    "execution-plan.json",
+    "experiment.toml",
+    "inputs.jsonl",
+    "interventions/events.jsonl",
+    "manifest.json",
+    "model.json",
+    "outputs.jsonl",
+    "resolved-experiment.json",
+    "runtime.json",
+    "semantic-manifest.json",
+    "tokenization.jsonl",
+    "tokenizer.json",
+    "traces/events.jsonl"
+  ]
+}
