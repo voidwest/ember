@@ -210,7 +210,8 @@ impl SmolVlm {
                 ContentPart::Image(img) => images.push(img),
                 ContentPart::Audio(_) | ContentPart::Video(_) => anyhow::bail!(
                     "SmolVLM accepts only text and image parts; got {:?}",
-                    part.media_kind().unwrap()
+                    part.media_kind()
+                        .expect("audio and video parts have a media kind")
                 ),
             }
         }

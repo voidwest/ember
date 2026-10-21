@@ -585,15 +585,15 @@ fn run_agent_demo(args: &AgentDemoArgs) -> Result<()> {
         .register(Arc::new(ember::agent::ReadTextFileTool::new(
             &args.summaries_dir,
         )))
-        .unwrap()
+        .expect("built-in tool names are unique")
         .register(Arc::new(ember::agent::SearchTextTool::new(
             &args.summaries_dir,
         )))
-        .unwrap()
+        .expect("built-in tool names are unique")
         .register(Arc::new(ember::agent::CalculatorTool))
-        .unwrap()
+        .expect("built-in tool names are unique")
         .register(Arc::new(ember::agent::WriteArtifactTool))
-        .unwrap()
+        .expect("built-in tool names are unique")
         .build()
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 

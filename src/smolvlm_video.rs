@@ -229,11 +229,12 @@ fn number_words(mut n: usize) -> String {
     let mut parts: Vec<String> = Vec::new();
     if n >= 100 {
         let hundreds = n / 100;
-        parts.push(format!("{} hundred", ONES[hundreds]));
+        let mut hundreds_text = format!("{} hundred", ONES[hundreds]);
         n %= 100;
         if n > 0 {
-            parts.last_mut().unwrap().push_str(" and");
+            hundreds_text.push_str(" and");
         }
+        parts.push(hundreds_text);
     }
     if n >= 20 {
         let t = n / 10;

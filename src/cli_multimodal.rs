@@ -115,7 +115,7 @@ pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) 
     println!("generated ({} tokens): {}", generated.len(), text);
     print_timings(&timings);
     if let Some(cache) = &model.feature_cache {
-        let cache = cache.lock().unwrap();
+        let cache = cache.lock().expect("feature cache lock poisoned");
         let (hits, misses) = cache.stats();
         println!(
             "feature cache: {} entries, {:.1} MiB resident, {hits} hits / {misses} misses",

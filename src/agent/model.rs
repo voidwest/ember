@@ -421,13 +421,13 @@ impl ChatModelEngine for LlamaChatModel<'_> {
             self.resync_committed_to_cursor();
             let terminal: Vec<u32> = if matches!(stop_hit, Some(TurnStop::Eos)) {
                 vec![*ids.last().expect("EOS requires a generated token")]
-            } else if ids.is_empty() {
-                suffix_ids.clone()
-            } else {
+            } else if let Some(&last) = ids.last() {
                 let mut v = Vec::with_capacity(suffix_ids.len() + 1);
-                v.push(*ids.last().unwrap());
+                v.push(last);
                 v.extend_from_slice(&suffix_ids);
                 v
+            } else {
+                suffix_ids.clone()
             };
             if !terminal.is_empty() {
                 self.ensure_capacity(terminal.len())?;
