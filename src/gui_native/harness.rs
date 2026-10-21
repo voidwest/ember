@@ -290,7 +290,11 @@ pub(super) fn seed_comparison() -> (RunOutput, RunOutput, ExperimentComparison) 
         decode_tps: Some(tokens as f64 / (wall_ms / 1000.0)),
         events: Vec::new(),
     };
-    let baseline = make(shared.to_string(), 48, 1_240.0);
+    let baseline = make(
+        format!("{shared} It draws pilgrims and visitors through the whole year."),
+        48,
+        1_240.0,
+    );
     let intervention = make(format!("{shared} {diverged}"), 61, 1_980.0);
     let comparison = ExperimentComparison {
         layers: Vec::new(),

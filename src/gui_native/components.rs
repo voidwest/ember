@@ -8,6 +8,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::ops::Range;
 use std::time::Duration;
 
 pub(super) fn label(content: impl Into<SharedString>, size: f32, color: Rgba) -> Div {
@@ -61,13 +62,31 @@ fn line_height_multiplier(font: &'static str) -> f32 {
 }
 
 pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static str) -> Div {
+    multiline_marked(content, size, color, font, None)
+}
+
+/// [`multiline`] with one byte range of `content` drawn in `style`. The range
+/// must fall on char boundaries; each line draws the part that it holds.
+pub(super) fn multiline_marked(
+    content: &str,
+    size: f32,
+    color: Rgba,
+    font: &'static str,
+    mark: Option<(Range<usize>, HighlightStyle)>,
+) -> Div {
     let line_height = scaled(size) * line_height_multiplier(font);
+    let style = mark.as_ref().map(|(_, style)| *style);
     div().flex().flex_col().children(
-        content
-            .split('\n')
-            .map(|line| {
+        line_marks(content, mark.map(|(range, _)| range))
+            .into_iter()
+            .map(|(line, range)| {
                 div()
-                    .child(line.to_string())
+                    .child(match range.zip(style) {
+                        Some(highlight) => StyledText::new(line.to_string())
+                            .with_highlights([highlight])
+                            .into_any_element(),
+                        None => line.to_string().into_any_element(),
+                    })
                     .font_family(font)
                     .text_size(px(scaled(size)))
                     .line_height(px(line_height))
@@ -76,6 +95,28 @@ pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static st
             })
             .collect::<Vec<_>>(),
     )
+}
+
+/// The lines of `content`, each with the part of `mark` that it holds,
+/// rebased to the line's own byte offsets.
+pub(super) fn line_marks(
+    content: &str,
+    mark: Option<Range<usize>>,
+) -> Vec<(&str, Option<Range<usize>>)> {
+    let mut start = 0;
+    content
+        .split('\n')
+        .map(|line| {
+            let end = start + line.len();
+            let local = mark.as_ref().and_then(|mark| {
+                let from = mark.start.max(start);
+                let to = mark.end.min(end);
+                (from < to).then(|| from - start..to - start)
+            });
+            start = end + 1;
+            (line, local)
+        })
+        .collect()
 }
 
 pub(super) fn section_label(colors: &Colors, label_text: &'static str) -> Div {

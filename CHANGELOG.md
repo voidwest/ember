@@ -15,10 +15,18 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Native console: the Review page marks where the two outputs part. Each
+  output card highlights its own text from that point: the intervention in
+  the accent tint and the baseline in a neutral tint. A mark that would
+  start inside a word starts at the beginning of that word, so Arabic
+  letter joining stays intact. On a line with right-to-left text, the
+  changed text starts a line of its own, because gpui cannot paint part of
+  a right-to-left line.
 - Feature dictionaries (ADR-0003): `[[dictionaries]]` names a sparse
   autoencoder in the SAELens format (`standard` or `jumprelu`), pinned by the
   SHA-256 of its weights and of its `cfg.json` and bound to one `embed`-wide
-  per-layer site and layer. A capture with `features = { dictionary, top_k }` also writes
+  per-layer site and layer. A capture with
+  `features = { dictionary, top_k }` also writes
   `artifacts/features/<id>.json` (`ember.features.v1`): the strongest
   features, `l0`, the norm and the reconstruction error of every stored
   row. An intervention with `features = { dictionary, ids }` applies `zero`,
