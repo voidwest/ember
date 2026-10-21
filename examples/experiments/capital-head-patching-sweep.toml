@@ -1,0 +1,225 @@
+# Activation patching of single attention heads, over eight prompt pairs.
+#
+# capital-patching-sweep.toml found that the residual stream at the final
+# token carries the answer from block 10 on: block 9 moves it there. This
+# sweep asks which heads do it. Each point replaces the output of one head
+# (layer 8 or 9, final token) with the same head's output from the clean
+# run in runs/capital-clean (capital-clean.toml; run it first). The source
+# capture holds every head; the point's `heads = [H]` takes head H from it.
+#
+# The metric is logit(clean capital) - logit(corrupted capital), and the
+# baseline is the corrupted run, so the effect of a point is the part of the
+# clean-minus-corrupted gap that one head recovers.
+#
+# 64 points (2 layers x 32 heads) plus the baseline: 65 bundles, each with
+# the logits row of eight prompts (about 4 MB per bundle).
+#
+# Result on the pinned model (Apple M1 Pro, reference mode, 2026-10-21):
+# layer 9 head 23 alone recovers 8.46 logits (95% interval 7.85-9.20) on all
+# eight pairs, most of the 9.8 that the whole residual stream recovers at
+# block 10. No other head of layers 8 and 9 moves the margin by more than
+# 0.2 on average. One deterministic run on one 16-layer model.
+#
+#   ember experiment run examples/experiments/capital-clean.toml
+#   ember experiment run examples/experiments/capital-head-patching-sweep.toml
+#   ember experiment verify runs/capital-head-patching-sweep --tokenizer tokenizer.json
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "capital-head-patching-sweep"
+description = "Patch one clean attention head at the final token into corrupted capital prompts, per layer and head."
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 4
+deterministic = true
+
+[generation]
+max_new_tokens = 0
+temperature = 0.0
+
+[[inputs]]
+id = "france"
+text = "The capital of Italy is the city of"
+
+[[inputs]]
+id = "germany"
+text = "The capital of Spain is the city of"
+
+[[inputs]]
+id = "japan"
+text = "The capital of Russia is the city of"
+
+[[inputs]]
+id = "egypt"
+text = "The capital of Greece is the city of"
+
+[[inputs]]
+id = "poland"
+text = "The capital of Austria is the city of"
+
+[[inputs]]
+id = "portugal"
+text = "The capital of Sweden is the city of"
+
+[[inputs]]
+id = "italy"
+text = "The capital of France is the city of"
+
+[[inputs]]
+id = "spain"
+text = "The capital of Germany is the city of"
+
+[[captures]]
+id = "answer"
+site = "logits"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-france"
+site = "attention-heads"
+layers = [0]
+inputs = ["france"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "france", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-germany"
+site = "attention-heads"
+layers = [0]
+inputs = ["germany"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "germany", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-japan"
+site = "attention-heads"
+layers = [0]
+inputs = ["japan"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "japan", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-egypt"
+site = "attention-heads"
+layers = [0]
+inputs = ["egypt"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "egypt", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-poland"
+site = "attention-heads"
+layers = [0]
+inputs = ["poland"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "poland", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-portugal"
+site = "attention-heads"
+layers = [0]
+inputs = ["portugal"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "portugal", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-italy"
+site = "attention-heads"
+layers = [0]
+inputs = ["italy"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "italy", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-spain"
+site = "attention-heads"
+layers = [0]
+inputs = ["spain"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "spain", layer = 0 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "runs/capital-head-patching-sweep"
+overwrite = false
+
+[sweep]
+layers = [8, 9]
+heads = "all"
+move_bundle_sources = true
+
+[sweep.effect]
+capture = "answer"
+
+[[sweep.effect.targets]]
+input = "france"
+target = " Paris"
+foil = " Rome"
+
+[[sweep.effect.targets]]
+input = "germany"
+target = " Berlin"
+foil = " Madrid"
+
+[[sweep.effect.targets]]
+input = "japan"
+target = " Tokyo"
+foil = " Moscow"
+
+[[sweep.effect.targets]]
+input = "egypt"
+target = " Cairo"
+foil = " Athens"
+
+[[sweep.effect.targets]]
+input = "poland"
+target = " Warsaw"
+foil = " Vienna"
+
+[[sweep.effect.targets]]
+input = "portugal"
+target = " Lisbon"
+foil = " Stockholm"
+
+[[sweep.effect.targets]]
+input = "italy"
+target = " Rome"
+foil = " Paris"
+
+[[sweep.effect.targets]]
+input = "spain"
+target = " Madrid"
+foil = " Berlin"

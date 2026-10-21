@@ -151,6 +151,11 @@ propose it for the first step.
   v0.2 manifest check does not compare its width with the hidden size (the
   width is `n_heads * head_dim`), and a v0.2 patch at it checks the live
   tensor's exact shape.
+- Amendment (2026-10-21, head sweeps): a capture source of the full
+  `n_heads * head_dim` width gives the selected heads by head index, so a
+  head sweep patches head `H` from head `H` of a clean capture of every
+  head. Only capture sources get this rule, because they record their own
+  width; other widths still fail.
 - The browser console takes its per-layer stage list from
   `SemanticHookSite::is_per_layer` through `/api/state`, not from a copied
   table. A prompt-only capture at the site records the hook route

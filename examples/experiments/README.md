@@ -85,6 +85,12 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
    the clean-minus-corrupted logit gap each layer recovers. Run the clean
    spec first (see `docs/experiments.md#patching-from-a-bundle-across-layers`).
 
+10. `capital-head-patching-sweep.toml` — the same study one attention head
+    at a time: every head of layers 8 and 9 at the final token, patched from
+    the same head of the clean run (`heads = "all"` in `[sweep]`). On the
+    pinned model, layer 9 head 23 alone recovers 8.46 of the gap on all
+    eight pairs. Run `capital-clean.toml` first.
+
 ## Commands
 
 ```bash

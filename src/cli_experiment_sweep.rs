@@ -72,6 +72,7 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
                 "layers": layers,
                 "positions": definition.positions,
                 "alphas": definition.alphas,
+                "heads": definition.heads,
                 "move_bundle_sources": definition.move_bundle_sources,
                 "effect": definition.effect.as_ref().map(|effect| serde_json::json!({
                     "capture": effect.capture,
@@ -104,6 +105,12 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
         }
         if let Some(alphas) = &definition.alphas {
             println!("  alphas: {alphas:?}");
+        }
+        if let Some(heads) = &definition.heads {
+            println!(
+                "  heads: {} (resolved against the model at run time)",
+                serde_json::to_value(heads)?
+            );
         }
         if definition.move_bundle_sources {
             println!("  bundle sources: read at each point's layer (move_bundle_sources)");
@@ -166,6 +173,12 @@ pub(crate) fn run_sweep(
     definition
         .check_moved_bundle_sources(n_layers)
         .map_err(anyhow::Error::msg)?;
+    definition
+        .check_head_bundle_sources(
+            prepared.model.config.n_heads,
+            prepared.model.config.head_dim,
+        )
+        .map_err(anyhow::Error::msg)?;
     // Resolve the effect tokens before anything runs, so a target that is
     // not one token fails without a wasted sweep.
     let effect = definition
@@ -182,8 +195,9 @@ pub(crate) fn run_sweep(
     let mut baseline = definition
         .baseline()
         .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let n_heads = prepared.model.config.n_heads;
     let mut points = definition
-        .points(n_layers)
+        .points(n_layers, n_heads)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     for derived in std::iter::once(&mut baseline).chain(points.iter_mut()) {
         apply_overrides(&mut derived.resolved, execution, command.threads)?;
@@ -246,6 +260,7 @@ pub(crate) fn run_sweep(
             layer: point.layer,
             position: point.position,
             alpha: point.alpha,
+            head: point.head,
             bundle: reference(outcome, &point.relative_dir),
             inputs,
             effect: point_effect,
@@ -264,6 +279,13 @@ pub(crate) fn run_sweep(
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         positions: definition.positions.clone(),
         alphas: definition.alphas.clone(),
+        heads: definition
+            .heads
+            .is_some()
+            .then(|| definition.resolve_heads(n_heads))
+            .transpose()
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        head_count: definition.heads.is_some().then_some(n_heads),
         interventions: definition.interventions.clone(),
         effect,
         baseline: reference(&base, &baseline.relative_dir),
@@ -370,11 +392,17 @@ fn describe_prefix_of(outcome: &RunOutcome) -> String {
 }
 
 fn print_table(manifest: &SweepManifest) {
-    let over = match (&manifest.alphas, manifest.layers.is_empty()) {
-        (Some(alphas), true) => format!("alphas {alphas:?}"),
-        (Some(alphas), false) => format!("layers {:?} x alphas {alphas:?}", manifest.layers),
-        (None, _) => format!("layers {:?}", manifest.layers),
-    };
+    let mut axes = Vec::new();
+    if !manifest.layers.is_empty() {
+        axes.push(format!("layers {:?}", manifest.layers));
+    }
+    if let Some(heads) = &manifest.heads {
+        axes.push(format!("heads {heads:?}"));
+    }
+    if let Some(alphas) = &manifest.alphas {
+        axes.push(format!("alphas {alphas:?}"));
+    }
+    let over = axes.join(" x ");
     println!(
         "sweep '{}': {} point(s), swept {} over {over}",
         manifest.experiment,
@@ -693,7 +721,7 @@ kind = "prompt-final"
         // Every point bundle is the bundle its derived spec gives alone.
         let definition = SweepDefinition::parse(&text).unwrap();
         let mut prepared = prepare_run(&definition.template, KStrategy::Auto, false).unwrap();
-        let derived = definition.points(4).unwrap();
+        let derived = definition.points(4, 4).unwrap();
         for (point, record) in derived.iter().zip(&manifest.points) {
             let (_, identity, _, _) = execute_prepared(
                 &mut prepared,
@@ -1205,6 +1233,212 @@ foil = 13
             .points
             .iter()
             .any(|point| point.effect.as_ref().unwrap().mean != 0.0));
+    }
+
+    /// EFFECT_BODY with its intervention at `attention-heads` (zero).
+    fn heads_body() -> String {
+        let body = EFFECT_BODY.replace(
+            "id = \"scale\"\nsite = \"residual-post-mlp\"\nlayers = [0]\noperation = { kind = \"scale\", factor = -3.0 }",
+            "id = \"scale\"\nsite = \"attention-heads\"\nlayers = [0]\noperation = { kind = \"zero\" }",
+        );
+        assert_ne!(body, EFFECT_BODY);
+        body
+    }
+
+    #[test]
+    fn head_sweeps_run_every_head_and_verify() {
+        let model = tiny_model("sweep-head-grid", 3, 64, true);
+        let table = EFFECT_TABLE.replace(
+            "[sweep]\nlayers = \"all\"\n",
+            "[sweep]\nlayers = [1, 2]\nheads = \"all\"\n",
+        );
+        let text = format!("{}{table}", spec_text(&model, "planned", 2, &heads_body()));
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        assert_eq!(report.bundles, 9);
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        assert_eq!(manifest.heads, Some(vec![0, 1, 2, 3]));
+        assert_eq!(manifest.head_count, Some(4));
+        assert_eq!(
+            manifest
+                .points
+                .iter()
+                .map(|p| (p.layer, p.head))
+                .collect::<Vec<_>>(),
+            (1..=2)
+                .flat_map(|layer| (0..4).map(move |head| (Some(layer), Some(head))))
+                .collect::<Vec<_>>()
+        );
+        // Different heads carry different effects.
+        let means: Vec<f64> = manifest
+            .points
+            .iter()
+            .map(|p| p.effect.as_ref().unwrap().mean)
+            .collect();
+        assert!(means.windows(2).any(|pair| pair[0] != pair[1]), "{means:?}");
+        let csv = std::fs::read_to_string(out.join(SWEEP_CSV_FILE)).unwrap();
+        assert!(
+            csv.starts_with("point,layer,position,head,input_id,"),
+            "{csv}"
+        );
+        let table = std::fs::read_to_string(out.join(SWEEP_EFFECT_CSV_FILE)).unwrap();
+        assert!(
+            table.starts_with("point,layer,position,alpha,head,n,"),
+            "{table}"
+        );
+        assert!(table.contains("\nlayer-01-head-02,1,,,2,3,"), "{table}");
+
+        // A forged head count fails a check before it sizes anything.
+        let reseal = |manifest: &SweepManifest| {
+            std::fs::write(
+                out.join(SWEEP_MANIFEST_FILE),
+                serde_json::to_vec(manifest).unwrap(),
+            )
+            .unwrap();
+            verify_sweep(&out, &VerifyOptions::default()).unwrap()
+        };
+        let failed = |report: &SweepVerification, name: &str| {
+            report.checks.iter().any(|c| !c.ok && c.name == name)
+        };
+        let mut forged = manifest.clone();
+        forged.head_count = Some(usize::MAX / 2);
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "head count"));
+        let mut forged = manifest.clone();
+        forged.head_count = None;
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "head count"));
+        let mut forged = manifest.clone();
+        forged.points[1].head = Some(3);
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(
+            &reseal(&forged),
+            "point layer-01-head-01 coordinates"
+        ));
+        // A cut-down "all": two heads recorded for a four-head model, with
+        // the other points dropped, still fails against the model's own
+        // head count.
+        let mut forged = manifest.clone();
+        forged.head_count = Some(2);
+        forged.heads = Some(vec![0, 1]);
+        forged
+            .points
+            .retain(|point| point.head.is_some_and(|head| head < 2));
+        forged.sweep_hash = forged.compute_hash();
+        let report = reseal(&forged);
+        assert!(failed(&report, "head count"), "{:?}", report.checks);
+        // A dropped point fails before any point is derived.
+        let mut forged = manifest.clone();
+        forged.points.pop();
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "sweep points"));
+        assert!(reseal(&manifest).ok);
+    }
+
+    /// Head patching from a bundle of the same prompts patches every head
+    /// with its own value: each point is a no-op, so every effect is exactly
+    /// zero. A misaligned head would change the logits.
+    #[test]
+    fn head_patching_reads_each_head_from_the_same_head_of_the_source() {
+        let model = tiny_model("sweep-head-patch", 3, 64, true);
+        let inputs = &EFFECT_BODY[..EFFECT_BODY.find("[[captures]]").unwrap()];
+        let clean_dir = model.dir.join("clean");
+        let clean_text = spec_text(
+            &model,
+            "reference",
+            0,
+            &format!(
+                "{inputs}[[captures]]\nid = \"z\"\nsite = \"attention-heads\"\nlayers = \"all\"\n[captures.tokens]\nkind = \"prompt-final\"\n"
+            ),
+        )
+        .replace("directory = \"unused\"", &format!("directory = {clean_dir:?}"));
+        let clean = crate::experiment_testutil::resolve(&clean_text);
+        let mut prepared = prepare_run(&clean, KStrategy::Auto, false).unwrap();
+        execute_prepared(&mut prepared, &clean, &clean_text, &clean_dir, false, None).unwrap();
+
+        let source = |input: &str| {
+            format!(
+                "[[interventions]]\nid = \"patch-{input}\"\nsite = \"attention-heads\"\nlayers = [0]\ninputs = [\"{input}\"]\noperation = {{ kind = \"replace\" }}\nsource = {{ kind = \"capture-from-bundle\", bundle_path = {clean_dir:?}, capture_id = \"z\", input_id = \"{input}\", layer = 0 }}\n[interventions.tokens]\nkind = \"prompt-final\"\n\n"
+            )
+        };
+        let body = format!(
+            "{inputs}[[captures]]\nid = \"answer\"\nsite = \"logits\"\n[captures.tokens]\nkind = \"prompt-final\"\n\n{}{}{}",
+            source("a"),
+            source("b"),
+            source("c")
+        );
+        let table = EFFECT_TABLE.replace(
+            "[sweep]\nlayers = \"all\"\n",
+            "[sweep]\nlayers = \"all\"\nheads = \"all\"\nmove_bundle_sources = true\n",
+        );
+        let text = format!("{}{table}", spec_text(&model, "reference", 2, &body));
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        assert_eq!(manifest.points.len(), 12);
+        for point in &manifest.points {
+            assert!(
+                point
+                    .inputs
+                    .iter()
+                    .all(|input| input.effect == Some(0.0) && input.generated_tokens_equal),
+                "{}",
+                point.id
+            );
+        }
+
+        // A source that holds one head would patch every head from it:
+        // refused before anything runs.
+        let narrow_dir = model.dir.join("clean-one-head");
+        let narrow_text = clean_text
+            .replace(
+                "site = \"attention-heads\"\nlayers = \"all\"",
+                "site = \"attention-heads\"\nlayers = \"all\"\nheads = [1]",
+            )
+            .replace(&format!("{clean_dir:?}"), &format!("{narrow_dir:?}"));
+        assert_ne!(narrow_text, clean_text);
+        let narrow = crate::experiment_testutil::resolve(&narrow_text);
+        execute_prepared(
+            &mut prepared,
+            &narrow,
+            &narrow_text,
+            &narrow_dir,
+            false,
+            None,
+        )
+        .unwrap();
+        let text = text.replace(&format!("{clean_dir:?}"), &format!("{narrow_dir:?}"));
+        let out = model.dir.join("sweep-narrow");
+        let error = run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("needs every head"), "{error}");
+        assert!(!out.exists());
     }
 
     #[test]

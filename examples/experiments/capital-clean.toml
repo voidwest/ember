@@ -1,6 +1,7 @@
 # The clean side of a patching study: eight capital prompts, with the
-# residual stream entering every block at the final token. The patching
-# sweep reads these rows (capital-patching-sweep.toml).
+# residual stream entering every block and every attention head's output at
+# the final token. The patching sweeps read these rows
+# (capital-patching-sweep.toml and capital-head-patching-sweep.toml).
 #
 #   ember experiment run examples/experiments/capital-clean.toml
 #   ember experiment run examples/experiments/capital-patching-sweep.toml
@@ -61,6 +62,14 @@ text = "The capital of Spain is the city of"
 [[captures]]
 id = "final-residual"
 site = "residual-pre-attention"
+layers = "all"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "final-heads"
+site = "attention-heads"
 layers = "all"
 
 [captures.tokens]

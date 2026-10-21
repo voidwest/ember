@@ -14,6 +14,10 @@
 //! `tokens = { kind = "absolute-token", index = P }`); everything else is
 //! unchanged. A *baseline* experiment is the spec without interventions.
 //!
+//! `heads = "all"` (or a list or range) sweeps the attention heads of
+//! `attention-heads` interventions: each point sets their `heads = [H]`,
+//! alone or crossed with layers. Point ids gain a `head-<H>` part.
+//!
 //! `[sweep.effect]` adds a scalar metric for every input and its summary
 //! over the inputs for each point (`crate::v05::effect`).
 //!
@@ -81,6 +85,10 @@ pub struct RawSweepSpec {
     /// point and the swept interventions' tokens become `absolute-token`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub positions: Option<Vec<usize>>,
+    /// Attention heads the swept `attention-heads` interventions move to,
+    /// one per point: `"all"`, a list, or a range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heads: Option<LayerSelector>,
     /// Intervention ids to sweep (default: every intervention).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interventions: Option<Vec<String>>,
@@ -103,6 +111,8 @@ pub struct SweepDefinition {
     /// `None`: the swept interventions keep their declared layers.
     pub layers: Option<LayerSelector>,
     pub positions: Option<Vec<usize>>,
+    /// `None`: the swept interventions keep their declared heads.
+    pub heads: Option<LayerSelector>,
     /// Swept `alpha` values, ascending.
     pub alphas: Option<Vec<f64>>,
     /// Swept intervention ids, in declaration order.
@@ -120,9 +130,11 @@ pub struct SweepDefinition {
 /// One derived experiment (a point or the baseline).
 #[derive(Debug, Clone)]
 pub struct DerivedSpec {
-    /// `baseline` or `layer-07` / `layer-07-pos-3` / `layer-07-alpha-2`.
+    /// `baseline` or `layer-07` / `layer-07-pos-3` / `layer-07-alpha-2` /
+    /// `layer-07-head-03`.
     pub id: String,
     pub layer: Option<usize>,
+    pub head: Option<usize>,
     pub position: Option<usize>,
     pub alpha: Option<f64>,
     /// The derived spec text (becomes the bundle's `experiment.toml`).
@@ -130,6 +142,26 @@ pub struct DerivedSpec {
     pub resolved: ExperimentSpecV1,
     /// Bundle directory relative to the sweep directory.
     pub relative_dir: String,
+}
+
+/// Check a swept layer or head selector without model metadata.
+fn check_selector(path: &str, selector: &LayerSelector, unit: &str) -> Result<(), SpecError> {
+    match selector {
+        LayerSelector::All(value) if value != "all" => Err(SpecError::at(
+            path,
+            format!("expected the string \"all\", found {value:?}"),
+        )),
+        LayerSelector::List(list) if list.is_empty() => {
+            Err(SpecError::at(path, format!("the {unit} list is empty")))
+        }
+        LayerSelector::Range(range) if range.step == 0 || range.start >= range.end => {
+            Err(SpecError::at(
+                path,
+                format!("a {unit} range needs start < end and step >= 1"),
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn toml_error(path: &str, error: impl std::fmt::Display) -> SpecError {
@@ -195,10 +227,10 @@ impl SweepDefinition {
                     .collect()
             }
         };
-        if sweep.layers.is_none() && sweep.alphas.is_none() {
+        if sweep.layers.is_none() && sweep.heads.is_none() && sweep.alphas.is_none() {
             return Err(SpecError::at(
                 "sweep",
-                "a sweep needs `layers`, `alphas`, or both",
+                "a sweep needs `layers`, `heads`, `alphas`, or a combination",
             ));
         }
         if sweep.layers.is_none() && sweep.positions.is_some() {
@@ -316,24 +348,50 @@ impl SweepDefinition {
                 _ => {}
             }
         }
-        match &sweep.layers {
-            None => {}
-            Some(LayerSelector::All(value)) if value != "all" => {
-                return Err(SpecError::at(
-                    "sweep.layers",
-                    format!("expected the string \"all\", found {value:?}"),
-                ))
+        if let Some(heads) = &sweep.heads {
+            check_selector("sweep.heads", heads, "head")?;
+            for (index, intervention) in template.interventions.iter().enumerate() {
+                if !swept.contains(&intervention.id) {
+                    continue;
+                }
+                if intervention.site != crate::v05::hook::SemanticHookSite::AttentionHeads {
+                    return Err(SpecError::at(
+                        format!("interventions[{index}].site"),
+                        format!(
+                            "a head sweep moves attention-heads interventions; site {} has no \
+                             heads (leave this intervention out of sweep.interventions)",
+                            intervention.site
+                        ),
+                    ));
+                }
+                if intervention.heads.is_some() {
+                    return Err(SpecError::at(
+                        format!("interventions[{index}].heads"),
+                        "a head sweep sets heads at each point; remove heads here",
+                    ));
+                }
+                // Each point patches head H from head H of its source, so a
+                // source capture must hold every head.
+                if let Some(InterventionSource::CaptureFromCurrentRun { capture_id }) =
+                    &intervention.source
+                    && template
+                        .captures
+                        .iter()
+                        .any(|capture| &capture.id == capture_id && capture.heads.is_some())
+                {
+                    return Err(SpecError::at(
+                        format!("interventions[{index}].source"),
+                        format!(
+                            "a head sweep patches each head from the same head of its source; \
+                             capture {capture_id:?} stores selected heads only (capture every \
+                             head)"
+                        ),
+                    ));
+                }
             }
-            Some(LayerSelector::List(list)) if list.is_empty() => {
-                return Err(SpecError::at("sweep.layers", "the layer list is empty"))
-            }
-            Some(LayerSelector::Range(range)) if range.step == 0 || range.start >= range.end => {
-                return Err(SpecError::at(
-                    "sweep.layers",
-                    "a layer range needs start < end and step >= 1",
-                ))
-            }
-            _ => {}
+        }
+        if let Some(layers) = &sweep.layers {
+            check_selector("sweep.layers", layers, "layer")?;
         }
         let positions = match sweep.positions {
             None => None,
@@ -359,6 +417,7 @@ impl SweepDefinition {
             name: template.experiment.name.clone(),
             layers: sweep.layers,
             positions,
+            heads: sweep.heads,
             alphas,
             interventions: swept,
             move_bundle_sources,
@@ -434,6 +493,76 @@ impl SweepDefinition {
         Ok(())
     }
 
+    /// How many points `points` derives, without deriving them (`None` when
+    /// the count overflows).
+    pub fn point_count(&self, n_layers: usize, n_heads: usize) -> Result<Option<usize>, SpecError> {
+        let layers = match self.layers {
+            Some(_) => self.resolve_layers(n_layers)?.len(),
+            None => 1,
+        };
+        let heads = match self.heads {
+            Some(_) => self.resolve_heads(n_heads)?.len(),
+            None => 1,
+        };
+        let positions = self.positions.as_ref().map_or(1, Vec::len);
+        let alphas = self.alphas.as_ref().map_or(1, Vec::len);
+        Ok(layers
+            .checked_mul(heads)
+            .and_then(|count| count.checked_mul(positions))
+            .and_then(|count| count.checked_mul(alphas)))
+    }
+
+    /// For head sweeps: check, before anything runs, that every swept
+    /// `capture-from-bundle` source holds every head (`n_heads * head_dim`
+    /// columns), so each point patches head H from head H of the source.
+    pub fn check_head_bundle_sources(&self, n_heads: usize, head_dim: usize) -> Result<(), String> {
+        if self.heads.is_none() {
+            return Ok(());
+        }
+        let width = n_heads * head_dim;
+        for intervention in &self.template.interventions {
+            let Some(InterventionSource::CaptureFromBundle {
+                bundle_path,
+                capture_id,
+                input_id,
+                ..
+            }) = &intervention.source
+            else {
+                continue;
+            };
+            if !self.interventions.contains(&intervention.id) {
+                continue;
+            }
+            let bundle = crate::v05::verify::load_bundle_for_source(bundle_path)
+                .map_err(|error| format!("intervention {:?}: {error}", intervention.id))?;
+            if let Some(entry) = bundle.capture_index.iter().find(|entry| {
+                entry.capture_id == *capture_id
+                    && entry.input_id == *input_id
+                    && entry.site == intervention.site
+                    && entry.shape.last() != Some(&width)
+            }) {
+                return Err(format!(
+                    "intervention {:?}: source capture {capture_id:?} of input {input_id:?} has \
+                     shape {:?}; a head sweep needs every head ({width} columns) so each point \
+                     patches head H from head H",
+                    intervention.id, entry.shape
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The heads of this sweep for an `n_heads`-head model (empty when the
+    /// sweep does not move heads).
+    pub fn resolve_heads(&self, n_heads: usize) -> Result<Vec<usize>, SpecError> {
+        match &self.heads {
+            None => Ok(Vec::new()),
+            Some(heads) => heads
+                .resolve(n_heads)
+                .map_err(|error| SpecError::at("sweep.heads", error.replace("layer", "head"))),
+        }
+    }
+
     fn output_root(&self) -> String {
         self.template
             .output
@@ -476,6 +605,7 @@ impl SweepDefinition {
         Ok(DerivedSpec {
             id: id.to_string(),
             layer: None,
+            head: None,
             position: None,
             alpha: None,
             text,
@@ -496,15 +626,21 @@ impl SweepDefinition {
         )
     }
 
-    /// Every point for an `n_layers`-layer model, layers ascending then
-    /// positions ascending.
-    pub fn points(&self, n_layers: usize) -> Result<Vec<DerivedSpec>, SpecError> {
+    /// Every point for an `n_layers`-layer, `n_heads`-head model: layers
+    /// ascending, then heads, then positions, then alphas.
+    pub fn points(&self, n_layers: usize, n_heads: usize) -> Result<Vec<DerivedSpec>, SpecError> {
         let resolved_layers = self.resolve_layers(n_layers)?;
         let layers: Vec<Option<usize>> = if self.layers.is_some() {
             resolved_layers.iter().copied().map(Some).collect()
         } else {
             vec![None]
         };
+        let heads: Vec<Option<usize>> = if self.heads.is_some() {
+            self.resolve_heads(n_heads)?.into_iter().map(Some).collect()
+        } else {
+            vec![None]
+        };
+        let head_width = n_heads.saturating_sub(1).to_string().len().max(2);
         let alphas: Vec<Option<f64>> = match &self.alphas {
             None => vec![None],
             Some(list) => list.iter().copied().map(Some).collect(),
@@ -542,13 +678,20 @@ impl SweepDefinition {
             None => vec![None],
             Some(list) => list.iter().copied().map(Some).collect(),
         };
-        let mut out = Vec::with_capacity(layers.len() * positions.len() * alphas.len());
-        for &layer in &layers {
+        let mut out =
+            Vec::with_capacity(layers.len() * heads.len() * positions.len() * alphas.len());
+        let grid = layers
+            .iter()
+            .flat_map(|&layer| heads.iter().map(move |&head| (layer, head)));
+        for (layer, head) in grid {
             for &position in &positions {
                 for &alpha in &alphas {
                     let mut parts = Vec::new();
                     if let Some(layer) = layer {
                         parts.push(format!("layer-{layer:0width$}"));
+                    }
+                    if let Some(head) = head {
+                        parts.push(format!("head-{head:0head_width$}"));
                     }
                     if let Some(position) = position {
                         parts.push(format!("pos-{position}"));
@@ -587,6 +730,12 @@ impl SweepDefinition {
                                         .insert("layer".into(), toml::Value::Integer(layer as i64));
                                 }
                             }
+                            if let Some(head) = head {
+                                table.insert(
+                                    "heads".into(),
+                                    toml::Value::Array(vec![toml::Value::Integer(head as i64)]),
+                                );
+                            }
                             if let (Some(alpha), Some(toml::Value::Table(operation))) =
                                 (alpha, table.get_mut("operation"))
                             {
@@ -605,6 +754,9 @@ impl SweepDefinition {
                     if let Some(layer) = layer {
                         coordinates.push(format!("layer {layer}"));
                     }
+                    if let Some(head) = head {
+                        coordinates.push(format!("head {head}"));
+                    }
                     if let Some(position) = position {
                         coordinates.push(format!("token {position}"));
                     }
@@ -617,6 +769,7 @@ impl SweepDefinition {
                     );
                     let mut derived = self.derive(&id, &what, document, format!("points/{id}"))?;
                     derived.layer = layer;
+                    derived.head = head;
                     derived.position = position;
                     derived.alpha = alpha;
                     out.push(derived);
@@ -682,6 +835,9 @@ pub struct SweepPointRecord {
     pub position: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha: Option<f64>,
+    /// The point's head, for head sweeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<usize>,
     #[serde(flatten)]
     pub bundle: SweepBundleRef,
     pub inputs: Vec<SweepInputMetrics>,
@@ -705,6 +861,12 @@ pub struct SweepManifest {
     pub positions: Option<Vec<usize>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alphas: Option<Vec<f64>>,
+    /// For head sweeps: the swept heads and the model's head count (which
+    /// `heads = "all"` resolves against).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heads: Option<Vec<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_count: Option<usize>,
     pub interventions: Vec<String>,
     /// With `[sweep.effect]`: the metric, interval settings and resolved
     /// target/foil tokens.
@@ -733,11 +895,16 @@ impl SweepManifest {
         // The alpha column exists only for alpha sweeps, so earlier sweeps
         // keep their exact table.
         let with_alpha = self.alphas.is_some();
+        // The head column likewise exists only for head sweeps.
+        let with_head = self.heads.is_some();
         let mut out = String::from(if with_alpha {
             "point,layer,position,alpha,"
         } else {
             "point,layer,position,"
         });
+        if with_head {
+            out.push_str("head,");
+        }
         out.push_str(
             "input_id,first_divergent_step,generated_text_equal,\
              peak_relative_l2,peak_capture_id,peak_site,peak_layer,captures_exact,\
@@ -752,11 +919,14 @@ impl SweepManifest {
         });
         for point in &self.points {
             for input in &point.inputs {
-                let alpha = if with_alpha {
+                let mut alpha = if with_alpha {
                     format!("{},", opt(&point.alpha))
                 } else {
                     String::new()
                 };
+                if with_head {
+                    alpha.push_str(&format!("{},", opt(&point.head)));
+                }
                 let effect = if with_effect {
                     format!(
                         ",{},{},{}",
@@ -794,16 +964,28 @@ impl SweepManifest {
             value.as_ref().map(ToString::to_string).unwrap_or_default()
         }
         self.effect.as_ref()?;
-        let mut out = String::from(
-            "point,layer,position,alpha,n,mean,sd,standard_error,ci_low,ci_high,positive,\
-             negative,zero,sign_test_p\n",
+        // A head column only for head sweeps, so earlier tables stay as they
+        // were.
+        let with_head = self.heads.is_some();
+        let mut out = String::from(if with_head {
+            "point,layer,position,alpha,head,"
+        } else {
+            "point,layer,position,alpha,"
+        });
+        out.push_str(
+            "n,mean,sd,standard_error,ci_low,ci_high,positive,negative,zero,sign_test_p\n",
         );
         for point in &self.points {
             let Some(effect) = &point.effect else {
                 continue;
             };
+            let head = if with_head {
+                format!("{},", opt(&point.head))
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{head}{},{},{},{},{},{},{},{},{},{}\n",
                 point.id,
                 opt(&point.layer),
                 opt(&point.position),
@@ -909,6 +1091,14 @@ pub fn point_metrics_with_effect(
         .map(|record| apply_effect(record, baseline, point, &mut metrics))
         .transpose()?;
     Ok((metrics, summary))
+}
+
+/// The attention head count in a verified bundle's model metadata
+/// (`<architecture>.attention.head_count`).
+fn model_head_count(bundle: &LoadedBundle) -> Option<usize> {
+    let model: serde_json::Value = serde_json::from_slice(bundle.file("model.json")?).ok()?;
+    let key = format!("{}.attention.head_count", model["architecture"].as_str()?);
+    usize::try_from(model["gguf_metadata"][key].as_u64()?).ok()
 }
 
 /// Resolve a manifest-relative bundle path, refusing anything that could
@@ -1045,20 +1235,67 @@ fn verify_and_load_sweep(
         );
         return Ok((report, manifest));
     }
+    // `head_count` sizes the head list in the same way; a head sweep must
+    // record it, and no other sweep may.
+    let head_count = match (definition.heads.is_some(), manifest.head_count) {
+        (true, Some(count)) if count <= crate::loader::limits::MAX_HEADS => count,
+        (false, None) => 0,
+        (_, count) => {
+            report.check(
+                "head count",
+                false,
+                format!(
+                    "the spec {} heads but {SWEEP_MANIFEST_FILE} records head count {count:?} \
+                     (at most {})",
+                    if definition.heads.is_some() {
+                        "sweeps"
+                    } else {
+                        "does not sweep"
+                    },
+                    crate::loader::limits::MAX_HEADS
+                ),
+            );
+            return Ok((report, manifest));
+        }
+    };
+    // Bound the derivation by what the manifest records: forged axes could
+    // otherwise derive a huge number of specs before any bundle is read.
+    let expected_points = definition
+        .point_count(manifest.layer_count, head_count)
+        .map_err(|error| error.to_string())?;
+    if expected_points != Some(manifest.points.len()) {
+        report.check(
+            "sweep points",
+            false,
+            format!(
+                "{} recorded, {expected_points:?} derived from the spec",
+                manifest.points.len()
+            ),
+        );
+        return Ok((report, manifest));
+    }
     let derived = definition
-        .points(manifest.layer_count)
+        .points(manifest.layer_count, head_count)
         .map_err(|error| error.to_string())?;
     let layers = definition
         .resolve_layers(manifest.layer_count)
+        .map_err(|error| error.to_string())?;
+    let heads = definition
+        .heads
+        .is_some()
+        .then(|| definition.resolve_heads(head_count))
+        .transpose()
         .map_err(|error| error.to_string())?;
     report.check(
         "sweep definition",
         definition.name == manifest.experiment
             && layers == manifest.layers
+            && heads == manifest.heads
             && definition.positions == manifest.positions
             && definition.alphas == manifest.alphas
             && definition.interventions == manifest.interventions,
-        "experiment name, layers, positions, alphas and swept interventions match the spec",
+        "experiment name, layers, heads, positions, alphas and swept interventions match the \
+         spec",
     );
     match (&definition.effect, &manifest.effect) {
         (None, None) => {}
@@ -1197,6 +1434,16 @@ fn verify_and_load_sweep(
             baseline.semantic_manifest.model.layer_count
         ),
     );
+    // `heads = "all"` resolved against the model's own head count, which
+    // the baseline bundle's verified model metadata records.
+    if let Some(count) = manifest.head_count {
+        let model_heads = model_head_count(&baseline);
+        report.check(
+            "head count",
+            model_heads == Some(count),
+            format!("the model has {model_heads:?} attention heads"),
+        );
+    }
     for record in &manifest.points {
         let label = format!("point {}", record.id);
         let bundle = match load(&record.bundle) {
@@ -1214,21 +1461,23 @@ fn verify_and_load_sweep(
                 (
                     point.text.as_str(),
                     point.layer,
+                    point.head,
                     point.position,
                     point.alpha,
                 )
             });
         match expected {
-            Some((text, layer, position, alpha)) => {
+            Some((text, layer, head, position, alpha)) => {
                 bundle_checks(&mut report, &label, &bundle, &record.bundle, text);
                 report.check(
                     format!("{label} coordinates"),
                     layer == record.layer
+                        && head == record.head
                         && position == record.position
                         && alpha.map(f64::to_bits) == record.alpha.map(f64::to_bits),
                     format!(
-                        "layer {:?} position {:?} alpha {:?}",
-                        record.layer, record.position, record.alpha
+                        "layer {:?} head {:?} position {:?} alpha {:?}",
+                        record.layer, record.head, record.position, record.alpha
                     ),
                 );
             }
@@ -1420,7 +1669,7 @@ interventions = ["replace"]
     fn points_move_only_the_swept_interventions() {
         let definition = SweepDefinition::parse(SPEC).unwrap();
         assert_eq!(definition.interventions, vec!["replace".to_string()]);
-        let points = definition.points(12).unwrap();
+        let points = definition.points(12, 4).unwrap();
         let ids: Vec<&str> = points.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, vec!["layer-00", "layer-04", "layer-08"]);
         let point = &points[1].resolved;
@@ -1445,7 +1694,7 @@ interventions = ["replace"]
             .text
             .starts_with("# Derived from sweep 'sweep-test'"));
         // Derivation is deterministic.
-        assert_eq!(definition.points(12).unwrap()[1].text, points[1].text);
+        assert_eq!(definition.points(12, 4).unwrap()[1].text, points[1].text);
         let baseline = definition.baseline().unwrap();
         assert!(baseline.resolved.interventions.is_empty());
         assert_eq!(baseline.resolved.captures.len(), 1);
@@ -1458,7 +1707,7 @@ interventions = ["replace"]
             "interventions = [\"replace\"]\npositions = [2, 0, 2]",
         );
         let definition = SweepDefinition::parse(&spec).unwrap();
-        let points = definition.points(12).unwrap();
+        let points = definition.points(12, 4).unwrap();
         assert_eq!(points.len(), 6);
         assert_eq!(points[1].id, "layer-00-pos-2");
         let replace = points[1]
@@ -1520,12 +1769,125 @@ interventions = ["replace"]
         let narrow = SPEC.replace("layers = \"all\"", "layers = [0, 4]");
         let error = SweepDefinition::parse(&narrow)
             .unwrap()
-            .points(12)
+            .points(12, 4)
             .unwrap_err();
         assert!(
             error.message.contains("does not capture layer 8"),
             "{error}"
         );
+    }
+
+    /// SPEC with the swept intervention at `attention-heads`.
+    fn head_spec(sweep: &str) -> String {
+        SPEC.replace(
+            "id = \"replace\"\nsite = \"residual-post-mlp\"\nlayers = [7]\noperation = { kind = \"replace\" }\nsource = { kind = \"capture-from-current-run\", capture_id = \"rows\" }",
+            "id = \"replace\"\nsite = \"attention-heads\"\nlayers = [7]\noperation = { kind = \"zero\" }",
+        )
+        .replace(
+            "[sweep]\nlayers = { start = 0, end = 12, step = 4 }\ninterventions = [\"replace\"]\n",
+            &format!("[sweep]\n{sweep}interventions = [\"replace\"]\n"),
+        )
+    }
+
+    #[test]
+    fn head_sweeps_set_one_head_per_point() {
+        let text = head_spec("layers = [3, 7]\nheads = \"all\"\n");
+        assert_ne!(text, SPEC);
+        let definition = SweepDefinition::parse(&text).unwrap();
+        let points = definition.points(12, 4).unwrap();
+        let ids: Vec<&str> = points.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(
+            ids[..5],
+            [
+                "layer-03-head-00",
+                "layer-03-head-01",
+                "layer-03-head-02",
+                "layer-03-head-03",
+                "layer-07-head-00"
+            ]
+        );
+        assert_eq!(points.len(), 8);
+        for point in &points {
+            let swept = point
+                .resolved
+                .interventions
+                .iter()
+                .find(|i| i.id == "replace")
+                .unwrap();
+            assert_eq!(swept.heads, Some(vec![point.head.unwrap()]));
+            assert_eq!(
+                swept.layers,
+                LayerSelector::List(vec![point.layer.unwrap()])
+            );
+            // The unswept intervention keeps everything.
+            let fixed = point
+                .resolved
+                .interventions
+                .iter()
+                .find(|i| i.id == "fixed")
+                .unwrap();
+            assert_eq!(fixed.heads, None);
+        }
+        // Heads alone keep the declared layer; a list and a range resolve.
+        let alone = SweepDefinition::parse(&head_spec("heads = [1, 3]\n")).unwrap();
+        let points = alone.points(12, 4).unwrap();
+        assert_eq!(
+            points.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            ["head-01", "head-03"]
+        );
+        assert_eq!(alone.resolve_heads(4).unwrap(), vec![1, 3]);
+        let range =
+            SweepDefinition::parse(&head_spec("heads = { start = 0, end = 4, step = 2 }\n"))
+                .unwrap();
+        assert_eq!(range.resolve_heads(4).unwrap(), vec![0, 2]);
+        let error = alone.resolve_heads(2).unwrap_err().to_string();
+        assert!(
+            error.contains("head 3 is out of range for a 2-head model"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn invalid_head_sweeps_fail_closed() {
+        // Only attention-heads interventions have heads to move.
+        let error = SweepDefinition::parse(&SPEC.replace(
+            "layers = { start = 0, end = 12, step = 4 }",
+            "heads = \"all\"",
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("a head sweep moves attention-heads"),
+            "{error}"
+        );
+        // The sweep sets heads, so the template must not.
+        let declared = head_spec("heads = \"all\"\n").replace(
+            "site = \"attention-heads\"\nlayers = [7]",
+            "site = \"attention-heads\"\nlayers = [7]\nheads = [0]",
+        );
+        let error = SweepDefinition::parse(&declared).unwrap_err().to_string();
+        assert!(error.contains("remove heads here"), "{error}");
+        let error = SweepDefinition::parse(&head_spec("heads = []\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("the head list is empty"), "{error}");
+        // A current-run source capture of selected heads would patch every
+        // head from those heads.
+        let narrow = head_spec("heads = \"all\"\n")
+            .replace(
+                "operation = { kind = \"zero\" }",
+                "operation = { kind = \"replace\" }\nsource = { kind = \"capture-from-current-run\", capture_id = \"z\" }",
+            )
+            .replace(
+                "[[interventions]]\nid = \"replace\"",
+                "[[captures]]\nid = \"z\"\nsite = \"attention-heads\"\nheads = [2]\nlayers = \"all\"\n[captures.tokens]\nkind = \"prompt-final\"\n\n[[interventions]]\nid = \"replace\"",
+            );
+        let error = SweepDefinition::parse(&narrow).unwrap_err().to_string();
+        assert!(error.contains("stores selected heads only"), "{error}");
+        let error = SweepDefinition::parse(&head_spec("heads = \"every\"\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("expected the string"), "{error}");
     }
 
     #[test]
@@ -1544,7 +1906,7 @@ interventions = ["replace"]
         let moving = format!("{bundle_spec}move_bundle_sources = true\n");
         let definition = SweepDefinition::parse(&moving).unwrap();
         assert!(definition.move_bundle_sources);
-        for point in definition.points(12).unwrap() {
+        for point in definition.points(12, 4).unwrap() {
             let layer = point.layer.unwrap();
             let replace = point
                 .resolved
@@ -1615,11 +1977,14 @@ interventions = ["replace"]
             interventions: vec!["i".into()],
             baseline: reference.clone(),
             alphas: None,
+            heads: None,
+            head_count: None,
             points: vec![SweepPointRecord {
                 id: "layer-01".into(),
                 layer: Some(1),
                 position: None,
                 alpha: None,
+                head: None,
                 bundle: SweepBundleRef {
                     bundle: "points/layer-01".into(),
                     ..reference
@@ -1649,6 +2014,9 @@ interventions = ["replace"]
         // A sweep without [sweep.effect] serializes exactly as before the
         // effect fields existed, so earlier sweep hashes still verify.
         for key in ["effect", "baseline_metric", "point_metric"] {
+            assert!(!json.contains(key), "{key} leaked into {json}");
+        }
+        for key in ["\"head\"", "\"heads\"", "\"head_count\""] {
             assert!(!json.contains(key), "{key} leaked into {json}");
         }
         let back: SweepManifest = serde_json::from_str(&json).unwrap();
