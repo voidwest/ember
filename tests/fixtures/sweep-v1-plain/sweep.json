@@ -1,0 +1,93 @@
+{
+  "schema": "ember.sweep.v1",
+  "experiment": "sweep-v1-plain",
+  "spec_file": "sweep.toml",
+  "spec_sha256": "ed892be1e369c08bb045fea51cc09778ef4a10101e5806409e89d844535d653c",
+  "model_sha256": "80ffe29839bc0d26f132cd294c2d7b366ed3022f10915e34b1e3a45f10c44f9b",
+  "tokenizer_sha256": "e299b8b95ed363ace6bda53ade5d4f85770781ce74491431f53ddcc8b672647e",
+  "layer_count": 2,
+  "layers": [
+    0,
+    1
+  ],
+  "positions": null,
+  "interventions": [
+    "scale"
+  ],
+  "baseline": {
+    "bundle": "baseline",
+    "semantic_hash": "7c562e9e10fc7b76715ccb0312ba15db902666a43737ccf9052ae79d36a728e4",
+    "payload_hash": "1ef66048cf97a19e4909e22e9df6c7ee716d94e31f2e25acfbeac1c24d11c27e"
+  },
+  "points": [
+    {
+      "id": "layer-00",
+      "layer": 0,
+      "position": null,
+      "bundle": "points/layer-00",
+      "semantic_hash": "872f1ab675e1595cf76fb0c933ee448cde1a1fa019be51f2ffe8d84e3e126dad",
+      "payload_hash": "5cba5bf41df6298ab9edff56ba84f45649b699b2abb795d4883eab761c150c4d",
+      "inputs": [
+        {
+          "input_id": "a",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 2.71039615,
+          "peak_capture_id": "rows",
+          "peak_site": "residual-post-mlp",
+          "peak_layer": 1,
+          "captures_compared": 3,
+          "captures_exact": 1
+        },
+        {
+          "input_id": "b",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 2.63103253,
+          "peak_capture_id": "rows",
+          "peak_site": "residual-post-mlp",
+          "peak_layer": 1,
+          "captures_compared": 3,
+          "captures_exact": 1
+        }
+      ]
+    },
+    {
+      "id": "layer-01",
+      "layer": 1,
+      "position": null,
+      "bundle": "points/layer-01",
+      "semantic_hash": "a234ba689ffc1ad05e6598be56f5d98e724433b3e04a5e9f88d737e5f240cce7",
+      "payload_hash": "7f40a3e1c68c55daf3f49fc547648197ea5b5279c0bb90763a6f851218ace3d9",
+      "inputs": [
+        {
+          "input_id": "a",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 1.99999998,
+          "peak_capture_id": "answer",
+          "peak_site": "logits",
+          "peak_layer": 0,
+          "captures_compared": 3,
+          "captures_exact": 2
+        },
+        {
+          "input_id": "b",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 2.0000001,
+          "peak_capture_id": "answer",
+          "peak_site": "logits",
+          "peak_layer": 0,
+          "captures_compared": 3,
+          "captures_exact": 2
+        }
+      ]
+    }
+  ],
+  "sweep_hash": "b7078353f2905bcae9ed607a657e84bdf00822b290aec0d919114861d1192d94"
+}

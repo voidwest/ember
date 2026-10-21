@@ -1,0 +1,8 @@
+{"capture_id":"answer","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"a","layer":0,"positions":[4],"route":"unfused","site":"logits","tensor_name":"answer"}
+{"capture_id":"rows","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"a","layer":0,"positions":[4],"route":"unfused","site":"residual-post-mlp","tensor_name":"rows"}
+{"capture_id":"rows","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"a","layer":1,"positions":[4],"route":"unfused","site":"residual-post-mlp","tensor_name":"rows"}
+{"capture_id":"answer","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"b","layer":0,"positions":[2],"route":"unfused","site":"logits","tensor_name":"answer"}
+{"capture_id":"rows","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"b","layer":0,"positions":[2],"route":"unfused","site":"residual-post-mlp","tensor_name":"rows"}
+{"capture_id":"rows","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"b","layer":1,"positions":[2],"route":"unfused","site":"residual-post-mlp","tensor_name":"rows"}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":0}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":1}

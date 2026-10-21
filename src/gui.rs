@@ -1171,9 +1171,9 @@ pub(crate) fn parse_run_request(req: &RunRequest) -> Result<RunConfig, String> {
         .copied()
         .ok_or_else(|| {
             format!(
-                "unknown hook stage '{}'; expected one of: before-layer, after-attention, \
-                 after-mlp, after-layer, before-logits, after-logits",
-                req.site
+                "unknown hook stage '{}'; expected one of: {}",
+                req.site,
+                hook_stages().join(", ")
             )
         })?;
     if site.is_per_layer() && req.layer.is_none() {
@@ -1277,6 +1277,16 @@ pub(crate) fn hook_stages() -> Vec<&'static str> {
         .collect()
 }
 
+/// The hook stage ids that carry a layer, for the browser console's layer
+/// control (from `SemanticHookSite::is_per_layer`, not a copied table).
+pub(crate) fn per_layer_hook_stages() -> Vec<&'static str> {
+    SemanticHookSite::ALL
+        .iter()
+        .filter(|site| site.is_per_layer())
+        .map(|site| site.stage_id())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // spec building (same raw TOML form a user would write, resolved + validated)
 // ---------------------------------------------------------------------------
@@ -1326,6 +1336,7 @@ fn build_and_resolve_spec(
         inputs: InputSelector::All("all".to_string()),
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
+        heads: None,
     };
     // One selected activation row per layer gives the native workbench a
     // scientifically meaningful residual-stream trace without retaining a
@@ -1339,6 +1350,7 @@ fn build_and_resolve_spec(
         inputs: InputSelector::All("all".to_string()),
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
+        heads: None,
     };
 
     let operation = match cfg.operation {
@@ -1366,6 +1378,7 @@ fn build_and_resolve_spec(
         source,
         shape_policy: ShapePolicy::Strict,
         compatibility: CompatibilityPolicy::default(),
+        heads: None,
     };
     let restore = InterventionSpec {
         id: "restore-1".to_string(),
@@ -1377,6 +1390,7 @@ fn build_and_resolve_spec(
         source: None,
         shape_policy: ShapePolicy::Strict,
         compatibility: CompatibilityPolicy::default(),
+        heads: None,
     };
 
     let (name, captures, interventions) = match kind {
@@ -1962,6 +1976,7 @@ fn state_payload(session: &Arc<Mutex<GuiSession>>) -> ApiEnvelope {
         "commit": ember::extraction::build_commit().unwrap_or("unknown"),
         "models": discover_models(),
         "hook_stages": hook_stages(),
+        "per_layer_stages": per_layer_hook_stages(),
         "session": session_info_payload(&session),
     }))
 }
@@ -2654,6 +2669,37 @@ mod tests {
             let layers = resolved.interventions[0].layers.clone();
             assert!(matches!(layers, LayerSelector::All(_)));
         }
+    }
+
+    /// The browser page shows the layer control for exactly these stages,
+    /// so the per-head stage must be among them and the head-boundary
+    /// stages must not; a run at the per-head stage builds a valid spec.
+    #[test]
+    fn per_layer_stages_include_the_attention_heads_stage() {
+        let per_layer = per_layer_hook_stages();
+        assert_eq!(
+            per_layer,
+            [
+                "before-layer",
+                "before-o-proj",
+                "after-attention",
+                "after-mlp",
+                "after-layer"
+            ]
+        );
+        assert!(hook_stages()
+            .iter()
+            .all(|stage| per_layer.contains(stage)
+                || ["before-logits", "after-logits"].contains(stage)));
+        let mut req = base_request();
+        req.site = "before-o-proj".to_string();
+        let cfg = cfg_of(&req);
+        let (_, resolved) =
+            build_and_resolve_spec(&cfg, RunKind::Intervention, "runs/gui/_test").unwrap();
+        assert_eq!(
+            resolved.interventions[0].site,
+            ember::v05::hook::SemanticHookSite::AttentionHeads
+        );
     }
 
     #[test]

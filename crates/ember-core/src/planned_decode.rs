@@ -1459,6 +1459,14 @@ pub(crate) fn forward_last_logits_planned_into(
                         scores_data,
                         out_data,
                     )?;
+                    // before_o_proj fires on the per-head attention output,
+                    // which every fusion state materializes: the o
+                    // projection (or F5's fused o + residual) reads it next.
+                    if let Some((hooks, _)) = hooks.as_mut() {
+                        let columns = out_data.len();
+                        let mut activation = SliceActivation::new(1, columns, out_data);
+                        hooks.before_o_proj(layer, &mut activation)?;
+                    }
                 }
                 ResolvedOp::FusedQkv {
                     input,

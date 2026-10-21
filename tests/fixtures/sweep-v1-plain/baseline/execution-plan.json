@@ -1,0 +1,1313 @@
+{
+  "architecture": "llama",
+  "cpu": {
+    "features": [
+      "neon",
+      "dotprod",
+      "fp16"
+    ],
+    "required": [],
+    "threads": 1
+  },
+  "dispatch": {
+    "kernel_per_tensor": [
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "embedding-f32-row",
+        "tensor": 0
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 3
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 4
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 5
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 6
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 7
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 8
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 9
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 10
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 11
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 25
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 26
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 27
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 28
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 29
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 30
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 31
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 32
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 33
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 47
+      },
+      {
+        "cpu_feature": null,
+        "fallback": null,
+        "kernel": "eager-f32",
+        "tensor": 48
+      }
+    ],
+    "thread_strategy": "serial"
+  },
+  "final_ops": [
+    {
+      "input": {
+        "id": 46
+      },
+      "op": "output-norm",
+      "out": {
+        "id": 49
+      },
+      "weight": {
+        "id": 47
+      }
+    },
+    {
+      "input": {
+        "id": 49
+      },
+      "op": "logits",
+      "out": {
+        "id": 50
+      },
+      "tied": false,
+      "weight": {
+        "id": 48
+      }
+    }
+  ],
+  "gguf": {
+    "arch": "llama",
+    "block_count": 2,
+    "context_length": 64,
+    "embedding_length": 64,
+    "ffn_dim": 128,
+    "head_count": 4,
+    "head_count_kv": 2,
+    "rope_dimension_count": 16,
+    "rope_theta": 10000.0,
+    "vocab_size": 64
+  },
+  "hook_sites": {
+    "active": [],
+    "mode": "observe",
+    "sites": [
+      {
+        "layer": 0,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "before-layer",
+        "tensor": 1
+      },
+      {
+        "layer": 0,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-attention",
+        "tensor": 17
+      },
+      {
+        "layer": 0,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-mlp",
+        "tensor": 23
+      },
+      {
+        "layer": 0,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-layer",
+        "tensor": 24
+      },
+      {
+        "layer": 1,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "before-layer",
+        "tensor": 24
+      },
+      {
+        "layer": 1,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-attention",
+        "tensor": 39
+      },
+      {
+        "layer": 1,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-mlp",
+        "tensor": 45
+      },
+      {
+        "layer": 1,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-layer",
+        "tensor": 46
+      },
+      {
+        "layer": null,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "before-logits",
+        "tensor": null
+      },
+      {
+        "layer": null,
+        "materialized": false,
+        "route": "unfused",
+        "stage": "after-logits",
+        "tensor": null
+      }
+    ]
+  },
+  "kernel_revision": 5,
+  "kv": {
+    "head_dim": 16,
+    "head_stride": 1024,
+    "layer_stride": 2048,
+    "layout": "layer-head-pos-dim",
+    "max_seq": 64,
+    "n_kv_heads": 2,
+    "pos_stride": 16,
+    "precision": "f16"
+  },
+  "layers": [
+    {
+      "fusion": "unfused",
+      "fusion_reason": null,
+      "layer_index": 0,
+      "ops": [
+        {
+          "input": {
+            "id": 1
+          },
+          "op": "rms-norm",
+          "out": {
+            "id": 12
+          },
+          "weight": {
+            "id": 3
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 12
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 13
+          },
+          "weight": {
+            "id": 5
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 12
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 14
+          },
+          "weight": {
+            "id": 6
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 12
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 15
+          },
+          "weight": {
+            "id": 7
+          }
+        },
+        {
+          "op": "rope",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope",
+          "rope_layout": "adjacent-pair",
+          "target": {
+            "id": 13
+          }
+        },
+        {
+          "op": "rope",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope",
+          "rope_layout": "adjacent-pair",
+          "target": {
+            "id": 14
+          }
+        },
+        {
+          "k": {
+            "id": 14
+          },
+          "op": "kv-store",
+          "v": {
+            "id": 15
+          }
+        },
+        {
+          "op": "attention",
+          "out": {
+            "id": 16
+          },
+          "q": {
+            "id": 13
+          },
+          "rope_q": false,
+          "score_scratch": "scores"
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 16
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 17
+          },
+          "weight": {
+            "id": 8
+          }
+        },
+        {
+          "a": {
+            "id": 1
+          },
+          "b": {
+            "id": 17
+          },
+          "op": "residual-add",
+          "out": {
+            "id": 18
+          }
+        },
+        {
+          "input": {
+            "id": 18
+          },
+          "op": "rms-norm",
+          "out": {
+            "id": 19
+          },
+          "weight": {
+            "id": 4
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 19
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 20
+          },
+          "weight": {
+            "id": 9
+          }
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 20
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 19
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 21
+          },
+          "weight": {
+            "id": 10
+          }
+        },
+        {
+          "a": {
+            "id": 20
+          },
+          "b": {
+            "id": 21
+          },
+          "op": "elemul",
+          "out": {
+            "id": 22
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 22
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 23
+          },
+          "weight": {
+            "id": 11
+          }
+        },
+        {
+          "a": {
+            "id": 18
+          },
+          "b": {
+            "id": 23
+          },
+          "op": "residual-add",
+          "out": {
+            "id": 24
+          }
+        }
+      ]
+    },
+    {
+      "fusion": "unfused",
+      "fusion_reason": null,
+      "layer_index": 1,
+      "ops": [
+        {
+          "input": {
+            "id": 24
+          },
+          "op": "rms-norm",
+          "out": {
+            "id": 34
+          },
+          "weight": {
+            "id": 25
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 34
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 35
+          },
+          "weight": {
+            "id": 27
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 34
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 36
+          },
+          "weight": {
+            "id": 28
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 34
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 37
+          },
+          "weight": {
+            "id": 29
+          }
+        },
+        {
+          "op": "rope",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope",
+          "rope_layout": "adjacent-pair",
+          "target": {
+            "id": 35
+          }
+        },
+        {
+          "op": "rope",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope",
+          "rope_layout": "adjacent-pair",
+          "target": {
+            "id": 36
+          }
+        },
+        {
+          "k": {
+            "id": 36
+          },
+          "op": "kv-store",
+          "v": {
+            "id": 37
+          }
+        },
+        {
+          "op": "attention",
+          "out": {
+            "id": 38
+          },
+          "q": {
+            "id": 35
+          },
+          "rope_q": false,
+          "score_scratch": "scores"
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 38
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 39
+          },
+          "weight": {
+            "id": 30
+          }
+        },
+        {
+          "a": {
+            "id": 24
+          },
+          "b": {
+            "id": 39
+          },
+          "op": "residual-add",
+          "out": {
+            "id": 40
+          }
+        },
+        {
+          "input": {
+            "id": 40
+          },
+          "op": "rms-norm",
+          "out": {
+            "id": 41
+          },
+          "weight": {
+            "id": 26
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 41
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 42
+          },
+          "weight": {
+            "id": 31
+          }
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 42
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 41
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 43
+          },
+          "weight": {
+            "id": 32
+          }
+        },
+        {
+          "a": {
+            "id": 42
+          },
+          "b": {
+            "id": 43
+          },
+          "op": "elemul",
+          "out": {
+            "id": 44
+          }
+        },
+        {
+          "bias": null,
+          "fused_rms_norm": null,
+          "input": {
+            "id": 44
+          },
+          "kernel": "eager-f32",
+          "op": "matvec",
+          "out": {
+            "id": 45
+          },
+          "weight": {
+            "id": 33
+          }
+        },
+        {
+          "a": {
+            "id": 40
+          },
+          "b": {
+            "id": 45
+          },
+          "op": "residual-add",
+          "out": {
+            "id": 46
+          }
+        }
+      ]
+    }
+  ],
+  "model_sha256": "80ffe29839bc0d26f132cd294c2d7b366ed3022f10915e34b1e3a45f10c44f9b",
+  "plan_hash": "e330290e8cb996d4b4b828a2d95d7bb34a55002e2bef4ab880d3a2e1217a09ee",
+  "preamble": [
+    {
+      "op": "embedding",
+      "out": {
+        "id": 1
+      },
+      "tensor": {
+        "id": 0
+      }
+    }
+  ],
+  "provenance": {
+    "ember_version": "1.0.0",
+    "execution_mode": "reference",
+    "git_commit": "8226c84b89a7bd51e345f5ab9afda9415cc17539",
+    "hook_mode": "observe",
+    "model_sha256": "80ffe29839bc0d26f132cd294c2d7b366ed3022f10915e34b1e3a45f10c44f9b",
+    "plan_build_time": "unix-0",
+    "rustc_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "tokenizer_sha256": "e299b8b95ed363ace6bda53ade5d4f85770781ce74491431f53ddcc8b672647e"
+  },
+  "rope": {
+    "has_k_norm": false,
+    "has_q_norm": false,
+    "layout": "adjacent-pair",
+    "qk_norm_order": "after-rope"
+  },
+  "schema_version": 1,
+  "scratch": {
+    "alignment": 64,
+    "regions": [
+      {
+        "alignment": 64,
+        "first_op": 0,
+        "last_op": 10,
+        "name": "layer0.x_in",
+        "offset": 0,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 8,
+        "last_op": 25,
+        "name": "scores",
+        "offset": 256,
+        "shared_with": null,
+        "size": 1024
+      },
+      {
+        "alignment": 64,
+        "first_op": 1,
+        "last_op": 4,
+        "name": "layer0.n1",
+        "offset": 1280,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 2,
+        "last_op": 8,
+        "name": "layer0.q",
+        "offset": 1536,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 3,
+        "last_op": 7,
+        "name": "layer0.k",
+        "offset": 1792,
+        "shared_with": null,
+        "size": 128
+      },
+      {
+        "alignment": 64,
+        "first_op": 4,
+        "last_op": 7,
+        "name": "layer0.v",
+        "offset": 1920,
+        "shared_with": null,
+        "size": 128
+      },
+      {
+        "alignment": 64,
+        "first_op": 8,
+        "last_op": 9,
+        "name": "layer0.attn",
+        "offset": 2048,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 9,
+        "last_op": 10,
+        "name": "layer0.o",
+        "offset": 2304,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 10,
+        "last_op": 17,
+        "name": "layer0.x1",
+        "offset": 2560,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 11,
+        "last_op": 14,
+        "name": "layer0.n2",
+        "offset": 2816,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 12,
+        "last_op": 15,
+        "name": "layer0.g",
+        "offset": 3072,
+        "shared_with": null,
+        "size": 512
+      },
+      {
+        "alignment": 64,
+        "first_op": 14,
+        "last_op": 15,
+        "name": "layer0.u",
+        "offset": 3584,
+        "shared_with": null,
+        "size": 512
+      },
+      {
+        "alignment": 64,
+        "first_op": 15,
+        "last_op": 16,
+        "name": "layer0.gu",
+        "offset": 4096,
+        "shared_with": null,
+        "size": 512
+      },
+      {
+        "alignment": 64,
+        "first_op": 16,
+        "last_op": 17,
+        "name": "layer0.m",
+        "offset": 4608,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 17,
+        "last_op": 27,
+        "name": "layer0.x2",
+        "offset": 4864,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 18,
+        "last_op": 21,
+        "name": "layer1.n1",
+        "offset": 5120,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 19,
+        "last_op": 25,
+        "name": "layer1.q",
+        "offset": 5376,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 20,
+        "last_op": 24,
+        "name": "layer1.k",
+        "offset": 5632,
+        "shared_with": null,
+        "size": 128
+      },
+      {
+        "alignment": 64,
+        "first_op": 21,
+        "last_op": 24,
+        "name": "layer1.v",
+        "offset": 5760,
+        "shared_with": null,
+        "size": 128
+      },
+      {
+        "alignment": 64,
+        "first_op": 25,
+        "last_op": 26,
+        "name": "layer1.attn",
+        "offset": 5888,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 26,
+        "last_op": 27,
+        "name": "layer1.o",
+        "offset": 6144,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 27,
+        "last_op": 34,
+        "name": "layer1.x1",
+        "offset": 6400,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 28,
+        "last_op": 31,
+        "name": "layer1.n2",
+        "offset": 6656,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 29,
+        "last_op": 32,
+        "name": "layer1.g",
+        "offset": 6912,
+        "shared_with": null,
+        "size": 512
+      },
+      {
+        "alignment": 64,
+        "first_op": 31,
+        "last_op": 32,
+        "name": "layer1.u",
+        "offset": 7424,
+        "shared_with": null,
+        "size": 512
+      },
+      {
+        "alignment": 64,
+        "first_op": 32,
+        "last_op": 33,
+        "name": "layer1.gu",
+        "offset": 7936,
+        "shared_with": null,
+        "size": 512
+      },
+      {
+        "alignment": 64,
+        "first_op": 33,
+        "last_op": 34,
+        "name": "layer1.m",
+        "offset": 8448,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 34,
+        "last_op": 35,
+        "name": "layer1.x2",
+        "offset": 8704,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 35,
+        "last_op": 36,
+        "name": "hf",
+        "offset": 8960,
+        "shared_with": null,
+        "size": 256
+      },
+      {
+        "alignment": 64,
+        "first_op": 36,
+        "last_op": 36,
+        "name": "logits",
+        "offset": 9216,
+        "shared_with": null,
+        "size": 256
+      }
+    ],
+    "seq_capacity": 1,
+    "tensor_regions": {
+      "1": "layer0.x_in",
+      "12": "layer0.n1",
+      "13": "layer0.q",
+      "14": "layer0.k",
+      "15": "layer0.v",
+      "16": "layer0.attn",
+      "17": "layer0.o",
+      "18": "layer0.x1",
+      "19": "layer0.n2",
+      "2": "scores",
+      "20": "layer0.g",
+      "21": "layer0.u",
+      "22": "layer0.gu",
+      "23": "layer0.m",
+      "24": "layer0.x2",
+      "34": "layer1.n1",
+      "35": "layer1.q",
+      "36": "layer1.k",
+      "37": "layer1.v",
+      "38": "layer1.attn",
+      "39": "layer1.o",
+      "40": "layer1.x1",
+      "41": "layer1.n2",
+      "42": "layer1.g",
+      "43": "layer1.u",
+      "44": "layer1.gu",
+      "45": "layer1.m",
+      "46": "layer1.x2",
+      "49": "hf",
+      "50": "logits"
+    },
+    "total_bytes": 9472
+  },
+  "tensor_table": [
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 0,
+      "kernel": "embedding-f32-row",
+      "mmap": false,
+      "name": "token_embd.weight",
+      "resident_bytes": 16384,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 3,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.attn_norm.weight",
+      "resident_bytes": 256,
+      "shape": [
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 4,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.ffn_norm.weight",
+      "resident_bytes": 256,
+      "shape": [
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 5,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.attn_q.weight",
+      "resident_bytes": 16384,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 6,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.attn_k.weight",
+      "resident_bytes": 8192,
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 7,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.attn_v.weight",
+      "resident_bytes": 8192,
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 8,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.attn_output.weight",
+      "resident_bytes": 16384,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 9,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.ffn_gate.weight",
+      "resident_bytes": 32768,
+      "shape": [
+        128,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 10,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.ffn_up.weight",
+      "resident_bytes": 32768,
+      "shape": [
+        128,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 11,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.0.ffn_down.weight",
+      "resident_bytes": 32768,
+      "shape": [
+        64,
+        128
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 25,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.attn_norm.weight",
+      "resident_bytes": 256,
+      "shape": [
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 26,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.ffn_norm.weight",
+      "resident_bytes": 256,
+      "shape": [
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 27,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.attn_q.weight",
+      "resident_bytes": 16384,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 28,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.attn_k.weight",
+      "resident_bytes": 8192,
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 29,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.attn_v.weight",
+      "resident_bytes": 8192,
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 30,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.attn_output.weight",
+      "resident_bytes": 16384,
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 31,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.ffn_gate.weight",
+      "resident_bytes": 32768,
+      "shape": [
+        128,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 32,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.ffn_up.weight",
+      "resident_bytes": 32768,
+      "shape": [
+        128,
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 33,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "blk.1.ffn_down.weight",
+      "resident_bytes": 32768,
+      "shape": [
+        64,
+        128
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 47,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "output_norm.weight",
+      "resident_bytes": 256,
+      "shape": [
+        64
+      ]
+    },
+    {
+      "execution": "eager_f32",
+      "gguf_dtype": "f32",
+      "id": 48,
+      "kernel": "eager-f32",
+      "mmap": false,
+      "name": "output.weight",
+      "resident_bytes": 16384,
+      "shape": [
+        64,
+        64
+      ]
+    }
+  ],
+  "tokenizer_sha256": "e299b8b95ed363ace6bda53ade5d4f85770781ce74491431f53ddcc8b672647e"
+}

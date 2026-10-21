@@ -1,0 +1,5 @@
+point,layer,position,input_id,first_divergent_step,generated_text_equal,peak_relative_l2,peak_capture_id,peak_site,peak_layer,captures_exact,captures_compared,semantic_hash
+layer-00,0,,a,1,false,2.71039615,rows,residual-post-mlp,1,1,3,872f1ab675e1595cf76fb0c933ee448cde1a1fa019be51f2ffe8d84e3e126dad
+layer-00,0,,b,1,false,2.63103253,rows,residual-post-mlp,1,1,3,872f1ab675e1595cf76fb0c933ee448cde1a1fa019be51f2ffe8d84e3e126dad
+layer-01,1,,a,1,false,1.99999998,answer,logits,0,2,3,a234ba689ffc1ad05e6598be56f5d98e724433b3e04a5e9f88d737e5f240cce7
+layer-01,1,,b,1,false,2.0000001,answer,logits,0,2,3,a234ba689ffc1ad05e6598be56f5d98e724433b3e04a5e9f88d737e5f240cce7

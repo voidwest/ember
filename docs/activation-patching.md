@@ -87,7 +87,7 @@ final-position logits, documented as such: never asserted silently.
 
 ## Model-family stage semantics
 
-The six stages are defined in docs/activation-artifacts.md. They are the same
+The stages are defined in docs/activation-artifacts.md. They are the same
 semantic points across LLaMA, Qwen, and Gemma execution paths (fast,
 workspace, and generic); gemma4's `after-logits` fires after the final logit
-softcap.
+softcap. `before-o-proj` exists on LLaMA and Qwen only; gemma4 refuses it.

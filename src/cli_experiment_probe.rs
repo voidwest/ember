@@ -122,6 +122,7 @@ fn probe_report(
             prepared,
             resolved,
             spec.site,
+            None,
             &LayerSelector::List(vec![spec.layer]),
             &spec.tokens,
             examples.iter().map(|example| &example.text),
@@ -208,6 +209,7 @@ fn probe_report(
         }),
         shape_policy: ShapePolicy::Strict,
         compatibility: CompatibilityPolicy::default(),
+        heads: None,
     };
     let token = target.token_id as usize;
     let baseline = behaviour(None)?;

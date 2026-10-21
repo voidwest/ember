@@ -1,0 +1,161 @@
+{
+  "schema": "ember.sweep.v1",
+  "experiment": "sweep-v1-effect",
+  "spec_file": "sweep.toml",
+  "spec_sha256": "19c2b338a39a5a0121f21af282ba8c0e62e6e5522d5b23e0d5dd6bbe8ea74736",
+  "model_sha256": "80ffe29839bc0d26f132cd294c2d7b366ed3022f10915e34b1e3a45f10c44f9b",
+  "tokenizer_sha256": "e299b8b95ed363ace6bda53ade5d4f85770781ce74491431f53ddcc8b672647e",
+  "layer_count": 2,
+  "layers": [
+    0,
+    1
+  ],
+  "positions": null,
+  "interventions": [
+    "scale"
+  ],
+  "effect": {
+    "metric": "logit(target) - logit(foil) in the capture row; effect = point - baseline",
+    "interval": "bootstrap percentile interval of the mean (SplitMix64, linear interpolation)",
+    "capture": "answer",
+    "confidence": 0.95,
+    "resamples": 1000,
+    "seed": 0,
+    "targets": [
+      {
+        "input_id": "a",
+        "target": {
+          "token_id": 10,
+          "piece": "w10"
+        },
+        "foil": {
+          "token_id": 11,
+          "piece": "w11"
+        }
+      },
+      {
+        "input_id": "b",
+        "target": {
+          "token_id": 12,
+          "piece": "w12"
+        },
+        "foil": {
+          "token_id": 13,
+          "piece": "w13"
+        }
+      }
+    ]
+  },
+  "baseline": {
+    "bundle": "baseline",
+    "semantic_hash": "8eafe4827a5809fab6b8998445bb8578a22c578253884439e09f00385a60d644",
+    "payload_hash": "6932decf8f0c014f3ffc558896f1f842b94a249128dc3ffbb6474f890e668bcf"
+  },
+  "points": [
+    {
+      "id": "layer-00",
+      "layer": 0,
+      "position": null,
+      "bundle": "points/layer-00",
+      "semantic_hash": "0c33570295cf851cb9c1fd388e1e6214b7118f586bce7c044f169c6ea6a4a950",
+      "payload_hash": "a2658005cbc0ba3b773e62ea9a8ff3db0e869c339523aee3316300b930fb4925",
+      "inputs": [
+        {
+          "input_id": "a",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 2.71039615,
+          "peak_capture_id": "rows",
+          "peak_site": "residual-post-mlp",
+          "peak_layer": 1,
+          "captures_compared": 3,
+          "captures_exact": 1,
+          "baseline_metric": -1.87140608,
+          "point_metric": 2.58845226,
+          "effect": 4.45985834
+        },
+        {
+          "input_id": "b",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 2.63103253,
+          "peak_capture_id": "rows",
+          "peak_site": "residual-post-mlp",
+          "peak_layer": 1,
+          "captures_compared": 3,
+          "captures_exact": 1,
+          "baseline_metric": -4.29212761,
+          "point_metric": 3.44906354,
+          "effect": 7.74119115
+        }
+      ],
+      "effect": {
+        "n": 2,
+        "mean": 6.10052474,
+        "sd": 2.32025268,
+        "standard_error": 1.6406664,
+        "ci_low": 4.45985834,
+        "ci_high": 7.74119115,
+        "positive": 2,
+        "negative": 0,
+        "zero": 0,
+        "sign_test_p": 0.5
+      }
+    },
+    {
+      "id": "layer-01",
+      "layer": 1,
+      "position": null,
+      "bundle": "points/layer-01",
+      "semantic_hash": "ee9318ea70f69d7d3717fe2c79fa53b69699995fbb54d067722f29a3ccf80270",
+      "payload_hash": "803e0a44cb1f61a21c482b24953cc5376eae9f8c988b5c5906d772d0254cd03e",
+      "inputs": [
+        {
+          "input_id": "a",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 1.99999998,
+          "peak_capture_id": "answer",
+          "peak_site": "logits",
+          "peak_layer": 0,
+          "captures_compared": 3,
+          "captures_exact": 2,
+          "baseline_metric": -1.87140608,
+          "point_metric": 1.87140644,
+          "effect": 3.74281251
+        },
+        {
+          "input_id": "b",
+          "generated_tokens_equal": false,
+          "generated_text_equal": false,
+          "first_divergent_step": 1,
+          "peak_relative_l2": 2.0000001,
+          "peak_capture_id": "answer",
+          "peak_site": "logits",
+          "peak_layer": 0,
+          "captures_compared": 3,
+          "captures_exact": 2,
+          "baseline_metric": -4.29212761,
+          "point_metric": 4.29212832,
+          "effect": 8.58425593
+        }
+      ],
+      "effect": {
+        "n": 2,
+        "mean": 6.16353422,
+        "sd": 3.42341747,
+        "standard_error": 2.42072171,
+        "ci_low": 3.74281251,
+        "ci_high": 8.58425593,
+        "positive": 2,
+        "negative": 0,
+        "zero": 0,
+        "sign_test_p": 0.5
+      }
+    }
+  ],
+  "sweep_hash": "d24b62e9d190aaa44b47738bd911f240d626aaa72ad6543b0f511067bf03232e"
+}

@@ -172,6 +172,32 @@ pub struct CaptureSpec {
     /// Output dtype (default f32).
     #[serde(default)]
     pub dtype: CaptureDType,
+    /// At `attention-heads` only: the heads to store, ascending (default:
+    /// every head). The stored row is the selected heads' columns, in head
+    /// order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heads: Option<Vec<usize>>,
+}
+
+/// Check a `heads` selector without model metadata: only at
+/// `attention-heads`, not empty, ascending and without repeats. The upper
+/// bound is checked against the model at run time.
+pub fn validate_heads(site: SemanticHookSite, heads: Option<&[usize]>) -> Result<(), String> {
+    let Some(heads) = heads else {
+        return Ok(());
+    };
+    if site != SemanticHookSite::AttentionHeads {
+        return Err(format!(
+            "heads select attention heads; site {site} has none (use site attention-heads)"
+        ));
+    }
+    if heads.is_empty() {
+        return Err("the heads list is empty; omit it to select every head".into());
+    }
+    if heads.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("list heads in ascending order without repeats".into());
+    }
+    Ok(())
 }
 
 fn default_all_layers() -> LayerSelector {

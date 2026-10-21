@@ -1,0 +1,65 @@
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "sweep-v1-effect"
+description = "Frozen sweep fixture on a synthetic 2-layer model."
+
+[model]
+path = "tiny.gguf"
+tokenizer = "tokenizer.json"
+
+[execution]
+mode = "reference"
+threads = 1
+
+[generation]
+max_new_tokens = 2
+
+[[inputs]]
+id = "a"
+text = "w3 w17 w5 w40 w9"
+
+[[inputs]]
+id = "b"
+text = "w8 w1 w33"
+
+[[captures]]
+id = "rows"
+site = "residual-post-mlp"
+layers = "all"
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "answer"
+site = "logits"
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "scale"
+site = "residual-post-mlp"
+layers = [0]
+operation = { kind = "scale", factor = -3.0 }
+[interventions.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "sweep-v1-effect"
+
+[sweep]
+layers = "all"
+
+[sweep.effect]
+capture = "answer"
+resamples = 1000
+
+[[sweep.effect.targets]]
+input = "a"
+target = 10
+foil = 11
+
+[[sweep.effect.targets]]
+input = "b"
+target = "w12"
+foil = "w13"

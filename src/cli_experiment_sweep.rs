@@ -1176,6 +1176,37 @@ foil = 13
         assert!(!out.exists());
     }
 
+    /// A layer sweep at `attention-heads` with a heads selector: one bundle
+    /// per layer, each its derived spec's bundle, with effect statistics.
+    #[test]
+    fn attention_head_sweeps_run_and_verify() {
+        let model = tiny_model("sweep-heads", 3, 64, true);
+        let body = EFFECT_BODY.replace(
+            "[[interventions]]\nid = \"scale\"\nsite = \"residual-post-mlp\"\nlayers = [0]\noperation = { kind = \"scale\", factor = -3.0 }",
+            "[[interventions]]\nid = \"scale\"\nsite = \"attention-heads\"\nlayers = [0]\nheads = [1, 2]\noperation = { kind = \"zero\" }",
+        );
+        assert_ne!(body, EFFECT_BODY);
+        let text = format!("{}{EFFECT_TABLE}", spec_text(&model, "planned", 2, &body));
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        assert_eq!(manifest.layers, vec![0, 1, 2]);
+        assert!(manifest
+            .points
+            .iter()
+            .any(|point| point.effect.as_ref().unwrap().mean != 0.0));
+    }
+
     #[test]
     fn effect_targets_must_be_single_tokens_before_anything_runs() {
         let model = tiny_model("sweep-effect-token", 2, 64, false);

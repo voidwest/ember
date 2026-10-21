@@ -65,6 +65,24 @@ fn lanczos_resize_is_deterministic_and_sized() {
     assert!((mean_in - mean_out).abs() < 3.0);
 }
 
+/// Fuzz crash (image_preprocess, 2026-10-21): pixels far outside the uint8
+/// range saturated the fixed-point accumulator and overflowed it. `resize`
+/// refuses them instead.
+#[test]
+fn resize_refuses_pixels_outside_the_uint8_range() {
+    // The crash input: a 1x1 image of f32 0xf3c4c4c4 (about -3.1e31).
+    let crash = f32::from_le_bytes([0xc4, 0xc4, 0xc4, 0xf3]);
+    for bad in [crash, -1.0, 255.5, f32::NAN, f32::INFINITY] {
+        let img = CpuTensor::from_data(vec![3, 1, 1], vec![bad, 0.0, 0.0]);
+        for resample in [Resample::Lanczos, Resample::Bicubic] {
+            let error = resize(&img, 2, 2, resample).unwrap_err().to_string();
+            assert!(error.contains("[0, 255]"), "{bad}: {error}");
+        }
+    }
+    let edge = CpuTensor::from_data(vec![3, 1, 1], vec![0.0, 255.0, 17.5]);
+    assert!(resize(&edge, 2, 2, Resample::Lanczos).is_ok());
+}
+
 #[test]
 fn lanczos_matches_pillow_reference_case() {
     // A tiny case whose PIL output we can reason about: identity resize

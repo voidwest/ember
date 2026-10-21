@@ -362,6 +362,11 @@ pub struct InterventionSpec {
     /// Expert override policy for cross-bundle sources (default strict).
     #[serde(default)]
     pub compatibility: CompatibilityPolicy,
+    /// At `attention-heads` only: the heads the operation changes,
+    /// ascending (default: every head). A source or direction then has the
+    /// width of the selected heads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heads: Option<Vec<usize>>,
 }
 
 fn default_layers() -> LayerSelector {
@@ -543,6 +548,7 @@ mod tests {
             }),
             shape_policy: ShapePolicy::Strict,
             compatibility: CompatibilityPolicy::default(),
+            heads: None,
         }
     }
 

@@ -1,0 +1,106 @@
+{
+  "timestamp": "epoch-seconds-1792588164",
+  "hostname": "unknown",
+  "os": "macos",
+  "cpu_features": [
+    "neon",
+    "dotprod",
+    "fp16"
+  ],
+  "threads": 1,
+  "wall_clock_ms": 0.273084,
+  "prefill_throughput_tps": null,
+  "decode_throughput_tps": 14647.507726560327,
+  "first_token_latency_ms": null,
+  "peak_rss_kb": null,
+  "scratch_bytes": 9472,
+  "host_profile": {
+    "schema": "ember.host-profile.v1",
+    "cpu": {
+      "arch": "aarch64",
+      "os": "macos",
+      "model": "Apple M1 Pro",
+      "features": [
+        "neon",
+        "dotprod",
+        "fp16"
+      ]
+    },
+    "op_tiers": {
+      "elementwise": "arm-neon",
+      "f32_matmul": "matrixmultiply-neon",
+      "k_quant_matvec": "arm-neon-dotprod",
+      "q8_0_matvec": "arm-neon-dotprod"
+    },
+    "plan_kernels": {
+      "down": [
+        "eager-f32"
+      ],
+      "gate": [
+        "eager-f32"
+      ],
+      "k": [
+        "eager-f32"
+      ],
+      "lm_head": [
+        "eager-f32"
+      ],
+      "o": [
+        "eager-f32"
+      ],
+      "q": [
+        "eager-f32"
+      ],
+      "up": [
+        "eager-f32"
+      ],
+      "v": [
+        "eager-f32"
+      ]
+    },
+    "kernel_fallbacks": {},
+    "threads": {
+      "requested": 1,
+      "rayon_threads": 1,
+      "available_parallelism": 10,
+      "strategy": "serial"
+    },
+    "env": {},
+    "build": {
+      "ember_version": "1.0.0",
+      "git_commit": "8226c84b89a7bd51e345f5ab9afda9415cc17539",
+      "profile": "release",
+      "opt_level": "3",
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "target": "aarch64-apple-darwin",
+      "compiled_target_features": [
+        "neon",
+        "dotprod",
+        "fp16"
+      ]
+    }
+  },
+  "compiler_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "process_id": 32327,
+  "model_path": "tiny.gguf",
+  "tokenizer_path": "tokenizer.json",
+  "prefix_reuse": {
+    "role": "variant",
+    "inputs": [
+      {
+        "input_id": "a",
+        "path": "full-recompute",
+        "reason": "an intervention acts in block 0, so no computation precedes it"
+      },
+      {
+        "input_id": "b",
+        "path": "full-recompute",
+        "reason": "an intervention acts in block 0, so no computation precedes it"
+      }
+    ]
+  },
+  "decode_batch": {
+    "path": "sequential",
+    "reason": "the model does not decode on the Q8_0 fast path"
+  }
+}

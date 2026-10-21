@@ -136,8 +136,8 @@ projects the intervened state.
 3. **Tokenize and align**: token selection is exact, byte-based, and
    fail-closed (see `docs/token-selection.md`).
 4. **Execute**: every input is generated through the existing v0.4
-   execution machinery; captures and interventions fire at the six
-   public semantic hook sites (see `docs/v05-research-contract.md`).
+   execution machinery; captures and interventions fire at the public
+   semantic hook sites (see `docs/v05-research-contract.md`).
 5. **Bundle**: a deterministic `ember.bundle.v1` is staged and
    atomically renamed into place only after all payloads, checksums, and
    the manifest are complete (see `docs/bundle-schema-v1.md`).

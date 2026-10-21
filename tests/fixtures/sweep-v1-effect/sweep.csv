@@ -1,0 +1,5 @@
+point,layer,position,input_id,first_divergent_step,generated_text_equal,peak_relative_l2,peak_capture_id,peak_site,peak_layer,captures_exact,captures_compared,semantic_hash,baseline_metric,point_metric,effect
+layer-00,0,,a,1,false,2.71039615,rows,residual-post-mlp,1,1,3,0c33570295cf851cb9c1fd388e1e6214b7118f586bce7c044f169c6ea6a4a950,-1.87140608,2.58845226,4.45985834
+layer-00,0,,b,1,false,2.63103253,rows,residual-post-mlp,1,1,3,0c33570295cf851cb9c1fd388e1e6214b7118f586bce7c044f169c6ea6a4a950,-4.29212761,3.44906354,7.74119115
+layer-01,1,,a,1,false,1.99999998,answer,logits,0,2,3,ee9318ea70f69d7d3717fe2c79fa53b69699995fbb54d067722f29a3ccf80270,-1.87140608,1.87140644,3.74281251
+layer-01,1,,b,1,false,2.0000001,answer,logits,0,2,3,ee9318ea70f69d7d3717fe2c79fa53b69699995fbb54d067722f29a3ccf80270,-4.29212761,4.29212832,8.58425593

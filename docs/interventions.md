@@ -29,6 +29,18 @@ documented hook timing (see `docs/v05-research-contract.md`).
 The pre-intervention snapshot of every intervened row is taken at the
 first fire and checksummed; `restore-original` reproduces it exactly.
 
+### Heads
+
+At `attention-heads`, `heads = [..]` (ascending, without repeats) limits an
+intervention to those heads' columns; the other heads are unchanged. Every
+operation then works on the selected width, `len(heads) * head_dim`: an
+inline vector, a capture source, a bundle source, a `vector-file` and a
+`contrastive` direction must have that width (a contrastive direction is
+computed on the same heads). `restore-original` restores only the selected
+heads from the snapshot. Without `heads`, the operation sees the whole
+`n_heads * head_dim` row. When the output projection has no bias (LLaMA
+and Qwen), zeroing every head is zeroing `attention-output`.
+
 ## Sources
 
 - `inline-vector { values }`: one row, broadcast to every selected row.

@@ -1,0 +1,3 @@
+point,layer,position,alpha,n,mean,sd,standard_error,ci_low,ci_high,positive,negative,zero,sign_test_p
+layer-00,0,,,2,6.10052474,2.32025268,1.6406664,4.45985834,7.74119115,2,0,0,0.5
+layer-01,1,,,2,6.16353422,3.42341747,2.42072171,3.74281251,8.58425593,2,0,0,0.5

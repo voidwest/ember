@@ -1,0 +1,43 @@
+# Derived from sweep 'sweep-v1-effect' (sweep spec sha256 19c2b338a39a5a0121f21af282ba8c0e62e6e5522d5b23e0d5dd6bbe8ea74736): baseline (no interventions).
+schema = "ember.experiment.v1"
+
+[[captures]]
+id = "rows"
+layers = "all"
+site = "residual-post-mlp"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "answer"
+site = "logits"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[execution]
+mode = "reference"
+threads = 1
+
+[experiment]
+description = "Frozen sweep fixture on a synthetic 2-layer model."
+name = "sweep-v1-effect.baseline"
+
+[generation]
+max_new_tokens = 2
+
+[[inputs]]
+id = "a"
+text = "w3 w17 w5 w40 w9"
+
+[[inputs]]
+id = "b"
+text = "w8 w1 w33"
+
+[model]
+path = "tiny.gguf"
+tokenizer = "tokenizer.json"
+
+[output]
+directory = "sweep-v1-effect/baseline"

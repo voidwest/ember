@@ -175,8 +175,13 @@ Layer/execution-level (capture stages in parentheses):
 - `after_logits` (stage `after-logits`): `logits`, shape `[seq, vocab]`
   f32.
 
-These six stages are the complete set of hidden-state observation and
-intervention sites. Norm outputs, Q/K/V projections, RoPE results, scores,
+These six stages, plus `before_o_proj` (stage `before-o-proj`: the
+per-head attention output `attn`, shape `[seq, n_heads * head_dim]` f32,
+before the output projection; added 2026-10-21, see
+`docs/adr/0002-attention-head-sites.md`), are the complete set of
+hidden-state observation and intervention sites. `before-o-proj` is opt-in:
+an experiment must name it, and a plan records its site only where it is
+active. Norm outputs, Q/K/V projections, RoPE results, scores,
 and MLP internals are **not** capture stages today and remain unexposed;
 trace events for them carry shape/op metadata only, never values (v0.3
 contract section 8, carried forward). A hook (capture or patch) targeting a
@@ -282,8 +287,9 @@ Cross-cutting rules:
 
 ## 7. Hook-vs-fusion interaction
 
-1. At plan build, the active hook set is resolved to a bitset of the six
-   stages (section 4).
+1. At plan build, the active hook set is resolved to a bitset of the
+   stages (section 4). `before-o-proj` never changes the fusion state: no
+   fusion eliminates the attention op's output, and F5 reads it as input.
 2. Any layer with an active `after_attention` stage or an assignment-only
    Q8_0 output projection gets `F5 = Unfused`; any layer with active
    `before_layer`/`after_layer` stages keeps those

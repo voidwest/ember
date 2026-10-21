@@ -1,0 +1,2 @@
+{"byte_offsets":[[0,2],[3,6],[7,9],[10,13],[14,16]],"input_id":"a","input_text":"w3 w17 w5 w40 w9","normalized_text":"w3 w17 w5 w40 w9","pieces":["w3","w17","w5","w40","w9"],"token_ids":[3,17,5,40,9]}
+{"byte_offsets":[[0,2],[3,5],[6,9]],"input_id":"b","input_text":"w8 w1 w33","normalized_text":"w8 w1 w33","pieces":["w8","w1","w33"],"token_ids":[8,1,33]}

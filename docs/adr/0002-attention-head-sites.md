@@ -1,7 +1,8 @@
-# ADR-0002: Attention-head sites (proposed)
+# ADR-0002: Attention-head sites
 
-- **Status:** Proposed. It needs the owner's decision, because it changes the
-  frozen `ember.hook.v1` site list.
+- **Status:** Accepted on 2026-10-21 (proposed on 2026-10-08). Decisions:
+  the site is an addition to `ember.hook.v1`, and attention patterns are out
+  of scope for the first step.
 - **Date:** 2026-10-08
 - **Scope:** `ember.hook.v1`, `ember.experiment.v1`, the core hook framework,
   and every Llama execution path
@@ -135,9 +136,28 @@ propose it for the first step.
   after with the hooks off.
 - **Batched decode.** Each sequence must see only its own row.
 
-## Decision needed
+## Decision
 
-1. Does 1.x add a seventh site to `ember.hook.v1`, as an addition under the
-   rules above? The alternative is a new `ember.hook.v2`, with a migration
-   note.
-2. Is `attention-pattern` out of scope for the first step?
+1. The owner chose to add the seventh site to `ember.hook.v1` under the
+   rules above, not to start `ember.hook.v2`. `hook_schema` stays 1.
+2. `attention-pattern` is out of scope for this step.
+
+## Implementation notes
+
+- The v0.4 stage id is `before-o-proj`. The public site id is
+  `attention-heads`.
+- The stage is opt-in: `Experiment::uses_activation_stage` defaults to
+  `false` for it. The v0.2 capture sink and patch experiment support it. The
+  v0.2 manifest check does not compare its width with the hidden size (the
+  width is `n_heads * head_dim`), and a v0.2 patch at it checks the live
+  tensor's exact shape.
+- The browser console takes its per-layer stage list from
+  `SemanticHookSite::is_per_layer` through `/api/state`, not from a copied
+  table. A prompt-only capture at the site records the hook route
+  `unfused`, because no fusion eliminates the tensor.
+- Every source and direction kind works with `heads`; a contrastive
+  direction is computed on the selected heads.
+- The logit lens, attribution patching and the probe bridge refuse the
+  site, because they need embedding-width rows.
+- The real-model six-site observer test and its frozen capture matrix are
+  unchanged; the six original sites did not change.

@@ -148,6 +148,10 @@ pub fn site_eligibility(site: SemanticHookSite) -> Result<(), &'static str> {
             Err("already normalized; the model's LM head output is the logits site")
         }
         SemanticHookSite::Logits => Err("already logits; nothing to project"),
+        SemanticHookSite::AttentionHeads => Err(
+            "per-head attention outputs before the output projection, not a residual-stream \
+             state; the final norm and LM head are not defined on it",
+        ),
     }
 }
 

@@ -1134,6 +1134,13 @@ impl ExperimentalForwardModel for Gemma4<CpuBackend> {
         execution: ExecutionContext<'_>,
         runner: &mut ExperimentRunner,
     ) -> Result<CpuTensor, CpuError> {
+        // Gemma's attention path does not fire the per-head stage.
+        runner.refuse_stage(
+            crate::hook_types::ActivationStage::BeforeOProj,
+            self.blocks.len(),
+            execution.phase,
+            "gemma4",
+        )?;
         runner.note_dispatch(execution.phase, DispatchPath::Generic);
         let mut hooks = ActiveHooks::new(runner, execution);
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
@@ -3511,6 +3518,48 @@ mod tests {
         assert!(records
             .iter()
             .all(|record| record.phase == Some(ExecutionPhase::Prefill)));
+    }
+
+    /// Gemma's attention path does not fire the per-head stage, so a run
+    /// that asks for it fails instead of recording nothing.
+    #[test]
+    fn gemma_refuses_the_per_head_stage() {
+        struct WantsHeads;
+        impl crate::experiments::Experiment for WantsHeads {
+            fn name(&self) -> &'static str {
+                "wants-heads"
+            }
+            fn uses_activation_stage(&self, stage: crate::hook_types::ActivationStage) -> bool {
+                stage == crate::hook_types::ActivationStage::BeforeOProj
+            }
+        }
+        let model = tiny_gemma4_model();
+        let backend = CpuBackend;
+        let model_context = ModelContext::new(ModelFamily::Gemma4, None, "gemma4", 1, 2);
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Prefill,
+            0,
+            2,
+            TracingState::Disabled,
+        );
+        let mut runner = ExperimentRunner::new(WantsHeads);
+        let mut cache = model.create_cache(&backend, 4);
+        let error = ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[0, 1],
+            &mut cache,
+            0,
+            execution,
+            &mut runner,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("before-o-proj is not supported for gemma4"),
+            "{error}"
+        );
     }
 
     #[test]

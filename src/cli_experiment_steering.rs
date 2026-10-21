@@ -27,12 +27,18 @@ fn intervention_layers(
     }
 }
 
-/// Width of the tensor at the intervention's site.
+/// Width the intervention's operation sees: the site's tensor width, or the
+/// selected heads' width at `attention-heads`.
 fn site_columns(prepared: &PreparedRun, intervention: &InterventionSpec) -> usize {
-    if intervention.site == ember::v05::hook::SemanticHookSite::Logits {
-        prepared.model.config.vocab_size
-    } else {
-        prepared.embed_dim
+    use ember::v05::hook::SemanticHookSite;
+    let config = &prepared.model.config;
+    match intervention.site {
+        SemanticHookSite::Logits => config.vocab_size,
+        SemanticHookSite::AttentionHeads => match &intervention.heads {
+            Some(heads) => heads.len() * config.head_dim,
+            None => config.n_heads * config.head_dim,
+        },
+        _ => prepared.embed_dim,
     }
 }
 
@@ -105,6 +111,7 @@ fn contrastive_direction(
     };
     let key = serde_json::to_string(&serde_json::json!({
         "site": intervention.site,
+        "heads": intervention.heads,
         "layers": intervention_layers(intervention, prepared.n_layers)?,
         "source": source,
         "mode": resolved.execution.mode.name(),
@@ -123,6 +130,7 @@ fn contrastive_direction(
         prepared,
         resolved,
         intervention.site,
+        intervention.heads.as_deref(),
         &intervention.layers,
         tokens,
         positive.iter().chain(negative.iter()),
@@ -156,14 +164,15 @@ fn contrastive_direction(
     Ok(out)
 }
 
-/// Per-prompt, per-layer mean of the rows `tokens` selects at `site` and
-/// `layers`, from a capture-only prefill of each prompt (`label` names the
-/// caller in errors).
+/// Per-prompt, per-layer mean of the rows `tokens` selects at `site` (and
+/// `heads`, at `attention-heads`) and `layers`, from a capture-only prefill
+/// of each prompt (`label` names the caller in errors).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prompt_means<'a>(
     prepared: &PreparedRun,
     resolved: &ExperimentSpecV1,
     site: ember::v05::hook::SemanticHookSite,
+    heads: Option<&[usize]>,
     layers: &ember::v05::capture::LayerSelector,
     tokens: &ember::v05::token_select::TokenSelector,
     prompts: impl Iterator<Item = &'a String>,
@@ -189,6 +198,7 @@ pub(crate) fn prompt_means<'a>(
         inputs: InputSelector::All("all".into()),
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
+        heads: heads.map(<[usize]>::to_vec),
     }];
     derived.interventions = Vec::new();
     derived.attribution = None;

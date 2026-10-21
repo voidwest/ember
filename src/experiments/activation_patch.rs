@@ -347,8 +347,13 @@ impl Experiment for ActivationPatch {
                     ctx.layer_count
                 )));
             }
-            if patch.target.stage != ActivationStage::AfterLogits
-                && patch.shape[1] != ctx.hidden_size
+            // The per-head stage is `n_heads * head_dim` wide, which the
+            // model context does not carry; `apply` checks it against the
+            // live tensor's exact shape instead.
+            if !matches!(
+                patch.target.stage,
+                ActivationStage::AfterLogits | ActivationStage::BeforeOProj
+            ) && patch.shape[1] != ctx.hidden_size
             {
                 return Err(ExperimentError::new(format!(
                     "patch target {}: source width {} does not match {} hidden size {}",
@@ -379,6 +384,14 @@ impl Experiment for ActivationPatch {
         hidden: &mut TensorAccess<'_>,
     ) -> Result<(), ExperimentError> {
         self.apply(ActivationStage::BeforeLayer, ctx, hidden)
+    }
+
+    fn before_o_proj(
+        &mut self,
+        ctx: &LayerContext<'_>,
+        heads: &mut TensorAccess<'_>,
+    ) -> Result<(), ExperimentError> {
+        self.apply(ActivationStage::BeforeOProj, ctx, heads)
     }
 
     fn after_attention(

@@ -8,7 +8,7 @@ later release explicitly stabilizes it.
 ## What an artifact is
 
 A capture artifact is produced by `--capture-activations capture.toml` during
-a generation run. It records selected live activations at the six semantic
+a generation run. It records selected live activations at the semantic
 hook stages:
 
 - `before-layer`: residual stream before the layer's input RMSNorm
@@ -18,6 +18,11 @@ hook stages:
 - `before-logits`: final-RMSNorm output (last token), before the LM head
 - `after-logits`: logits `[1, vocab]`; for gemma4 this is **after** the final
   logit softcap
+- `before-o-proj`: per-head attention outputs `[seq, n_heads * head_dim]`,
+  **before** the attention output projection (LLaMA/Qwen only; gemma4 refuses
+  it). Its width is not always the hidden size, so the manifest check does
+  not compare it with `hidden_size`; a patch checks the live tensor's exact
+  shape.
 
 Layout:
 
@@ -43,7 +48,7 @@ them).
 schema_version = 1          # experimental; must be 1
 output_dir = "runs/capture-demo"
 layers = [4]                # required, non-empty
-stages = ["after-mlp", "after-layer"]   # see the six stages above
+stages = ["after-mlp", "after-layer"]   # see the stages above
 phase = "both"              # prefill | decode | both
 token_positions = []        # decode-step filter; empty = all decode steps
 max_records = 64            # 0 = unlimited; truncation is flagged in the manifest

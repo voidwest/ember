@@ -111,6 +111,14 @@ impl ProbeSpec {
                 ),
             );
         }
+        if self.site == SemanticHookSite::AttentionHeads {
+            return at(
+                "site",
+                "probes read embedding-width sites; attention-heads is n_heads * head_dim \
+                 wide"
+                    .into(),
+            );
+        }
         if self.tokens.is_generated() || self.intervene_tokens.is_generated() {
             return at(
                 "tokens",

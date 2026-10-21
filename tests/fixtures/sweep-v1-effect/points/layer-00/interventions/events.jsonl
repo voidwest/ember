@@ -1,0 +1,2 @@
+{"applied":true,"input_id":"a","intervention_id":"scale","layer":0,"operation":"scale","positions":[4],"site":"residual-post-mlp","snapshot_checksum":"ccc12d260bc1414f23812083f9c827092696f7f022167901d77167dfa96e1913","source_kind":null}
+{"applied":true,"input_id":"b","intervention_id":"scale","layer":0,"operation":"scale","positions":[2],"site":"residual-post-mlp","snapshot_checksum":"2c7d9f851a33655f7bba771ee55a2d526233779381ca7f73159b6d0ffb2b7838","source_kind":null}
