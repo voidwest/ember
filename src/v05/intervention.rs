@@ -228,7 +228,7 @@ enum StrictInterventionSource {
     },
 }
 
-fn is_lower_hex_sha256(value: &str) -> bool {
+pub(crate) fn is_lower_hex_sha256(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
@@ -367,6 +367,10 @@ pub struct InterventionSpec {
     /// width of the selected heads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heads: Option<Vec<usize>>,
+    /// Act on these features of a dictionary instead of the raw row
+    /// (ADR-0003). The row then changes by the decoded difference only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<crate::v05::dictionary::FeatureSelection>,
 }
 
 fn default_layers() -> LayerSelector {
@@ -549,6 +553,7 @@ mod tests {
             shape_policy: ShapePolicy::Strict,
             compatibility: CompatibilityPolicy::default(),
             heads: None,
+            features: None,
         }
     }
 

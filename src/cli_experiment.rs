@@ -458,7 +458,15 @@ pub(crate) struct PreparedRun {
     /// Contrastive directions already computed in this session, keyed by
     /// everything they depend on (a sweep over alpha computes each once).
     pub direction_cache: Mutex<std::collections::BTreeMap<String, DirectionLayers>>,
+    /// Dictionaries already loaded in this session, keyed by folder and
+    /// both pinned hashes (a sweep loads each once).
+    pub dictionary_cache: Mutex<DictionaryCache>,
 }
+
+/// Loaded dictionaries by (folder, weights SHA-256, cfg.json SHA-256): an
+/// entry that pins another config hash loads, and is checked, on its own.
+pub(crate) type DictionaryCache =
+    std::collections::BTreeMap<(PathBuf, String, String), Arc<ember::v05::dictionary::Dictionary>>;
 
 /// Per-layer direction vectors.
 pub(crate) type DirectionLayers = std::collections::BTreeMap<usize, Vec<f32>>;
@@ -670,6 +678,7 @@ fn prepare_run_overlapped<'scope, 'env>(
         model_path: resolved.model.path.clone(),
         model_spec: resolved.model.clone(),
         direction_cache: Mutex::new(std::collections::BTreeMap::new()),
+        dictionary_cache: Mutex::new(DictionaryCache::new()),
     })
 }
 
@@ -818,6 +827,8 @@ pub(crate) struct ActiveSpec {
     /// Analysis artifacts (attribution, probe bridge) produced after the
     /// inputs ran, written under `artifacts/`.
     pub artifacts: std::collections::BTreeMap<String, Vec<u8>>,
+    /// The spec's feature dictionaries (ADR-0003), in spec order.
+    pub dictionaries: Vec<Arc<ember::v05::dictionary::Dictionary>>,
     pub threads: usize,
 }
 
@@ -885,6 +896,7 @@ pub(crate) fn activate_spec(
     resolved: &ember::v05::spec::ExperimentSpecV1,
 ) -> anyhow::Result<ActiveSpec> {
     let directions = crate::cli_experiment_steering::resolve_directions(prepared, resolved)?;
+    let dictionaries = crate::cli_experiment_dictionary::load_dictionaries(prepared, resolved)?;
     let mode = resolved.execution.mode;
     let threads = pool_threads(resolved)?;
     let model = &prepared.model;
@@ -945,6 +957,7 @@ pub(crate) fn activate_spec(
         bundle_sources,
         directions,
         artifacts: std::collections::BTreeMap::new(),
+        dictionaries,
         threads,
     })
 }
@@ -987,6 +1000,9 @@ pub(crate) fn new_input_experiment(
             for (layer, values) in &direction.layers {
                 experiment.inject_direction(&direction.intervention_id, *layer, values.clone());
             }
+        }
+        for dictionary in &active.dictionaries {
+            experiment.inject_dictionary(Arc::clone(dictionary));
         }
     }
     Ok(Arc::new(Mutex::new(experiment)))
@@ -1197,6 +1213,12 @@ pub(crate) fn finish_bundle(
         ember::v05::steering::direction_artifact_files(&active.directions, &resolved.interventions)
             .map_err(anyhow::Error::msg)?;
     artifacts.extend(active.artifacts.clone());
+    let captured: Vec<&ember::v05::runner::CapturedTensor> =
+        results.iter().flat_map(|result| &result.captures).collect();
+    artifacts.extend(
+        ember::v05::dictionary::artifact_files(resolved, &active.dictionaries, &captured)
+            .map_err(anyhow::Error::msg)?,
+    );
     let materials = BundleMaterials {
         spec_text: target.spec_text.to_string(),
         resolved: resolved_with_output,

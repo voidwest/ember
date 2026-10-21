@@ -590,6 +590,94 @@ steering along it by -8 turns all three continuations negative ("a
 disaster", "terrible"). The direction is readable and, pushed hard enough,
 usable; the model does not depend on its component along it.
 
+## Feature dictionaries
+
+A feature dictionary is a sparse autoencoder (SAE) in the SAELens format: a
+folder with `cfg.json` and `sae_weights.safetensors`. Declare it once, then
+read or edit a site through it (ADR-0003):
+
+```toml
+[[dictionaries]]
+id = "l9"
+path = "dictionaries/l9"           # cfg.json + sae_weights.safetensors
+sha256 = "<SHA-256 of sae_weights.safetensors>"
+config_sha256 = "<SHA-256 of cfg.json>"
+site = "residual-post-mlp"
+layer = 9
+
+[[captures]]
+id = "resid9"
+site = "residual-post-mlp"
+layers = [9]
+features = { dictionary = "l9", top_k = 32 }
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "remove"
+site = "residual-post-mlp"
+layers = [9]
+operation = { kind = "zero" }
+features = { dictionary = "l9", ids = [1234, 5678] }
+[interventions.tokens]
+kind = "prompt-final"
+```
+
+- **Capture.** The capture stores its raw rows as usual. Ember also writes
+  `artifacts/features/resid9.json` (`ember.features.v1`). For each stored row
+  it gives the `top_k` strongest features, `l0` (the count of active
+  features), the row norm, and the relative reconstruction error
+  `|x - x̂| / |x|`. Use the error to see whether the dictionary fits the
+  model: a dictionary trained on another model, another precision or other
+  text can fit badly, and Ember reports the fit but does not refuse it.
+- **Intervention.** The operation acts on the selected features, and the row
+  changes by `(f' - f) · W_dec` only, so the rest of the activation and the
+  reconstruction error stay. `replace` with a `capture-from-bundle` source
+  patches the selected features from a clean run (the source holds raw rows,
+  which Ember encodes). See `docs/interventions.md#features`.
+- **Bundle.** Each bundle records its dictionaries in
+  `artifacts/dictionaries/<id>.json` (`ember.dictionary.v1`), with both
+  pinned hashes. It does not copy the weights. `reproduce` needs the dictionary at the
+  recorded path. `verify` checks the records against the spec, and each
+  feature artifact against the capture's stored rows. It cannot recompute
+  feature values, because it has no weights.
+- **Speed and memory.** A dictionary loads once per session, and a sweep
+  shares it. A `d_sae` 16384 dictionary at `d_in` 2048 holds 268 MB of f32
+  weights, and a full encode of one row is 34 M multiply-adds.
+
+**Validation on a real model (2026-10-22).** These runs used a public SAELens
+checkpoint for Llama-3.2-1B-Instruct, layer 9 `resid_post`, JumpReLU, d_sae
+16384 (`Geaming/Llama-3.2-1B-Instruct_SAEs` at commit 0475543, which states
+no license; it was a local test input and is not in the repository). The
+model was the pinned Q8_0 model in reference mode, on an Apple M1 Pro, with
+one deterministic run.
+
+- **Ember agrees with an independent NumPy encode.** The check covered 72
+  rows of the eight clean capital prompts, for the JumpReLU and the standard
+  ReLU checkpoints. The top-32 index lists and `l0` agree on every row. Feature
+  values differ by at most 7.9e-6 (f32 rounding of the pre-activation), and
+  relative errors by at most 1.6e-15.
+- **The fit is best at layer 9.** The JumpReLU checkpoint has a median
+  relative error of 0.061, 0.024, 0.013, 0.017 and 0.042 at layers 7 to 11.
+  Thus Ember's `residual-post-mlp` layer `l` is SAELens `blocks.l.hook_resid_post`.
+- **This checkpoint is not sparse on these activations.** About 4,800 of
+  16,384 features are active per token (mean `l0`). The standard ReLU
+  checkpoint of the same release has almost no active features (relative
+  error 0.9). Chat-formatted prompts give the same result. Ember's encode
+  agrees with NumPy, so the cause is the checkpoint or its training inputs,
+  not the encode. Results about single features of this checkpoint would not
+  mean anything.
+- **A feature patch agrees with a residual patch.** On the eight corrupted
+  capital prompts, consider logit(clean capital) − logit(corrupted capital)
+  at layer 9, final token. Patching the raw residual row from the clean run
+  recovers 9.80 logits (95% interval 8.77–10.92, 8/0/0). Patching all 16,384
+  features from the clean run recovers 9.76 (8.73–10.87, 8/0/0): 99.5% of the
+  raw patch. The gap is the corrupted run's reconstruction error, which the
+  edit keeps by design.
+- **A no-op edit is bit-identical.** `scale` with factor 1 on every feature
+  changes no logit on any of the eight inputs: the effect is exactly 0
+  (0/0/8).
+
 ## Determinism and identity
 
 Two equivalent runs on the same environment produce identical semantic

@@ -936,6 +936,135 @@ fn verify_and_load(
         );
     }
 
+    // feature dictionaries: a record per spec dictionary, and a feature
+    // artifact per feature capture that matches the capture's stored rows
+    // (ADR-0003).
+    {
+        use crate::v05::dictionary::{
+            verify_dictionary_records, verify_feature_artifact, DictionaryRecord, StoredRow,
+            DICTIONARY_DIR, FEATURES_DIR,
+        };
+        let spec = resolved_spec.as_ref().ok();
+        let dictionaries = spec
+            .map(|spec| spec.dictionaries.clone())
+            .unwrap_or_default();
+        let feature_captures: Vec<_> = spec
+            .map(|spec| {
+                spec.captures
+                    .iter()
+                    .filter_map(|capture| {
+                        capture
+                            .features
+                            .clone()
+                            .map(|features| (capture.id.clone(), features))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let in_dir = |name: &str, dir: &str| name.starts_with(&format!("{dir}/"));
+        let has_files = listed_artifacts
+            .iter()
+            .any(|name| in_dir(name, DICTIONARY_DIR) || in_dir(name, FEATURES_DIR));
+        if !dictionaries.is_empty() || !feature_captures.is_empty() || has_files {
+            let mut errors = match &resolved_spec {
+                Ok(_) => Vec::new(),
+                Err(error) => vec![format!(
+                    "dictionary artifacts, but experiment.toml does not resolve: {error}"
+                )],
+            };
+            errors.extend(verify_dictionary_records(
+                &dictionaries,
+                &listed_artifacts,
+                &|relative| files.get(relative).cloned(),
+            ));
+            let input_order = |id: &str| {
+                spec.and_then(|spec| spec.inputs.iter().position(|input| input.id == id))
+            };
+            for (capture_id, features) in &feature_captures {
+                let name = format!("{FEATURES_DIR}/{capture_id}.json");
+                let Some(bytes) = files.get(&name) else {
+                    errors.push(format!("feature capture '{capture_id}' has no {name}"));
+                    continue;
+                };
+                let record: Option<DictionaryRecord> = files
+                    .get(&format!("{DICTIONARY_DIR}/{}.json", features.dictionary))
+                    .and_then(|bytes| serde_json::from_slice(bytes).ok());
+                // The stored rows in the order the artifact lists them: input
+                // order, then layer, then position.
+                let mut entries: Vec<&CaptureIndexEntry> = capture_index
+                    .iter()
+                    .filter(|entry| entry.capture_id == *capture_id && entry.summary.is_none())
+                    .collect();
+                entries.sort_by_key(|entry| (input_order(&entry.input_id), entry.layer));
+                let mut tensors: Vec<(&CaptureIndexEntry, usize, Vec<f32>)> = Vec::new();
+                for entry in entries {
+                    let values = payload_tensors
+                        .iter()
+                        .find(|(tensor, _)| *tensor == entry.tensor_name)
+                        .and_then(|(_, view)| {
+                            let columns = *view.shape.get(1)?;
+                            safetensors::tensor_f32(payload_bytes, view)
+                                .ok()
+                                .map(|values| (columns, values))
+                        });
+                    match values {
+                        Some((columns, values)) if columns > 0 => {
+                            tensors.push((entry, columns, values))
+                        }
+                        _ => errors.push(format!(
+                            "feature capture '{capture_id}': tensor '{}' is unreadable",
+                            entry.tensor_name
+                        )),
+                    }
+                }
+                let stored: Vec<StoredRow<'_>> = tensors
+                    .iter()
+                    .flat_map(|(entry, columns, values)| {
+                        entry
+                            .positions
+                            .iter()
+                            .zip(values.chunks_exact(*columns))
+                            .map(|(&position, row)| StoredRow {
+                                input_id: &entry.input_id,
+                                layer: entry.layer,
+                                position,
+                                values: row,
+                            })
+                    })
+                    .collect();
+                errors.extend(verify_feature_artifact(
+                    capture_id,
+                    features,
+                    record.as_ref(),
+                    &stored,
+                    bytes,
+                ));
+            }
+            for name in &listed_artifacts {
+                if in_dir(name, FEATURES_DIR)
+                    && !feature_captures
+                        .iter()
+                        .any(|(id, _)| *name == format!("{FEATURES_DIR}/{id}.json"))
+                {
+                    errors.push(format!("unexpected feature artifact '{name}'"));
+                }
+            }
+            report.record(
+                "feature dictionaries",
+                errors.is_empty(),
+                if errors.is_empty() {
+                    format!(
+                        "{} dictionaries and {} feature captures match the spec and the stored rows",
+                        dictionaries.len(),
+                        feature_captures.len()
+                    )
+                } else {
+                    errors.join("; ")
+                },
+            );
+        }
+    }
+
     // execution-plan hash matches the stored plan
     let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&files["execution-plan.json"])
         .map_err(|error| format!("execution-plan.json is not valid JSON: {error}"))?;

@@ -26,15 +26,19 @@ runs/example/
 ├── artifacts/               optional deterministic artifacts (see below)
 │   ├── directions/<id>.{safetensors,json}  resolved steering directions
 │   ├── attribution/{attribution.json,candidates.csv}  attribution report
-│   └── probe/{probe.json,effects.csv,direction.safetensors}  probe bridge report
+│   ├── probe/{probe.json,effects.csv,direction.safetensors}  probe bridge report
+│   ├── dictionaries/<id>.json  feature dictionary records (not the weights)
+│   └── features/<capture>.json  top features and fit of each stored row
 └── checksums.sha256         SHA-256 of every file at publish time
 ```
 
 `artifacts/` holds deterministic files produced by the run beyond captures:
 resolved `vector-file`/`contrastive` directions (`ember.direction.v1`, see
 `docs/interventions.md`) attribution reports (`ember.attribution.v1`, see
-`docs/experiments.md#attribution-patching`), and probe-bridge reports
-(`ember.probe-bridge.v1`). They are ordinary payloads: listed in
+`docs/experiments.md#attribution-patching`), probe-bridge reports
+(`ember.probe-bridge.v1`), and feature dictionary records
+(`ember.dictionary.v1`) with feature captures (`ember.features.v1`, see
+`docs/experiments.md#feature-dictionaries`). They are ordinary payloads: listed in
 `manifest.json`, checksummed, and part of the semantic manifest's payload map
 (so of both hashes). `verify` reads them once and checks their records.
 

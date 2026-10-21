@@ -207,6 +207,9 @@ pub struct ExperimentSpecV1 {
     /// Probe bridge workflow (`crate::v05::probe`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<crate::v05::probe::ProbeSpec>,
+    /// Feature dictionaries (ADR-0003) that captures and interventions name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dictionaries: Vec<crate::v05::dictionary::DictionarySpec>,
 }
 
 /// The strict user-authored TOML form: every defaultable field is
@@ -238,6 +241,9 @@ pub struct RawExperimentSpec {
     /// Probe bridge (`crate::v05::probe`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<RawDefinition<crate::v05::probe::ProbeSpec>>,
+    /// Feature dictionaries (`crate::v05::dictionary`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dictionaries: Option<Vec<crate::v05::dictionary::DictionarySpec>>,
 }
 
 /// A strictly validated definition retaining the fields actually supplied by
@@ -615,6 +621,7 @@ impl RawExperimentSpec {
             .probe
             .map(|definition| definition.resolve("probe", &mut defaults))
             .transpose()?;
+        let dictionaries = self.dictionaries.unwrap_or_default();
         let resolved = ExperimentSpecV1 {
             schema: EXPERIMENT_SCHEMA_V1.to_string(),
             experiment: ExperimentMetadata {
@@ -656,6 +663,7 @@ impl RawExperimentSpec {
             defaults,
             attribution,
             probe,
+            dictionaries,
         };
         resolved.validate()?;
         Ok(resolved)
@@ -849,11 +857,168 @@ impl ExperimentSpecV1 {
                 ));
             }
         }
+        self.validate_dictionaries()?;
         if self.output.directory.as_os_str().is_empty() {
             return Err(SpecError::at(
                 "output.directory",
                 "output directory must not be empty",
             ));
+        }
+        Ok(())
+    }
+
+    /// Dictionaries (ADR-0003) and the captures and interventions that name
+    /// them. Feature indices and the model's width are checked when the
+    /// dictionary loads.
+    fn validate_dictionaries(&self) -> Result<(), SpecError> {
+        use crate::v05::dictionary::{supports_site, MAX_TOP_K};
+        let ids: Vec<&str> = self.dictionaries.iter().map(|d| d.id.as_str()).collect();
+        validate_unique_ids("dictionary", &ids, &[])?;
+        for (index, dictionary) in self.dictionaries.iter().enumerate() {
+            let path = format!("dictionaries[{index}]");
+            if !is_safe_id(&dictionary.id) {
+                return Err(SpecError::at(
+                    format!("{path}.id"),
+                    "dictionary id must use [a-zA-Z0-9._-] (it names an artifact file)",
+                ));
+            }
+            if dictionary.path.as_os_str().is_empty() {
+                return Err(SpecError::at(
+                    format!("{path}.path"),
+                    "path must not be empty",
+                ));
+            }
+            for (field, hash, file) in [
+                ("sha256", &dictionary.sha256, "sae_weights.safetensors"),
+                ("config_sha256", &dictionary.config_sha256, "cfg.json"),
+            ] {
+                if !crate::v05::intervention::is_lower_hex_sha256(hash) {
+                    return Err(SpecError::at(
+                        format!("{path}.{field}"),
+                        format!(
+                            "{field} must be the 64 lowercase hex characters of {file}'s SHA-256"
+                        ),
+                    ));
+                }
+            }
+            if !supports_site(dictionary.site) {
+                return Err(SpecError::at(
+                    format!("{path}.site"),
+                    format!(
+                        "a dictionary reads a per-layer site of the model's width; {} is not one",
+                        dictionary.site
+                    ),
+                ));
+            }
+        }
+        // A dictionary is trained at one site and one layer; whatever uses it
+        // must name exactly those.
+        let dictionary_for = |path: &str,
+                              name: &str,
+                              site: crate::v05::hook::SemanticHookSite,
+                              layers: &LayerSelector,
+                              heads: Option<&[usize]>|
+         -> Result<(), SpecError> {
+            let dictionary = self
+                .dictionaries
+                .iter()
+                .find(|dictionary| dictionary.id == name)
+                .ok_or_else(|| {
+                    SpecError::at(
+                        format!("{path}.dictionary"),
+                        format!("no [[dictionaries]] entry has id '{name}'"),
+                    )
+                })?;
+            if site != dictionary.site {
+                return Err(SpecError::at(
+                    path,
+                    format!(
+                        "dictionary '{name}' reads {}; this entry is at {site}",
+                        dictionary.site
+                    ),
+                ));
+            }
+            let only_layer = match layers {
+                LayerSelector::List(layers) => layers.as_slice() == [dictionary.layer],
+                LayerSelector::Range(range) => {
+                    range.start == dictionary.layer && range.end == dictionary.layer + 1
+                }
+                LayerSelector::All(_) => false,
+            };
+            if !only_layer {
+                return Err(SpecError::at(
+                    path,
+                    format!(
+                        "dictionary '{name}' is trained at layer {0}; set layers = [{0}]",
+                        dictionary.layer
+                    ),
+                ));
+            }
+            if heads.is_some() {
+                return Err(SpecError::at(path, "features and heads cannot be combined"));
+            }
+            Ok(())
+        };
+        for (index, capture) in self.captures.iter().enumerate() {
+            let Some(features) = &capture.features else {
+                continue;
+            };
+            let path = format!("captures[{index}].features");
+            dictionary_for(
+                &path,
+                &features.dictionary,
+                capture.site,
+                &capture.layers,
+                capture.heads.as_deref(),
+            )?;
+            if features.top_k == 0 || features.top_k > MAX_TOP_K {
+                return Err(SpecError::at(
+                    format!("{path}.top_k"),
+                    format!("top_k must be between 1 and {MAX_TOP_K}"),
+                ));
+            }
+            if capture.storage == crate::v05::capture::CaptureStorage::SummaryOnly
+                || capture.dtype != crate::v05::capture::CaptureDType::F32
+            {
+                return Err(SpecError::at(
+                    path,
+                    "a feature capture encodes its stored rows: use storage selected-rows or \
+                     full-tensor and dtype f32",
+                ));
+            }
+        }
+        for (index, intervention) in self.interventions.iter().enumerate() {
+            let Some(features) = &intervention.features else {
+                continue;
+            };
+            let path = format!("interventions[{index}].features");
+            dictionary_for(
+                &path,
+                &features.dictionary,
+                intervention.site,
+                &intervention.layers,
+                intervention.heads.as_deref(),
+            )?;
+            if features.ids.is_empty() || !features.ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                return Err(SpecError::at(
+                    format!("{path}.ids"),
+                    "feature ids must be non-empty, ascending and without repeats",
+                ));
+            }
+            use crate::v05::intervention::InterventionOperation as Op;
+            if matches!(
+                intervention.operation,
+                Op::Steer { .. } | Op::AblateProjection | Op::RestoreOriginal
+            ) {
+                return Err(SpecError::at(
+                    path,
+                    format!(
+                        "{} does not act on features; use zero, scale, replace, add-delta or \
+                         interpolate",
+                        intervention.operation.kind_name()
+                    ),
+                ));
+            }
         }
         Ok(())
     }

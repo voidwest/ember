@@ -44,6 +44,38 @@ heads from the snapshot. Without `heads`, the operation sees the whole
 `n_heads * head_dim` row. When the output projection has no bias (LLaMA
 and Qwen), zeroing every head is zeroing `attention-output`.
 
+### Features
+
+`features = { dictionary = "<id>", ids = [..] }` makes the operation act on
+those features of a `[[dictionaries]]` entry (ADR-0003) instead of on the
+row. For each target row `x`, Ember encodes the selected features `f_S`,
+applies the operation to them, and adds only the decoded change:
+
+```text
+x' = x + (f'_S - f_S) · W_dec[S]
+```
+
+The reconstruction error `x - x̂` stays in the row, so features that the
+edit does not change keep their effect. The change of each feature is exact
+in f64, and each column adds one f64 sum and rounds once, so an edit that
+changes nothing (for example `scale` with `factor = 1`) is bit-identical to
+no intervention.
+
+- `zero` removes the selected features; `scale` multiplies them; `replace`,
+  `add-delta` and `interpolate` take a source.
+- An `inline-vector` source holds feature values, one per selected id.
+- A capture source (`capture-from-current-run` or `capture-from-bundle`)
+  holds raw site rows, which Ember encodes with the same dictionary. Thus
+  `replace` with a bundle source patches the selected features from a clean
+  run.
+- `steer`, `ablate-projection` and `restore-original` do not take
+  `features`.
+
+The encoder follows SAELens: `pre = b_enc + (x - b_dec?) · W_enc` (the
+`b_dec` term only with `apply_b_dec_to_input`), accumulated in f64 and
+rounded once; `standard` keeps `pre > 0`, and `jumprelu` keeps
+`pre > threshold` and `pre > 0`.
+
 ## Sources
 
 - `inline-vector { values }`: one row, broadcast to every selected row.

@@ -15,6 +15,21 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Feature dictionaries (ADR-0003): `[[dictionaries]]` names a sparse
+  autoencoder in the SAELens format (`standard` or `jumprelu`), pinned by the
+  SHA-256 of its weights and of its `cfg.json` and bound to one `embed`-wide
+  per-layer site and layer. A capture with `features = { dictionary, top_k }` also writes
+  `artifacts/features/<id>.json` (`ember.features.v1`): the strongest
+  features, `l0`, the norm and the reconstruction error of every stored
+  row. An intervention with `features = { dictionary, ids }` applies `zero`,
+  `scale`, `replace`, `add-delta` or `interpolate` to those features and
+  adds only the decoded change to the row, so the reconstruction error stays
+  and a no-op edit is bit-identical. A capture source is encoded with the
+  same dictionary, so `replace` from a clean bundle patches features.
+  Bundles record each dictionary in `artifacts/dictionaries/<id>.json`
+  (`ember.dictionary.v1`), not its weights, and `verify` checks both
+  artifacts against the spec and the stored rows. Specs without these
+  fields resolve and bundle as before.
 - Sweeps: `heads` in `[sweep]` sweeps the attention heads of
   `attention-heads` interventions, one head per point, alone or crossed
   with layers, positions and alphas. `sweep.json` records the heads and the

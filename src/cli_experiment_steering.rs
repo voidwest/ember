@@ -199,6 +199,7 @@ pub(crate) fn prompt_means<'a>(
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
         heads: heads.map(<[usize]>::to_vec),
+        features: None,
     }];
     derived.interventions = Vec::new();
     derived.attribution = None;
