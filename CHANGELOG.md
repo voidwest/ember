@@ -15,6 +15,13 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Native console: the Review page marks where the two outputs part. Each
+  output card highlights its own text from that point: the intervention in
+  the accent tint and the baseline in a neutral tint. A mark that would
+  start inside a word starts at the beginning of that word, so Arabic
+  letter joining stays intact. On a line with right-to-left text, the
+  changed text starts a line of its own, because gpui cannot paint part of
+  a right-to-left line.
 - Sweeps: `heads` in `[sweep]` sweeps the attention heads of
   `attention-heads` interventions, one head per point, alone or crossed
   with layers, positions and alphas. `sweep.json` records the heads and the
