@@ -22,6 +22,12 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
   letter joining stays intact. On a line with right-to-left text, the
   changed text starts a line of its own, because gpui cannot paint part of
   a right-to-left line.
+- Native console: code-editor navigation. `Cmd+Shift+P` opens the command
+  palette beside `Cmd+K`, `Cmd+P` opens Go to run (a quick open for saved
+  runs, `>` for commands), `Cmd+,` opens Settings, and `Ctrl+Tab` /
+  `Ctrl+Shift+Tab` step through the result tabs. The palette matches
+  fuzzily, shows each command's key, and gains commands for the result tabs
+  and the keyboard reference. `Cmd` is `Ctrl` on Linux.
 - Sweeps: `heads` in `[sweep]` sweeps the attention heads of
   `attention-heads` interventions, one head per point, alone or crossed
   with layers, positions and alphas. `sweep.json` records the heads and the
@@ -62,6 +68,14 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Fixed
 
+- Native console: Settings › Keyboard no longer lists `Cmd+1 / 2 / 3` for
+  Prompt / Intervention / Review. No such keys exist; `Cmd+1` to `Cmd+4`
+  select the result tabs.
+- Native console: closing the command palette (Esc, Enter, a click, or its
+  key) gives keyboard focus back to the console. Before, the console
+  ignored every shortcut after the palette closed, until the next click.
+- Native console: the command palette's key hints read `Ctrl` on Linux.
+  They read `Win`, a key that the console does not use.
 - Multimodal: `resize` refuses pixels outside [0, 255] (and NaN) with an
   error. The fuzzer found that an out-of-range pixel saturated the cast to
   `i64` and overflowed the fixed-point accumulator, which panicked. Decoded

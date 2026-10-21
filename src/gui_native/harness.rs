@@ -988,6 +988,37 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
             context.update_window(handle.into(), |_, _, cx| {
                 console.update(cx, |console, _| console.palette_open = false);
             })?;
+            // Go to run lists saved runs, so only the seeded store has
+            // anything for it to show.
+            if seed_runs_requested() {
+                context.update_window(handle.into(), |_, window, cx| {
+                    console.update(cx, |console, cx| {
+                        console.palette_open = true;
+                        console.palette_mode = PaletteMode::Runs;
+                        console.palette_input.update(cx, |input, cx| {
+                            input.set_placeholder(PaletteMode::Runs.placeholder(), cx)
+                        });
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!("{name}-{appearance}-palette-runs.png")))?;
+                context.update_window(handle.into(), |_, _, cx| {
+                    console.update(cx, |console, cx| {
+                        console.palette_open = false;
+                        console.palette_mode = PaletteMode::Commands;
+                        console.palette_input.update(cx, |input, cx| {
+                            input.set_placeholder(PaletteMode::Commands.placeholder(), cx)
+                        });
+                    });
+                })?;
+            }
             // Interaction states: hover and keyboard focus are invisible in
             // the resting-state scenes, and they are where a console reads as
             // polished or as a form.

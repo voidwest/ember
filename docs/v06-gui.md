@@ -482,6 +482,34 @@ The result page offers **Reveal bundle** for a live result, or for a reopened
 run whose bundle is still on disk, and its Markdown names the bundles with the
 verify command.
 
+### Keyboard (editor conventions)
+
+The keys follow VS Code and Zed, so a user of a code editor can move through
+the console without a manual. `Cmd` is `Ctrl` on Linux; either modifier works
+on every platform.
+
+| Keys | Action |
+| --- | --- |
+| `Cmd+K` or `Cmd+Shift+P` | Command palette |
+| `Cmd+P` | Go to run: open a saved run by number or prompt |
+| `Cmd+Enter` | Continue, or run the experiment |
+| `Cmd+N` / `Cmd+R` | New experiment / rerun the last run |
+| `Cmd+1` to `Cmd+4` | Result tabs: Overview, Layers, Tokens, Raw trace |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous result tab, Sweep included |
+| `Cmd+B` | Show or hide the sidebar |
+| `Cmd+,` | Settings |
+| `Esc` | Cancel the run, or close the palette |
+
+The palette matches fuzzily, as an editor palette does: the characters of the
+query must appear in order, and matches at word starts rank first, so `tsb`
+finds **Toggle sidebar**. A query that matches no label falls back to the
+command descriptions. Each command shows its key. Go to run is the editor's
+quick open, with saved runs in place of files. It lists the runs that
+**Open** can reopen, newest first, at most 50 at a time. A run number, with or
+without `#`, puts that run first; other queries match the whole prompt, then
+the change and the model. Type `>` to switch it to the command list.
+Settings › Keyboard lists the same keys.
+
 ### What changed from the wizard
 
 The contextual inspector is gone (it restated the setup). Its advanced controls
