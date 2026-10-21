@@ -82,9 +82,10 @@ settings are identical whether a default is omitted or explicitly supplied.
 ## Sweeps
 
 An optional `[sweep]` table turns the spec into a template for a layer
-sweep (`layers`, optional `positions`, optional `alphas`, optional
-`interventions`; `layers` may be omitted when `alphas` is given); see
-`docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
+sweep (`layers`, optional `positions`, optional `heads`, optional `alphas`,
+optional `interventions`, optional `move_bundle_sources`, optional
+`[sweep.effect]`; `layers` may be omitted when `heads` or `alphas` is
+given); see `docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
 spec with `[sweep]` is only accepted as a sweep.
 
 ## Attribution
@@ -150,7 +151,9 @@ Non-per-layer sites reject explicit layer selectors other than `all`.
 ascending and without repeats; a head at or above the model's head count
 fails before inference. A capture stores the selected heads' columns in
 head order; an intervention changes only those columns, and its source or
-direction has the selected width (`len(heads) * head_dim`).
+direction has the selected width (`len(heads) * head_dim`). A capture source
+may instead have the full `n_heads * head_dim` width; the selected heads are
+then taken from it by head index.
 
 ## Token selectors
 

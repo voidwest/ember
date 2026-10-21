@@ -105,6 +105,31 @@ fn target_width(
     Ok(heads.len() * head_dim)
 }
 
+/// Rows of a capture source (`source_columns` wide) for a target of `width`
+/// columns at a site of `columns`: as they are when the widths match, or,
+/// with a heads selector, full site rows reduced to the selected heads, so a
+/// head is patched from the same head of the source. `None` otherwise.
+fn source_for_width(
+    rows: &[f32],
+    source_columns: usize,
+    columns: usize,
+    width: usize,
+    heads: Option<&[usize]>,
+    head_dim: usize,
+) -> Option<Vec<f32>> {
+    if source_columns == width {
+        return Some(rows.to_vec());
+    }
+    match heads {
+        Some(heads) if source_columns == columns && columns > 0 => Some(
+            rows.chunks_exact(columns)
+                .flat_map(|row| gather_heads(row, Some(heads), head_dim))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 /// Write `values` (from [`gather_heads`]) back into the columns of `heads`.
 fn scatter_heads(row: &mut [f32], values: &[f32], heads: &[usize], head_dim: usize) {
     for (index, &head) in heads.iter().enumerate() {
@@ -618,7 +643,7 @@ impl V05Experiment {
 
         // 3. interventions in declaration order.
         if self.site_has_interventions(site, layer) {
-            let mut current_sources: HashMap<String, Vec<f32>> = HashMap::new();
+            let mut current_sources: HashMap<String, (Vec<f32>, usize)> = HashMap::new();
             let mut events: Vec<InterventionEvent> = Vec::new();
             for target in self.interventions.iter() {
                 if target.site != site || !target.layers.contains(&layer) {
@@ -659,38 +684,50 @@ impl V05Experiment {
                         Some(values.clone())
                     }
                     Some(InterventionSource::CaptureFromCurrentRun { capture_id }) => {
+                        // Cache the capture's own rows: interventions with
+                        // different heads reduce them differently.
                         if !current_sources.contains_key(capture_id) {
-                            let captured_rows = {
-                                let result = self.result.as_ref().ok_or_else(|| {
-                                    ExperimentError::new("result not initialized before prefill")
+                            let result = self.result.as_ref().ok_or_else(|| {
+                                ExperimentError::new("result not initialized before prefill")
+                            })?;
+                            let captured = result
+                                .captures
+                                .iter()
+                                .find(|c| {
+                                    c.capture_id == *capture_id && c.input_id == input_id
+                                        && c.site == site && c.layer == layer
+                                })
+                                .ok_or_else(|| {
+                                    ExperimentError::new(format!(
+                                        "intervention '{}': source capture '{capture_id}' has \
+                                         not recorded a value at site {site}, layer {layer} at this point \
+                                         (site/layer mismatch or execution order violation)",
+                                        target.intervention_id
+                                    ))
                                 })?;
-                                let captured = result
-                                    .captures
-                                    .iter()
-                                    .find(|c| {
-                                        c.capture_id == *capture_id && c.input_id == input_id
-                                            && c.site == site && c.layer == layer
-                                    })
-                                    .ok_or_else(|| {
-                                        ExperimentError::new(format!(
-                                            "intervention '{}': source capture '{capture_id}' has \
-                                             not recorded a value at site {site}, layer {layer} at this point \
-                                             (site/layer mismatch or execution order violation)",
-                                            target.intervention_id
-                                        ))
-                                    })?;
-                                if captured.columns != width {
-                                    return Err(ExperimentError::new(format!(
-                                        "intervention '{}': source capture '{capture_id}' has {} \
-                                         columns; the target has {width}",
-                                        target.intervention_id, captured.columns
-                                    )));
-                                }
-                                captured.rows.clone()
-                            };
-                            current_sources.insert(capture_id.clone(), captured_rows);
+                            current_sources.insert(
+                                capture_id.clone(),
+                                (captured.rows.clone(), captured.columns),
+                            );
                         }
-                        current_sources.get(capture_id).cloned()
+                        let (rows, source_columns) = &current_sources[capture_id];
+                        Some(
+                            source_for_width(
+                                rows,
+                                *source_columns,
+                                columns,
+                                width,
+                                target.heads.as_deref(),
+                                head_dim,
+                            )
+                            .ok_or_else(|| {
+                                ExperimentError::new(format!(
+                                    "intervention '{}': source capture '{capture_id}' has \
+                                     {source_columns} columns; the target has {width}",
+                                    target.intervention_id
+                                ))
+                            })?,
+                        )
                     }
                     Some(InterventionSource::CaptureFromBundle { .. }) => {
                         let bundle = self
@@ -704,14 +741,23 @@ impl V05Experiment {
                                     target.intervention_id
                                 ))
                             })?;
-                        if bundle.columns != width {
-                            return Err(ExperimentError::new(format!(
-                                "intervention '{}': cross-bundle source has {} columns; the \
-                                 target has {width}",
-                                target.intervention_id, bundle.columns
-                            )));
-                        }
-                        Some(bundle.rows.clone())
+                        Some(
+                            source_for_width(
+                                &bundle.rows,
+                                bundle.columns,
+                                columns,
+                                width,
+                                target.heads.as_deref(),
+                                head_dim,
+                            )
+                            .ok_or_else(|| {
+                                ExperimentError::new(format!(
+                                    "intervention '{}': cross-bundle source has {} columns; the \
+                                     target has {width}",
+                                    target.intervention_id, bundle.columns
+                                ))
+                            })?,
+                        )
                     }
                     Some(
                         source @ (InterventionSource::VectorFile { .. }
@@ -1811,6 +1857,55 @@ kind = "prompt-final"
         let mut values: Vec<f32> = (1..=12).map(|v| v as f32).collect();
         fire_heads(&spec, &mut values).unwrap();
         assert_eq!(&values[8..], &[9.0, 10.0, 22.0, 24.0]);
+    }
+
+    /// A full-width capture source gives each intervention its own heads:
+    /// head 1 from the source's head 1, head 0 from its head 0, even when
+    /// both read the same capture in one fire.
+    #[test]
+    fn full_width_sources_give_each_intervention_its_heads() {
+        let spec = heads_spec(&format!(
+            r#"
+[[captures]]
+id = "src"
+site = "attention-heads"
+layers = [0]
+{HEADS_TOKENS}
+[[interventions]]
+id = "scale"
+site = "attention-heads"
+layers = [0]
+operation = {{ kind = "scale", factor = 10.0 }}
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-second"
+site = "attention-heads"
+layers = [0]
+heads = [1]
+operation = {{ kind = "replace" }}
+source = {{ kind = "capture-from-current-run", capture_id = "src" }}
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "patch-first"
+site = "attention-heads"
+layers = [0]
+heads = [0]
+operation = {{ kind = "replace" }}
+source = {{ kind = "capture-from-current-run", capture_id = "src" }}
+[interventions.tokens]
+kind = "prompt-final"
+"#
+        ))
+        .unwrap();
+        let mut values: Vec<f32> = (1..=12).map(|v| v as f32).collect();
+        fire_heads(&spec, &mut values).unwrap();
+        // Scaled, then both heads patched back from the capture.
+        assert_eq!(&values[8..], &[9.0, 10.0, 11.0, 12.0]);
+        assert_eq!(&values[..8], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
     }
 
     #[test]

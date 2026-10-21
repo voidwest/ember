@@ -90,7 +90,14 @@ not always `embed`). `final-norm-output` is `[1, embed]`; `logits` is
 name `heads = [..]` (ascending, without repeats; default every head). A
 capture then stores the selected heads' columns, in head order. An
 intervention changes only those columns; its source or direction has the
-selected width, and `restore-original` restores only those columns.
+selected width, and `restore-original` restores only those columns. One
+exception (2026-10-21 amendment, head sweeps): a capture source
+(`capture-from-current-run` or `capture-from-bundle`) may have the full
+`n_heads * head_dim` width, and the selected heads are then taken from each
+source row by head index, so head `H` is patched from head `H` of the
+source. Capture sources record their own width, so this is never a guess;
+inline vectors and directions must have the selected width, and every other
+width fails.
 
 **2026-10-21 amendment: `attention-heads`.** The site was added to
 `ember.hook.v1` without a hook-schema version change
@@ -145,7 +152,9 @@ selected row. For source-consuming operations (`replace`, `interpolate`,
 `add-delta`, `steer` and `ablate-projection`), a source with multiple rows must have exactly the selected target
 row count; rows correspond in selector order. Other source row counts fail
 before the operation mutates any target row. Source columns must match target
-columns; truncation and implicit reshaping are forbidden.
+columns; truncation and implicit reshaping are forbidden. The only exception
+is the head selection of a full-width capture source at `attention-heads`
+(section 1, heads selector).
 Current-run capture sources resolve by capture ID and input at the target site
 and layer; they never implicitly select the first layer of a layerwise capture.
 A cross-bundle source names one layer explicitly, and every target must match

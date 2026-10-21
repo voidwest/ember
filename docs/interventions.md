@@ -36,7 +36,10 @@ intervention to those heads' columns; the other heads are unchanged. Every
 operation then works on the selected width, `len(heads) * head_dim`: an
 inline vector, a capture source, a bundle source, a `vector-file` and a
 `contrastive` direction must have that width (a contrastive direction is
-computed on the same heads). `restore-original` restores only the selected
+computed on the same heads). A capture source (`capture-from-current-run`
+or `capture-from-bundle`) may instead have the full `n_heads * head_dim`
+width: the selected heads are then taken from it, so head `H` is patched
+from head `H` of the source. `restore-original` restores only the selected
 heads from the snapshot. Without `heads`, the operation sees the whole
 `n_heads * head_dim` row. When the output projection has no bias (LLaMA
 and Qwen), zeroing every head is zeroing `attention-output`.

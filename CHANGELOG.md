@@ -15,6 +15,15 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Sweeps: `heads` in `[sweep]` sweeps the attention heads of
+  `attention-heads` interventions, one head per point, alone or crossed
+  with layers, positions and alphas. `sweep.json` records the heads and the
+  model's head count (`heads`, `head_count`, and each point's `head`);
+  `sweep.csv` and `sweep-effect.csv` gain a `head` column for head sweeps
+  only. At `attention-heads`, a capture source of the full site width now
+  gives the selected heads, so a head sweep with `move_bundle_sources`
+  patches each head from the same head of a clean run. Sweeps without
+  `heads` write the same files and `sweep_hash` as before.
 - Hook sites: `attention-heads` (v0.4 stage `before-o-proj`), the per-head
   attention outputs before the output projection,
   `[seq, n_heads * head_dim]`. A `heads = [..]` selector on captures and

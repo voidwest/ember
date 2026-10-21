@@ -215,6 +215,7 @@ an ordinary spec (see `examples/experiments/morphology-layer-sweep.toml`):
 [sweep]
 layers = "all"                # or [2, 4, 8], or { start = 0, end = 16, step = 2 }
 positions = [3, 7]            # optional: absolute token positions
+heads = "all"                 # optional: one attention head per point (attention-heads only)
 alphas = [0.0, 2.0, 4.0]      # optional: sets `alpha` of the swept interventions
 interventions = ["replace"]   # optional: which interventions move (default: all)
 ```
@@ -227,6 +228,24 @@ swept intervention must have an `alpha`. `sweep.json` then records `alphas`
 and each point's `alpha`, and `sweep.csv` gains an `alpha` column (layer
 sweeps keep their exact earlier format). See
 `examples/experiments/steering-sentiment-sweep.toml`.
+
+`heads` (`"all"`, a list, or a `{ start, end, step }` range) sweeps the
+attention heads of `attention-heads` interventions: each point sets the
+swept interventions' `heads = [H]`. Every swept intervention must be at
+`attention-heads` and must not declare `heads` itself. Heads cross with
+layers, positions and alphas; point ids are `head-03`, or `layer-09-head-03`
+with layers. `sweep.json` records the swept `heads` and the model's
+`head_count` (which `"all"` resolves against; `verify` checks it against the
+model metadata in the baseline bundle and derives the same points from it),
+and each point's `head`. `sweep.csv` and
+`sweep-effect.csv` gain a `head` column for head sweeps only. With
+`move_bundle_sources = true`, a head sweep patches each head from the same
+head of a bundle capture of every head (see
+[interventions](interventions.md#heads)). A source capture of selected heads
+only would patch every head from those heads, so a head sweep refuses it
+before it runs. A layers x heads grid makes one
+bundle per point, so a sweep of 2 layers of a 32-head model writes 65
+bundles.
 
 Each *point* is the spec with the swept interventions at `layers = [L]`
 (and, with `positions`, `tokens = { kind = "absolute-token", index = P }`);

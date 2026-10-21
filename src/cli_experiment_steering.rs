@@ -726,7 +726,7 @@ text = "w9 w8 w7"
             spec_text(&model, "reference", 2, &body)
         );
         let definition = ember::v05::sweep::SweepDefinition::parse(&alone).unwrap();
-        let points = definition.points(4).unwrap();
+        let points = definition.points(4, 4).unwrap();
         assert_eq!(points[0].id, "alpha-neg-2");
         assert_eq!(
             points[0].resolved.interventions[0].operation,
