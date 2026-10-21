@@ -198,6 +198,17 @@ inspector, clicking pins the point there, the target layer is a dashed marker,
 and Copy CSV exports the plotted numeric data. Output cards size to short
 continuations while retaining a bounded scroll region for longer traces and
 annotate the shared prefix / first changed token directly beneath the text.
+An inline diff marks each card's own text from the first character at which
+the two outputs differ: the intervention in `accent_soft`, the baseline in
+`neutral_soft`. The texts part only at whitespace or punctuation (Latin, CJK
+or Arabic). If the first different character is inside a word, the mark starts
+at the beginning of that word on both cards, so `city` against `cityscape`
+marks both words. A mark gives its text a separate run, and macOS shapes each
+run apart, so a mark inside a word would break Arabic letter joining or split
+an accent or an emoji from its base. gpui paints a run's background in glyph order, which
+right-to-left glyphs reverse. Thus, if the mark starts partway through a line
+with right-to-left text, the changed text starts a line of its own. A card
+with no text past the start of the mark has no mark.
 GPUI's own `canvas` / `PathBuilder` / `paint_path` primitives render the chart;
 there is no plotting dependency, webview, JavaScript runtime, or Python path.
 

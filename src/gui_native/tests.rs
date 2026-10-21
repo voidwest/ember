@@ -268,3 +268,106 @@ fn a_store_from_a_newer_build_opens_read_only() {
     assert!(write_path.is_none(), "and never written back");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_inline_diff_starts_where_the_outputs_part() {
+    use super::views::divergence_offset;
+    // Equal texts have nothing to mark.
+    assert_eq!(divergence_offset("same", "same"), 4);
+    // A baseline that the intervention extends has nothing of its own; the
+    // intervention's mark starts at its first extra character.
+    assert_eq!(divergence_offset("The city.", "The city. More"), 9);
+    assert_eq!(divergence_offset("The city. More", "The city."), 9);
+    // Outputs that part between punctuation marks keep the exact offset.
+    assert_eq!(divergence_offset("city.", "city!"), 4);
+    assert_eq!(divergence_offset("abc", "xyz"), 0);
+    assert_eq!(divergence_offset("abc", ""), 0);
+}
+
+#[test]
+fn the_inline_diff_never_starts_inside_a_word() {
+    use super::views::divergence_offset;
+    assert_eq!(divergence_offset("Paris is", "Parma is"), 0);
+    assert_eq!(divergence_offset("the city", "the cityscape"), 4);
+    assert_eq!(divergence_offset("the cityscape", "the city"), 4);
+    // Arabic letters join, so a mark inside a word would break its shaping.
+    assert_eq!(divergence_offset("كتب الولد", "كتاب الولد"), 0);
+    let (baseline, intervention) = ("ذهب الولد", "ذهب البنت");
+    let offset = divergence_offset(baseline, intervention);
+    assert_eq!(offset, "ذهب ".len());
+    assert!(baseline.is_char_boundary(offset));
+    assert_eq!(divergence_offset(intervention, baseline), offset);
+    // An accent, an emoji modifier or a joiner is not a place to part either.
+    assert_eq!(divergence_offset("cafe\u{301} au", "cafe au"), 0);
+    assert_eq!(divergence_offset("a 👍🏽", "a 👍🏿"), 2);
+    assert_eq!(divergence_offset("a 👩\u{200d}💻", "a 👩\u{200d}🔬"), 2);
+    // CJK and Arabic punctuation is.
+    assert_eq!(
+        divergence_offset("今天很好。我喜欢猫", "今天很好。我喜欢狗"),
+        "今天很好。".len()
+    );
+    assert_eq!(divergence_offset("قال، ذهب", "قال، نام"), "قال، ".len());
+}
+
+#[test]
+fn a_mark_inside_a_right_to_left_line_starts_a_line_of_its_own() {
+    use super::components::line_marks;
+    use super::views::marked_display;
+    // Latin text keeps the mark inline. The mark runs to the end of the
+    // display, closing isolate included, so its last line has one style.
+    let (display, mark) = marked_display("The city. More", 9);
+    assert_eq!(display, "\u{2068}The city. More\u{2069}");
+    assert_eq!(&display[mark.unwrap()], " More\u{2069}");
+    // Arabic text breaks before the mark, so no line is part marked.
+    let text = "ذهب الولد";
+    let (display, mark) = marked_display(text, "ذهب ".len());
+    let lines = line_marks(&display, mark.clone());
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], ("\u{2068}ذهب \u{2069}", None));
+    assert_eq!(&display[mark.unwrap()], "\u{2068}الولد\u{2069}");
+    // A mark that starts a line, or nothing to mark, needs no break.
+    let (display, mark) = marked_display(text, 0);
+    assert_eq!(display, format!("\u{2068}{text}\u{2069}"));
+    assert_eq!(&display[mark.unwrap()], display);
+    assert_eq!(marked_display(text, text.len()).1, None);
+    // Only the line that holds the start of the mark matters.
+    let text = "ذهب\nThe city. More";
+    let (display, mark) = marked_display(text, text.len() - " More".len());
+    assert_eq!(display, format!("\u{2068}{text}\u{2069}"));
+    assert_eq!(&display[mark.unwrap()], " More\u{2069}");
+}
+
+#[test]
+fn a_mark_that_starts_at_a_line_end_starts_on_the_next_line() {
+    use super::components::line_marks;
+    use super::views::marked_display;
+    // The baseline goes on where the intervention stopped, after a break: no
+    // empty line, and the next line is marked whole.
+    let text = "ذهب\nالولد";
+    let (display, mark) = marked_display(text, "ذهب".len());
+    assert_eq!(display, format!("\u{2068}{text}\u{2069}"));
+    let lines = line_marks(&display, mark);
+    assert_eq!(lines[0], ("\u{2068}ذهب", None));
+    assert_eq!(lines[1], ("الولد\u{2069}", Some(0..lines[1].0.len())));
+    let (display, mark) = marked_display("abc\r\ndef", 3);
+    assert_eq!(&display[mark.unwrap()], "def\u{2069}");
+    assert_eq!(marked_display("abc\r", 3).1, None);
+}
+
+#[test]
+fn a_mark_is_split_across_the_lines_it_covers() {
+    use super::components::line_marks;
+    assert_eq!(
+        line_marks("ab\ncd\nef", Some(1..7)),
+        vec![("ab", Some(1..2)), ("cd", Some(0..2)), ("ef", Some(0..1))]
+    );
+    // A mark that holds only a line break draws on no line.
+    assert_eq!(
+        line_marks("ab\ncd", Some(2..3)),
+        vec![("ab", None), ("cd", None)]
+    );
+    assert_eq!(
+        line_marks("ab\n\ncd", None),
+        vec![("ab", None), ("", None), ("cd", None)]
+    );
+}

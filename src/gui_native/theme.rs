@@ -133,6 +133,11 @@ pub(super) struct Colors {
     pub border_strong: Rgba,
     pub accent: Rgba,
     pub accent_soft: Rgba,
+    /// The neutral partner of `accent_soft`: it marks the baseline's side of
+    /// the Review page's inline diff, where `accent_soft` marks the
+    /// intervention's side. `selection` cannot do this, because in dark mode
+    /// it sits below the raised surface that output text is drawn on.
+    pub neutral_soft: Rgba,
     pub ok: Rgba,
     pub err: Rgba,
     pub warn: Rgba,
@@ -162,6 +167,7 @@ pub(super) fn light() -> Colors {
         border_strong: rgb(0xd5cfc6),
         accent: rgb(0xb8501a),
         accent_soft: rgba(0xb8501a1f),
+        neutral_soft: rgba(0x2e2c291f),
         ok: rgb(0x2f7d4f),
         err: rgb(0xb23c33),
         warn: rgb(0x8a6410),
@@ -192,6 +198,7 @@ pub(super) fn dark() -> Colors {
         border_strong: rgba(0xffffff33),
         accent: rgb(0xef8c48),
         accent_soft: rgba(0xef8c4826),
+        neutral_soft: rgba(0xe6e2dc26),
         ok: rgb(0x5cb88a),
         err: rgb(0xe2695e),
         warn: rgb(0xd8a94a),
