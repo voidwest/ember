@@ -46,6 +46,7 @@ site = "residual-post-mlp"          # required; see hook sites
 layers = "all"                      # optional: all|[list]|{start,end,step} (end exclusive)
 storage = "selected-rows"           # optional: selected-rows|full-tensor|summary-only
 dtype = "f32"                       # optional: f32|f16
+# heads = [0, 3]                    # attention-heads only: ascending heads to store
 
 [captures.tokens]                   # required
 kind = "prompt-final"               # see token selectors
@@ -56,6 +57,7 @@ site = "attention-output"           # required
 layers = [0]                        # optional
 operation = { kind = "zero" }       # required; see operations
 # source = { kind = "zero" }        # required by replace/interpolate/add-delta/steer/ablate-projection
+# heads = [1]                       # attention-heads only: ascending heads to change
 [interventions.tokens]              # required
 kind = "prompt-final"
 
@@ -69,7 +71,9 @@ Every omitted default is recorded in the resolved specification and
 serialized into the bundle as `resolved-experiment.json` (its `defaults`
 array), so a bundle always states exactly what ran. Nested omissions include capture/intervention
 layer and input selectors, range `step`, span `normalization`, storage/dtype,
-optional intervention source, and each compatibility flag. Explicit values
+optional intervention source, and each compatibility flag. An omitted
+`heads` selector is not recorded: it is absent from the resolved spec, so
+specs without it resolve exactly as before it existed. Explicit values
 equal to defaults are not labeled as omitted. Omitted empty capture/intervention
 lists and automatic tokenizer selection are also recorded. The resolved
 settings are identical whether a default is omitted or explicitly supplied.
@@ -133,6 +137,7 @@ contrastive prompt lists must be non-empty and their selector cannot be
 | id | meaning | layers |
 |---|---|---|
 | `residual-pre-attention` | residual stream entering the block, before the input RMS norm | per-layer |
+| `attention-heads` | per-head attention outputs, concatenated, before the output projection (`n_heads * head_dim` wide) | per-layer |
 | `attention-output` | attention output after the output projection (pre-residual) | per-layer |
 | `mlp-output` | MLP output after the down projection (pre-residual) | per-layer |
 | `residual-post-mlp` | residual stream after the MLP addition (block output) | per-layer |
@@ -140,6 +145,12 @@ contrastive prompt lists must be non-empty and their selector cannot be
 | `logits` | raw pre-softmax logits of the final row | none (0) |
 
 Non-per-layer sites reject explicit layer selectors other than `all`.
+
+`heads = [..]` is valid only at `attention-heads`. It must be non-empty,
+ascending and without repeats; a head at or above the model's head count
+fails before inference. A capture stores the selected heads' columns in
+head order; an intervention changes only those columns, and its source or
+direction has the selected width (`len(heads) * head_dim`).
 
 ## Token selectors
 
@@ -190,6 +201,8 @@ inputs = ["i1", "i2"]   # explicit list
 - `deterministic = true` with `temperature > 0` and no `seed` fails;
 - `matched-span`/`byte-span` selectors require non-empty input text;
 - `generated-step` selectors require `generation.max_new_tokens > 0`;
+- `heads` outside `attention-heads`, an empty or unordered `heads` list,
+  or a head beyond the model fails;
 - cross-bundle sources reference a capture that exists in the current
   spec only for `capture-from-current-run`; bundle sources are validated
   against the source bundle at run time.

@@ -88,6 +88,16 @@ impl super::ActivationCapture for CaptureSink {
         CaptureSink::before_layer(self, execution, layer, tensor, dispatch)
     }
 
+    fn before_o_proj(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        CaptureSink::before_o_proj(self, execution, layer, tensor, dispatch)
+    }
+
     fn after_attention(
         &mut self,
         execution: &super::ExecutionContext<'_>,
@@ -321,6 +331,24 @@ impl CaptureSink {
         self.record(
             phase_name(execution.phase),
             ActivationStage::BeforeLayer,
+            layer,
+            execution.start_position,
+            execution.input_token_count,
+            tensor,
+            dispatch,
+        )
+    }
+
+    pub(crate) fn before_o_proj(
+        &mut self,
+        execution: &super::ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError> {
+        self.record(
+            phase_name(execution.phase),
+            ActivationStage::BeforeOProj,
             layer,
             execution.start_position,
             execution.input_token_count,

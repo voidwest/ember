@@ -338,19 +338,21 @@ impl Llama<CpuBackend> {
         model_sha256: Option<&str>,
         tokenizer_sha256: Option<&str>,
     ) -> anyhow::Result<ExecutionPlan> {
-        const KNOWN_STAGES: [&str; 6] = [
+        const KNOWN_STAGES: [&str; 7] = [
             "before-layer",
             "after-attention",
             "after-mlp",
             "after-layer",
             "before-logits",
             "after-logits",
+            "before-o-proj",
         ];
-        const LAYER_STAGES: [&str; 4] = [
+        const LAYER_STAGES: [&str; 5] = [
             "before-layer",
             "after-attention",
             "after-mlp",
             "after-layer",
+            "before-o-proj",
         ];
         let backend = CpuBackend;
         let config = &self.config;
@@ -461,6 +463,8 @@ impl Llama<CpuBackend> {
         let mut layers = Vec::with_capacity(n_layers);
         // (input, o, m, output) tensor ids per layer, for hook-site records.
         let mut hook_tensors: Vec<(TensorRef, TensorRef, TensorRef, TensorRef)> = Vec::new();
+        // The per-head attention output (o_proj input) per layer.
+        let mut head_tensors: Vec<TensorRef> = Vec::new();
 
         for (l, block) in self.blocks.iter().enumerate() {
             let prefix = format!("blk.{l}");
@@ -850,6 +854,7 @@ impl Llama<CpuBackend> {
                 fusion_reason,
             });
             hook_tensors.push((x_in, o, m, x2));
+            head_tensors.push(attn_out);
             last_x2 = Some(x2);
             x_in = x2;
         }
@@ -942,6 +947,19 @@ impl Llama<CpuBackend> {
         // ---- hook sites ----
         let mut sites = Vec::new();
         for (l, &(x_in_l, o_l, m_l, x2_l)) in hook_tensors.iter().enumerate() {
+            // The per-head site is recorded only where it is active, so a
+            // plan that does not use it is the plan it was before the site
+            // existed. Its tensor is always materialized: no fusion merges
+            // attention with the output projection.
+            if site_active("before-o-proj", Some(l)) {
+                sites.push(HookSiteRecord {
+                    stage: "before-o-proj".to_string(),
+                    layer: Some(l),
+                    tensor: Some(head_tensors[l].id),
+                    materialized: true,
+                    route: "unfused".to_string(),
+                });
+            }
             for (stage, tensor) in [
                 ("before-layer", x_in_l),
                 ("after-attention", o_l),

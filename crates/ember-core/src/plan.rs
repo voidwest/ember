@@ -446,7 +446,8 @@ impl DecodeArena {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookSiteRecord {
     /// Stage id: `before-layer` | `after-attention` | `after-mlp` |
-    /// `after-layer` | `before-logits` | `after-logits`.
+    /// `after-layer` | `before-logits` | `after-logits` |
+    /// `before-o-proj` (recorded only when active).
     pub stage: String,
     /// Layer index for layer-level stages.
     pub layer: Option<usize>,

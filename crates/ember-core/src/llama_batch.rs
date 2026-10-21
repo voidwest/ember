@@ -417,6 +417,11 @@ impl Llama<CpuBackend> {
                 }
             }
 
+            // Each sequence sees only its own per-head attention row.
+            for (index, hook) in hooks.iter_mut().enumerate() {
+                let mut heads = SliceActivation::new(1, q_dim, row(attention, index, q_dim));
+                hook.before_o_proj(layer, &mut heads)?;
+            }
             crate::simd::quantize_q8_0_decode_into(attention, quantized);
             matmul_q8_0_decode_tasks(&mut [Q8DecodeTask::columns(
                 quantized,

@@ -26,9 +26,11 @@ ordinary execution (section 16, Gate H).
 
 ## 1. Public semantic hook sites
 
-There are exactly six public semantic hook sites. They correspond
-one-to-one to the existing v0.4 execution hook stages; the public
-identifiers describe model semantics, not Rust implementation details.
+There are seven public semantic hook sites. They correspond one-to-one to
+v0.4 execution hook stages; the public identifiers describe model
+semantics, not Rust implementation details. The first six sites are the
+1.0 set. `attention-heads` was added within `ember.hook.v1` by the
+2026-10-21 amendment (end of this section).
 The mapping below is precise and was verified against the reference path
 (`forward_last_logits_with_cache_hooked`, crates/ember-core/src/llama.rs) and the planned
 interpreter (`forward_last_logits_planned`, crates/ember-core/src/planned_decode.rs).
@@ -36,6 +38,7 @@ interpreter (`forward_last_logits_planned`, crates/ember-core/src/planned_decode
 | Public id (kebab) | Rust variant | v0.4 stage id | Tensor exposed |
 |---|---|---|---|
 | `residual-pre-attention` | `ResidualPreAttention` | `before-layer` | The residual stream entering the transformer block, **before** the input RMS norm. |
+| `attention-heads` | `AttentionHeads` | `before-o-proj` | The per-head attention outputs, concatenated, **before** the attention output projection. |
 | `attention-output` | `AttentionOutput` | `after-attention` | The attention output projection result, **before** the attention residual add. |
 | `mlp-output` | `MlpOutput` | `after-mlp` | The MLP down-projection result, **before** the MLP residual add. |
 | `residual-post-mlp` | `ResidualPostMlp` | `after-layer` | The residual stream leaving the block, **after** both residual adds. |
@@ -63,6 +66,12 @@ Exact meanings per site:
 5. `final-norm-output`: the final RMS norm output (no layer). Shape
    `[1, embed]` in both phases (prefill hooks expose only the final row).
 6. `logits`: the LM head output, shape `[1, vocab]`.
+7. `attention-heads`: for layer `l`, the attention scores applied to `V`,
+   for every query head, before `o_proj` reads them: shape
+   `[seq, n_heads * head_dim]` in prefill and `[1, n_heads * head_dim]` in
+   decode. Head `h` is columns `h * head_dim .. (h + 1) * head_dim`. "Head"
+   means the query head: with grouped-query attention, several query heads
+   read one KV head. `attention-output` is `o_proj` of this tensor.
 
 **Sites that do not exist in v0.5.** There is no public site between the
 attention residual add and the MLP input norm (`residual-post-attention` /
@@ -71,10 +80,27 @@ paths the attention residual add is immediately followed by the post-attention
 RMS norm with no hook between them. A spec that requests such a site fails
 validation.
 
-**Tensor dtype and shape conventions.** All six sites expose f32 tensors.
-Layer sites are `[seq, embed]` during prefill and `[1, embed]` during decode.
-`final-norm-output` is `[1, embed]`; `logits` is `[1, vocab]`. Rows are
-indexed by absolute token position (section 6).
+**Tensor dtype and shape conventions.** All sites expose f32 tensors.
+Layer sites are `[seq, embed]` during prefill and `[1, embed]` during decode,
+except `attention-heads`, which is `n_heads * head_dim` wide (this width is
+not always `embed`). `final-norm-output` is `[1, embed]`; `logits` is
+`[1, vocab]`. Rows are indexed by absolute token position (section 6).
+
+**Heads selector.** At `attention-heads` only, a capture or intervention can
+name `heads = [..]` (ascending, without repeats; default every head). A
+capture then stores the selected heads' columns, in head order. An
+intervention changes only those columns; its source or direction has the
+selected width, and `restore-original` restores only those columns.
+
+**2026-10-21 amendment: `attention-heads`.** The site was added to
+`ember.hook.v1` without a hook-schema version change
+(`docs/adr/0002-attention-head-sites.md`). A spec that does not name the
+site resolves, plans and bundles exactly as before: the plan records the
+site only where it is active, `heads` is omitted when absent, and
+`hook_schema` stays 1. A binary without the site fails closed on a spec or
+bundle that names it (unknown site or field). Gemma-family models refuse the
+site; the logit lens, attribution patching and the probe bridge refuse it,
+because they need embedding-width rows.
 
 ## 2. Observation timing
 
@@ -82,6 +108,8 @@ indexed by absolute token position (section 6).
   **before** the next computation begins.
 - `attention-output` and `mlp-output` are observed **before** their
   respective residual adds.
+- `attention-heads` is observed after the attention op and **before** the
+  output projection reads it.
 - `residual-post-mlp` is observed after the final residual add of the block.
 - During prefill (multi-token evaluation), the layer sites expose the full
   `[seq, embed]` tensor at the end of the block's computation. During decode
@@ -101,6 +129,9 @@ Interventions apply at the same moments as observations, in-place:
   **before** the MLP residual add.
 - An intervention at `residual-pre-attention` replaces the block input
   **before** the input norm.
+- An intervention at `attention-heads` changes the per-head outputs
+  **before** the output projection; `o_proj` (and fused F5) reads the
+  changed value.
 - An intervention at `residual-post-mlp` replaces the block output **after**
   both residual adds; the next block consumes the replaced value.
 - An intervention at `final-norm-output` replaces the norm output before the
@@ -222,7 +253,9 @@ and every runtime decode use the same canonical union of generated-step
 sites (including exact layer suffixes); prompt-only sites stay on generic
 prefill and are not falsely recorded as planned-decode hooks. Thus
 `planned-fused` de-fuses only the affected F5 layers rather than materializing
-all six sites globally.
+all sites globally. No fusion merges attention with the output projection,
+so `attention-heads` is materialized in every fusion state and needs no
+de-fusion; F5 reads it as its input.
 
 ## 10. De-fusion policy
 

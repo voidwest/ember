@@ -715,6 +715,8 @@ impl ExperimentSpecV1 {
                     .resolve(1)
                     .map_err(|message| SpecError::at(format!("{path}.layers"), message))?;
             }
+            crate::v05::capture::validate_heads(capture.site, capture.heads.as_deref())
+                .map_err(|message| SpecError::at(format!("{path}.heads"), message))?;
             if capture.tokens.requires_text() {
                 for input in &self.inputs {
                     if selected_inputs.contains(&input.id) && input.text.is_empty() {
@@ -748,6 +750,8 @@ impl ExperimentSpecV1 {
                 .inputs
                 .resolve(&input_ids)
                 .map_err(|message| SpecError::at(format!("{path}.inputs"), message))?;
+            crate::v05::capture::validate_heads(intervention.site, intervention.heads.as_deref())
+                .map_err(|message| SpecError::at(format!("{path}.heads"), message))?;
             if intervention.tokens.requires_text() {
                 for input in &self.inputs {
                     if selected_inputs.contains(&input.id) && input.text.is_empty() {

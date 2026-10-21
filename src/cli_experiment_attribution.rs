@@ -60,6 +60,7 @@ pub(crate) fn capture(
         inputs: InputSelector::All("all".into()),
         storage,
         dtype: CaptureDType::F32,
+        heads: None,
     }
 }
 
@@ -341,6 +342,7 @@ pub(crate) fn attribution_report(
             source: Some(InterventionSource::InlineVector { values: row }),
             shape_policy: ShapePolicy::Strict,
             compatibility: CompatibilityPolicy::default(),
+            heads: None,
         }];
         let patched = run_derived(prepared, &patch)?;
         let metric = logit_difference(&patched[0], LOGITS, target.token_id, foil.token_id)?;

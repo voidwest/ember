@@ -249,6 +249,7 @@ directory = "out"
             inputs: InputSelector::All("all".to_string()),
             storage: CaptureStorage::SelectedRows,
             dtype: crate::v05::capture::CaptureDType::F32,
+            heads: None,
         }],
         interventions: Vec::new(),
         generated: ManifestGenerated {

@@ -1,8 +1,11 @@
 //! v0.5 public semantic hook-site schema (`ember.hook.v1`).
 //!
-//! The six public sites map one-to-one onto the existing v0.4 execution
-//! hook stages (docs/v05-research-contract.md section 1). The public
-//! identifiers describe model semantics, not Rust implementation details.
+//! The seven public sites map one-to-one onto v0.4 execution hook stages
+//! (docs/v05-research-contract.md section 1). The six original sites are
+//! unchanged; `attention-heads` was added within `ember.hook.v1` as an
+//! addition that leaves every plan and bundle without it unchanged
+//! (docs/adr/0002-attention-head-sites.md). The public identifiers describe
+//! model semantics, not Rust implementation details.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -10,11 +13,11 @@ use std::fmt;
 /// Semantic hook schema version (`"v05-hook/1"`).
 pub const HOOK_SCHEMA_VERSION: u32 = 1;
 
-/// The six public semantic hook sites.
+/// The public semantic hook sites.
 ///
 /// Serialized as kebab-case identifiers:
-/// `residual-pre-attention`, `attention-output`, `mlp-output`,
-/// `residual-post-mlp`, `final-norm-output`, `logits`.
+/// `residual-pre-attention`, `attention-heads`, `attention-output`,
+/// `mlp-output`, `residual-post-mlp`, `final-norm-output`, `logits`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SemanticHookSite {
@@ -35,12 +38,17 @@ pub enum SemanticHookSite {
     FinalNormOutput,
     /// Raw LM-head logits (v0.4 stage `after-logits`). No layer component.
     Logits,
+    /// Per-head attention outputs, concatenated, before the attention
+    /// output projection (v0.4 stage `before-o-proj`): `[seq, n_heads *
+    /// head_dim]`, head `h` in columns `h * head_dim..(h + 1) * head_dim`.
+    AttentionHeads,
 }
 
 impl SemanticHookSite {
-    /// All six sites in canonical order.
-    pub const ALL: [SemanticHookSite; 6] = [
+    /// All sites in canonical (execution) order.
+    pub const ALL: [SemanticHookSite; 7] = [
         SemanticHookSite::ResidualPreAttention,
+        SemanticHookSite::AttentionHeads,
         SemanticHookSite::AttentionOutput,
         SemanticHookSite::MlpOutput,
         SemanticHookSite::ResidualPostMlp,
@@ -57,6 +65,35 @@ impl SemanticHookSite {
             SemanticHookSite::ResidualPostMlp => "after-layer",
             SemanticHookSite::FinalNormOutput => "before-logits",
             SemanticHookSite::Logits => "after-logits",
+            SemanticHookSite::AttentionHeads => "before-o-proj",
+        }
+    }
+
+    /// The v0.4 execution stage this site maps onto.
+    pub const fn stage(self) -> crate::artifact::ActivationStage {
+        use crate::artifact::ActivationStage;
+        match self {
+            SemanticHookSite::ResidualPreAttention => ActivationStage::BeforeLayer,
+            SemanticHookSite::AttentionHeads => ActivationStage::BeforeOProj,
+            SemanticHookSite::AttentionOutput => ActivationStage::AfterAttention,
+            SemanticHookSite::MlpOutput => ActivationStage::AfterMlp,
+            SemanticHookSite::ResidualPostMlp => ActivationStage::AfterLayer,
+            SemanticHookSite::FinalNormOutput => ActivationStage::BeforeLogits,
+            SemanticHookSite::Logits => ActivationStage::AfterLogits,
+        }
+    }
+
+    /// The site a v0.4 execution stage maps onto.
+    pub const fn from_stage(stage: crate::artifact::ActivationStage) -> SemanticHookSite {
+        use crate::artifact::ActivationStage;
+        match stage {
+            ActivationStage::BeforeLayer => SemanticHookSite::ResidualPreAttention,
+            ActivationStage::BeforeOProj => SemanticHookSite::AttentionHeads,
+            ActivationStage::AfterAttention => SemanticHookSite::AttentionOutput,
+            ActivationStage::AfterMlp => SemanticHookSite::MlpOutput,
+            ActivationStage::AfterLayer => SemanticHookSite::ResidualPostMlp,
+            ActivationStage::BeforeLogits => SemanticHookSite::FinalNormOutput,
+            ActivationStage::AfterLogits => SemanticHookSite::Logits,
         }
     }
 
@@ -78,6 +115,7 @@ impl fmt::Display for SemanticHookSite {
             SemanticHookSite::ResidualPostMlp => "residual-post-mlp",
             SemanticHookSite::FinalNormOutput => "final-norm-output",
             SemanticHookSite::Logits => "logits",
+            SemanticHookSite::AttentionHeads => "attention-heads",
         })
     }
 }
@@ -96,6 +134,9 @@ pub enum InterventionSemantics {
     /// The site is the final norm output or raw logits; an intervention
     /// lands on the head input / logits.
     HeadBoundary,
+    /// The site is the input of a projection; the projection reads the
+    /// changed value.
+    PreProjection,
 }
 
 /// Machine-readable descriptor for one stable hook site (contract section 1).
@@ -104,7 +145,7 @@ pub struct HookSiteDescriptor {
     pub id: SemanticHookSite,
     pub schema_version: u32,
     pub description: &'static str,
-    /// Tensor rank at the site: 2 for all v0.5 sites.
+    /// Tensor rank at the site: 2 for every site.
     pub rank: usize,
     /// Index of the token axis: 0 (rows) for all v0.5 sites.
     pub feature_axis: usize,
@@ -139,6 +180,10 @@ impl HookSiteDescriptor {
                 "raw LM-head logits before sampling",
                 InterventionSemantics::HeadBoundary,
             ),
+            SemanticHookSite::AttentionHeads => (
+                "per-head attention outputs, concatenated, before the attention output projection",
+                InterventionSemantics::PreProjection,
+            ),
         };
         HookSiteDescriptor {
             id: site,
@@ -150,10 +195,11 @@ impl HookSiteDescriptor {
         }
     }
 
-    /// The frozen table of all six descriptors.
-    pub const fn all() -> [HookSiteDescriptor; 6] {
+    /// The table of all seven descriptors, in canonical site order.
+    pub const fn all() -> [HookSiteDescriptor; 7] {
         [
             HookSiteDescriptor::for_site(SemanticHookSite::ResidualPreAttention),
+            HookSiteDescriptor::for_site(SemanticHookSite::AttentionHeads),
             HookSiteDescriptor::for_site(SemanticHookSite::AttentionOutput),
             HookSiteDescriptor::for_site(SemanticHookSite::MlpOutput),
             HookSiteDescriptor::for_site(SemanticHookSite::ResidualPostMlp),
@@ -184,14 +230,20 @@ mod tests {
             "before-logits"
         );
         assert_eq!(SemanticHookSite::Logits.stage_id(), "after-logits");
+        assert_eq!(SemanticHookSite::AttentionHeads.stage_id(), "before-o-proj");
+        for site in SemanticHookSite::ALL {
+            assert_eq!(SemanticHookSite::from_stage(site.stage()), site);
+            assert_eq!(site.stage().to_string(), site.stage_id());
+        }
     }
 
     #[test]
     fn descriptors_are_stable() {
         let table = HookSiteDescriptor::all();
-        assert_eq!(table.len(), 6);
+        assert_eq!(table.len(), 7);
         let expected_ids = [
             "residual-pre-attention",
+            "attention-heads",
             "attention-output",
             "mlp-output",
             "residual-post-mlp",
@@ -221,6 +273,7 @@ mod tests {
         assert!(SemanticHookSite::AttentionOutput.is_per_layer());
         assert!(SemanticHookSite::MlpOutput.is_per_layer());
         assert!(SemanticHookSite::ResidualPostMlp.is_per_layer());
+        assert!(SemanticHookSite::AttentionHeads.is_per_layer());
         assert!(!SemanticHookSite::FinalNormOutput.is_per_layer());
         assert!(!SemanticHookSite::Logits.is_per_layer());
     }

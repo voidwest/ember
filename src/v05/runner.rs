@@ -32,6 +32,10 @@ pub struct ModelFacts {
     pub n_layers: usize,
     pub embed_dim: usize,
     pub vocab_size: usize,
+    /// Query heads and their width: the `attention-heads` site is
+    /// `n_heads * head_dim` wide.
+    pub n_heads: usize,
+    pub head_dim: usize,
 }
 
 /// One capture target resolved for the current input.
@@ -47,6 +51,8 @@ pub struct CaptureTarget {
     pub static_record: Option<TokenSelectionRecord>,
     /// 1-based decode steps to capture.
     pub generated_steps: Vec<usize>,
+    /// Selected heads at `attention-heads` (`None`: every column).
+    pub heads: Option<Vec<usize>>,
 }
 
 /// One intervention target resolved for the current input.
@@ -61,6 +67,65 @@ pub struct InterventionTarget {
     pub static_record: Option<TokenSelectionRecord>,
     /// 1-based decode steps to intervene at.
     pub generated_steps: Vec<usize>,
+    /// Selected heads at `attention-heads` (`None`: every column).
+    pub heads: Option<Vec<usize>>,
+}
+
+/// The values of `row` in the columns of `heads` (each `head_dim` wide), in
+/// head order; every value when `heads` is `None`.
+fn gather_heads(row: &[f32], heads: Option<&[usize]>, head_dim: usize) -> Vec<f32> {
+    match heads {
+        None => row.to_vec(),
+        Some(heads) => heads
+            .iter()
+            .flat_map(|&head| row[head * head_dim..(head + 1) * head_dim].iter().copied())
+            .collect(),
+    }
+}
+
+/// The width of a target: the site's `columns`, or the selected heads'
+/// columns (the site must then be exactly `heads * head_dim` wide).
+fn target_width(
+    heads: Option<&[usize]>,
+    columns: usize,
+    head_dim: usize,
+) -> Result<usize, ExperimentError> {
+    let Some(heads) = heads else {
+        return Ok(columns);
+    };
+    if head_dim == 0
+        || !columns.is_multiple_of(head_dim)
+        || heads.iter().any(|&head| (head + 1) * head_dim > columns)
+    {
+        return Err(ExperimentError::new(format!(
+            "a heads selector needs a site of whole {head_dim}-wide heads; this one has \
+             {columns} columns"
+        )));
+    }
+    Ok(heads.len() * head_dim)
+}
+
+/// Write `values` (from [`gather_heads`]) back into the columns of `heads`.
+fn scatter_heads(row: &mut [f32], values: &[f32], heads: &[usize], head_dim: usize) {
+    for (index, &head) in heads.iter().enumerate() {
+        row[head * head_dim..(head + 1) * head_dim]
+            .copy_from_slice(&values[index * head_dim..(index + 1) * head_dim]);
+    }
+}
+
+/// Check a resolved `heads` selector against the model's head count.
+fn check_heads(
+    kind: &str,
+    id: &str,
+    heads: Option<&[usize]>,
+    n_heads: usize,
+) -> Result<(), ExperimentError> {
+    match heads.and_then(|heads| heads.iter().find(|&&head| head >= n_heads)) {
+        None => Ok(()),
+        Some(head) => Err(ExperimentError::new(format!(
+            "{kind} '{id}': head {head} is out of range for a {n_heads}-head model"
+        ))),
+    }
 }
 
 /// A captured tensor payload (owned; never borrows scratch).
@@ -280,6 +345,12 @@ impl V05Experiment {
             else {
                 continue;
             };
+            check_heads(
+                "capture",
+                &capture.id,
+                capture.heads.as_deref(),
+                self.facts.n_heads,
+            )?;
             captures.push(CaptureTarget {
                 capture_id: capture.id.clone(),
                 site: capture.site,
@@ -289,6 +360,7 @@ impl V05Experiment {
                 selector: capture.tokens.clone(),
                 static_record,
                 generated_steps,
+                heads: capture.heads.clone(),
             });
         }
 
@@ -306,6 +378,12 @@ impl V05Experiment {
             else {
                 continue;
             };
+            check_heads(
+                "intervention",
+                &intervention.id,
+                intervention.heads.as_deref(),
+                self.facts.n_heads,
+            )?;
             interventions.push(InterventionTarget {
                 intervention_id: intervention.id.clone(),
                 site: intervention.site,
@@ -315,6 +393,7 @@ impl V05Experiment {
                 selector: intervention.tokens.clone(),
                 static_record,
                 generated_steps,
+                heads: intervention.heads.clone(),
             });
         }
 
@@ -373,6 +452,7 @@ impl V05Experiment {
         tensor: &mut TensorAccess<'_>,
     ) -> Result<(), ExperimentError> {
         let [rows, columns] = *tensor.shape();
+        let head_dim = self.facts.head_dim;
         let is_decode = ctx.phase == ExecutionPhase::Decode;
         let start_position = ctx.start_position;
         // Prefill head hooks expose only the prompt-final row; layer hooks
@@ -416,6 +496,16 @@ impl V05Experiment {
                 if target.site != site || !target.layers.contains(&layer) {
                     continue;
                 }
+                // A stored row is the site row, or its selected heads.
+                let heads = target.heads.as_deref();
+                let width = target_width(heads, columns, head_dim)?;
+                let selected = |local: usize| {
+                    gather_heads(
+                        &tensor.values()[local * columns..(local + 1) * columns],
+                        heads,
+                        head_dim,
+                    )
+                };
                 if target.storage == CaptureStorage::SummaryOnly {
                     // Deterministic statistics over the selected rows.
                     let wanted: Vec<usize> = if let Some(record) = &target.static_record {
@@ -438,10 +528,7 @@ impl V05Experiment {
                     }
                     let mut values: Vec<f32> = Vec::new();
                     for &position in &wanted {
-                        let local = position - row_base;
-                        values.extend_from_slice(
-                            &tensor.values()[local * columns..(local + 1) * columns],
-                        );
+                        values.extend(selected(position - row_base));
                     }
                     summaries.push(summary_stats(
                         &target.capture_id,
@@ -449,7 +536,7 @@ impl V05Experiment {
                         site,
                         layer,
                         wanted,
-                        columns,
+                        width,
                         &values,
                     ));
                     continue;
@@ -467,13 +554,13 @@ impl V05Experiment {
                     let full = target.storage == CaptureStorage::FullTensor;
                     let mut rows_out = Vec::new();
                     let positions: Vec<usize> = if full && !is_decode {
-                        rows_out.extend_from_slice(tensor.values());
+                        for local in 0..rows {
+                            rows_out.extend(selected(local));
+                        }
                         (row_base..row_base + rows).collect()
                     } else {
                         for &position in &wanted {
-                            let local = position - row_base;
-                            let row = &tensor.values()[local * columns..(local + 1) * columns];
-                            rows_out.extend_from_slice(row);
+                            rows_out.extend(selected(position - row_base));
                         }
                         wanted
                     };
@@ -486,7 +573,7 @@ impl V05Experiment {
                             site,
                             layer,
                             positions,
-                            columns,
+                            columns: width,
                             rows: rows_out,
                             full_tensor: full,
                             bytes,
@@ -499,7 +586,7 @@ impl V05Experiment {
                     if !is_decode || !target.generated_steps.contains(&step) {
                         continue;
                     }
-                    let row = tensor.values()[..columns].to_vec();
+                    let row = selected(0);
                     pending.push((
                         site_order(site) * 1_000_000 + layer,
                         CapturedTensor {
@@ -508,10 +595,10 @@ impl V05Experiment {
                             site,
                             layer,
                             positions: vec![start_position],
-                            columns,
+                            columns: width,
                             rows: row,
                             full_tensor: false,
-                            bytes: columns * 4,
+                            bytes: width * 4,
                             dtype: target.dtype,
                         },
                     ));
@@ -555,14 +642,16 @@ impl V05Experiment {
                 if positions.is_empty() {
                     continue;
                 }
+                // The width the operation sees: the row, or its selected heads.
+                let width = target_width(target.heads.as_deref(), columns, head_dim)?;
                 let source_rows: Option<Vec<f32>> = match &target.source {
                     None => None,
-                    Some(InterventionSource::Zero) => Some(vec![0.0; columns]),
+                    Some(InterventionSource::Zero) => Some(vec![0.0; width]),
                     Some(InterventionSource::InlineVector { values }) => {
-                        if values.len() != columns {
+                        if values.len() != width {
                             return Err(ExperimentError::new(format!(
-                                "intervention '{}': inline source has {} values but the site \
-                                 tensor has {columns} columns",
+                                "intervention '{}': inline source has {} values but the \
+                                 target has {width} columns",
                                 target.intervention_id,
                                 values.len()
                             )));
@@ -590,10 +679,10 @@ impl V05Experiment {
                                             target.intervention_id
                                         ))
                                     })?;
-                                if captured.columns != columns {
+                                if captured.columns != width {
                                     return Err(ExperimentError::new(format!(
                                         "intervention '{}': source capture '{capture_id}' has {} \
-                                         columns; the target site has {columns}",
+                                         columns; the target has {width}",
                                         target.intervention_id, captured.columns
                                     )));
                                 }
@@ -615,10 +704,10 @@ impl V05Experiment {
                                     target.intervention_id
                                 ))
                             })?;
-                        if bundle.columns != columns {
+                        if bundle.columns != width {
                             return Err(ExperimentError::new(format!(
                                 "intervention '{}': cross-bundle source has {} columns; the \
-                                 target site has {columns}",
+                                 target has {width}",
                                 target.intervention_id, bundle.columns
                             )));
                         }
@@ -639,10 +728,10 @@ impl V05Experiment {
                                     source.kind_name()
                                 ))
                             })?;
-                        if direction.len() != columns {
+                        if direction.len() != width {
                             return Err(ExperimentError::new(format!(
-                                "intervention '{}': direction has {} values; the site {site} \
-                                 tensor has {columns} columns",
+                                "intervention '{}': direction has {} values; the target at \
+                                 site {site} has {width} columns",
                                 target.intervention_id,
                                 direction.len()
                             )));
@@ -654,119 +743,59 @@ impl V05Experiment {
                 // in selector order. Reject incompatible shapes before changing
                 // any target row (copy_from_slice would panic, zip would truncate).
                 if let Some(source) = &source_rows {
-                    let matched = positions.len().checked_mul(columns);
-                    if columns == 0 || (source.len() != columns && Some(source.len()) != matched) {
+                    let matched = positions.len().checked_mul(width);
+                    if width == 0 || (source.len() != width && Some(source.len()) != matched) {
                         return Err(ExperimentError::new(format!(
-                            "intervention '{}': source has {} values; expected one row of {columns} \
-                             values or {} selected rows of {columns} values",
-                            target.intervention_id, source.len(), positions.len()
+                            "intervention '{}': source has {} values; expected one row of {width} \
+                             values or {} selected rows of {width} values",
+                            target.intervention_id,
+                            source.len(),
+                            positions.len()
                         )));
                     }
                 }
                 let mut applied = false;
                 for (row_index, &position) in positions.iter().enumerate() {
                     let source_row = source_rows.as_deref().map(|source| {
-                        let offset = if source.len() == columns {
+                        let offset = if source.len() == width {
                             0
                         } else {
-                            row_index * columns
+                            row_index * width
                         };
-                        &source[offset..offset + columns]
+                        &source[offset..offset + width]
                     });
                     let local = position - row_base;
                     let row_start = local * columns;
                     let row = &mut tensor.values_mut()[row_start..row_start + columns];
-                    let snapshot = self.snapshots.get(&(site, layer, position)).cloned();
-                    match target.operation {
-                        InterventionOperation::Replace => {
-                            let source = source_row.ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': replace requires a source",
-                                    target.intervention_id
-                                ))
-                            })?;
-                            row.copy_from_slice(source);
-                            applied = true;
-                        }
-                        InterventionOperation::Zero => {
-                            row.fill(0.0);
-                            applied = true;
-                        }
-                        InterventionOperation::Scale { factor } => {
-                            for value in row.iter_mut() {
-                                *value *= factor;
-                            }
-                            applied = true;
-                        }
-                        InterventionOperation::Interpolate { alpha } => {
-                            let source = source_row.ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': interpolate requires a source",
-                                    target.intervention_id
-                                ))
-                            })?;
-                            for (value, &src) in row.iter_mut().zip(source.iter()) {
-                                *value = (1.0 - alpha) * *value + alpha * src;
-                            }
-                            applied = true;
-                        }
-                        InterventionOperation::AddDelta => {
-                            let source = source_row.ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': add-delta requires a source",
-                                    target.intervention_id
-                                ))
-                            })?;
-                            for (value, &src) in row.iter_mut().zip(source.iter()) {
-                                *value += src;
-                            }
-                            applied = true;
-                        }
-                        InterventionOperation::Steer { alpha, normalize } => {
-                            let direction = source_row.ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': steer requires a direction",
-                                    target.intervention_id
-                                ))
-                            })?;
-                            crate::v05::steering::steer_row(row, direction, alpha, normalize)
-                                .map_err(|error| {
-                                    ExperimentError::new(format!(
-                                        "intervention '{}': {error}",
-                                        target.intervention_id
-                                    ))
-                                })?;
-                            applied = true;
-                        }
-                        InterventionOperation::AblateProjection => {
-                            let direction = source_row.ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': ablate-projection requires a direction",
-                                    target.intervention_id
-                                ))
-                            })?;
-                            crate::v05::steering::ablate_projection_row(row, direction).map_err(
-                                |error| {
-                                    ExperimentError::new(format!(
-                                        "intervention '{}': {error}",
-                                        target.intervention_id
-                                    ))
-                                },
+                    let original = self
+                        .snapshots
+                        .get(&(site, layer, position))
+                        .map(|snapshot| gather_heads(snapshot, target.heads.as_deref(), head_dim));
+                    match target.heads.as_deref() {
+                        None => apply_operation(
+                            target,
+                            row,
+                            source_row,
+                            original.as_deref(),
+                            site,
+                            layer,
+                            position,
+                        )?,
+                        Some(heads) => {
+                            let mut view = gather_heads(row, Some(heads), head_dim);
+                            apply_operation(
+                                target,
+                                &mut view,
+                                source_row,
+                                original.as_deref(),
+                                site,
+                                layer,
+                                position,
                             )?;
-                            applied = true;
-                        }
-                        InterventionOperation::RestoreOriginal => {
-                            let original = snapshot.as_deref().ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': no original snapshot exists at \
-                                     {} layer {layer} position {position}",
-                                    target.intervention_id, site
-                                ))
-                            })?;
-                            row.copy_from_slice(original);
-                            applied = true;
+                            scatter_heads(row, &view, heads, head_dim);
                         }
                     }
+                    applied = true;
                 }
                 let snapshot_checksum = positions
                     .first()
@@ -980,14 +1009,7 @@ impl Experiment for V05Experiment {
         layer: Option<usize>,
         phase: ExecutionPhase,
     ) -> bool {
-        let site = match stage {
-            ActivationStage::BeforeLayer => SemanticHookSite::ResidualPreAttention,
-            ActivationStage::AfterAttention => SemanticHookSite::AttentionOutput,
-            ActivationStage::AfterMlp => SemanticHookSite::MlpOutput,
-            ActivationStage::AfterLayer => SemanticHookSite::ResidualPostMlp,
-            ActivationStage::BeforeLogits => SemanticHookSite::FinalNormOutput,
-            ActivationStage::AfterLogits => SemanticHookSite::Logits,
-        };
+        let site = SemanticHookSite::from_stage(stage);
         let phase_matches = |generated: bool| (phase == ExecutionPhase::Prefill) != generated;
         let layer_matches = |layers: &crate::v05::capture::LayerSelector| {
             if !site.is_per_layer() {
@@ -1070,6 +1092,19 @@ impl Experiment for V05Experiment {
             ctx.layer_index,
             SemanticHookSite::ResidualPreAttention,
             hidden,
+        )
+    }
+
+    fn before_o_proj(
+        &mut self,
+        ctx: &LayerContext<'_>,
+        heads: &mut TensorAccess<'_>,
+    ) -> Result<(), ExperimentError> {
+        self.fire_site(
+            &ctx.execution,
+            ctx.layer_index,
+            SemanticHookSite::AttentionHeads,
+            heads,
         )
     }
 
@@ -1217,6 +1252,99 @@ impl V05Experiment {
     }
 }
 
+/// Apply `target`'s operation to one row (the whole row, or the gathered
+/// columns of its heads). `source_row` and `original` have the row's width.
+fn apply_operation(
+    target: &InterventionTarget,
+    row: &mut [f32],
+    source_row: Option<&[f32]>,
+    original: Option<&[f32]>,
+    site: SemanticHookSite,
+    layer: usize,
+    position: usize,
+) -> Result<(), ExperimentError> {
+    match target.operation {
+        InterventionOperation::Replace => {
+            let source = source_row.ok_or_else(|| {
+                ExperimentError::new(format!(
+                    "intervention '{}': replace requires a source",
+                    target.intervention_id
+                ))
+            })?;
+            row.copy_from_slice(source);
+        }
+        InterventionOperation::Zero => {
+            row.fill(0.0);
+        }
+        InterventionOperation::Scale { factor } => {
+            for value in row.iter_mut() {
+                *value *= factor;
+            }
+        }
+        InterventionOperation::Interpolate { alpha } => {
+            let source = source_row.ok_or_else(|| {
+                ExperimentError::new(format!(
+                    "intervention '{}': interpolate requires a source",
+                    target.intervention_id
+                ))
+            })?;
+            for (value, &src) in row.iter_mut().zip(source.iter()) {
+                *value = (1.0 - alpha) * *value + alpha * src;
+            }
+        }
+        InterventionOperation::AddDelta => {
+            let source = source_row.ok_or_else(|| {
+                ExperimentError::new(format!(
+                    "intervention '{}': add-delta requires a source",
+                    target.intervention_id
+                ))
+            })?;
+            for (value, &src) in row.iter_mut().zip(source.iter()) {
+                *value += src;
+            }
+        }
+        InterventionOperation::Steer { alpha, normalize } => {
+            let direction = source_row.ok_or_else(|| {
+                ExperimentError::new(format!(
+                    "intervention '{}': steer requires a direction",
+                    target.intervention_id
+                ))
+            })?;
+            crate::v05::steering::steer_row(row, direction, alpha, normalize).map_err(|error| {
+                ExperimentError::new(format!(
+                    "intervention '{}': {error}",
+                    target.intervention_id
+                ))
+            })?;
+        }
+        InterventionOperation::AblateProjection => {
+            let direction = source_row.ok_or_else(|| {
+                ExperimentError::new(format!(
+                    "intervention '{}': ablate-projection requires a direction",
+                    target.intervention_id
+                ))
+            })?;
+            crate::v05::steering::ablate_projection_row(row, direction).map_err(|error| {
+                ExperimentError::new(format!(
+                    "intervention '{}': {error}",
+                    target.intervention_id
+                ))
+            })?;
+        }
+        InterventionOperation::RestoreOriginal => {
+            let original = original.ok_or_else(|| {
+                ExperimentError::new(format!(
+                    "intervention '{}': no original snapshot exists at \
+                     {} layer {layer} position {position}",
+                    target.intervention_id, site
+                ))
+            })?;
+            row.copy_from_slice(original);
+        }
+    }
+    Ok(())
+}
+
 fn site_order(site: SemanticHookSite) -> usize {
     match site {
         SemanticHookSite::ResidualPreAttention => 0,
@@ -1225,6 +1353,7 @@ fn site_order(site: SemanticHookSite) -> usize {
         SemanticHookSite::ResidualPostMlp => 3,
         SemanticHookSite::FinalNormOutput => 4,
         SemanticHookSite::Logits => 5,
+        SemanticHookSite::AttentionHeads => 6,
     }
 }
 
@@ -1492,6 +1621,8 @@ directory = "runs/runner-test"
                 n_layers: 2,
                 embed_dim: 4,
                 vocab_size: 100,
+                n_heads: 2,
+                head_dim: 2,
             },
             Some("model-sha".into()),
             Some("tokenizer-sha".into()),
@@ -1556,6 +1687,230 @@ directory = "runs/runner-test"
                 }
             }
         }
+    }
+
+    /// A spec over the 2-head (`head_dim` 2) test facts at `attention-heads`
+    /// layer 0, prompt-final, with `body` as its captures and interventions.
+    fn heads_spec(body: &str) -> Result<ExperimentSpecV1, crate::v05::spec::SpecError> {
+        let text = format!(
+            r#"
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "heads-test"
+
+[model]
+path = "/models/tiny.gguf"
+
+[[inputs]]
+id = "i1"
+text = "hello world"
+{body}
+[output]
+directory = "runs/heads-test"
+"#
+        );
+        RawExperimentSpec::from_toml_str(&text)?.resolve()
+    }
+
+    fn fire_heads(
+        spec: &ExperimentSpecV1,
+        values: &mut [f32],
+    ) -> Result<V05Experiment, ExperimentError> {
+        let mut experiment = new_experiment(spec, 0);
+        let context = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
+        experiment.before_prefill(&context)?;
+        let mut tensor = TensorAccess::new(3, 4, values);
+        experiment.before_o_proj(&LayerContext::new(context, 0), &mut tensor)?;
+        Ok(experiment)
+    }
+
+    const HEADS_TOKENS: &str = "[captures.tokens]\nkind = \"prompt-final\"\n";
+
+    #[test]
+    fn heads_select_columns_for_captures_and_operations() {
+        let spec = heads_spec(&format!(
+            r#"
+[[captures]]
+id = "all"
+site = "attention-heads"
+layers = [0]
+{HEADS_TOKENS}
+[[captures]]
+id = "second"
+site = "attention-heads"
+layers = [0]
+heads = [1]
+{HEADS_TOKENS}
+[[interventions]]
+id = "zero-first"
+site = "attention-heads"
+layers = [0]
+heads = [0]
+operation = {{ kind = "zero" }}
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "set-second"
+site = "attention-heads"
+layers = [0]
+heads = [1]
+operation = {{ kind = "replace" }}
+source = {{ kind = "inline-vector", values = [7.0, 8.0] }}
+[interventions.tokens]
+kind = "prompt-final"
+"#
+        ))
+        .unwrap();
+        let mut values: Vec<f32> = (1..=12).map(|v| v as f32).collect();
+        let experiment = fire_heads(&spec, &mut values).unwrap();
+        // Rows 0 and 1 are untouched; the prompt-final row's head 0 is zeroed
+        // and head 1 replaced.
+        assert_eq!(&values[..8], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(&values[8..], &[0.0, 0.0, 7.0, 8.0]);
+        let result = experiment.result.as_ref().unwrap();
+        // Captures record the values before the interventions.
+        let all = &result.captures[0];
+        assert_eq!(
+            (all.columns, all.rows.clone()),
+            (4, vec![9.0, 10.0, 11.0, 12.0])
+        );
+        let second = &result.captures[1];
+        assert_eq!((second.columns, second.rows.clone()), (2, vec![11.0, 12.0]));
+        assert_eq!(second.bytes, 8);
+        assert!(result
+            .events
+            .iter()
+            .all(|event| event.applied && event.positions == [2]));
+    }
+
+    #[test]
+    fn restore_original_with_heads_restores_only_those_heads() {
+        let spec = heads_spec(
+            r#"
+[[interventions]]
+id = "double"
+site = "attention-heads"
+layers = [0]
+operation = { kind = "scale", factor = 2.0 }
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "restore-first"
+site = "attention-heads"
+layers = [0]
+heads = [0]
+operation = { kind = "restore-original" }
+[interventions.tokens]
+kind = "prompt-final"
+"#,
+        )
+        .unwrap();
+        let mut values: Vec<f32> = (1..=12).map(|v| v as f32).collect();
+        fire_heads(&spec, &mut values).unwrap();
+        assert_eq!(&values[8..], &[9.0, 10.0, 22.0, 24.0]);
+    }
+
+    #[test]
+    fn heads_sources_must_have_the_selected_width() {
+        let spec = heads_spec(
+            r#"
+[[interventions]]
+id = "wide"
+site = "attention-heads"
+layers = [0]
+heads = [1]
+operation = { kind = "replace" }
+source = { kind = "inline-vector", values = [1.0, 2.0, 3.0, 4.0] }
+[interventions.tokens]
+kind = "prompt-final"
+"#,
+        )
+        .unwrap();
+        let mut values = vec![1.0f32; 12];
+        let error = fire_heads(&spec, &mut values).err().unwrap();
+        assert!(error.message().contains("target has 2 columns"), "{error}");
+        assert_eq!(values, vec![1.0; 12], "nothing changed before the error");
+    }
+
+    #[test]
+    fn heads_beyond_the_model_fail_before_anything_runs() {
+        let spec = heads_spec(&format!(
+            r#"
+[[captures]]
+id = "third"
+site = "attention-heads"
+layers = [0]
+heads = [2]
+{HEADS_TOKENS}"#
+        ))
+        .unwrap();
+        let mut experiment = new_experiment(&spec, 0);
+        let error = experiment
+            .before_prefill(&exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3))
+            .unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("head 2 is out of range for a 2-head model"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn heads_are_valid_only_at_attention_heads_in_ascending_order() {
+        let capture = |site: &str, heads: &str| {
+            heads_spec(&format!(
+                "[[captures]]\nid = \"c\"\nsite = \"{site}\"\nlayers = [0]\n{heads}\n{HEADS_TOKENS}"
+            ))
+        };
+        let message = |result: Result<ExperimentSpecV1, crate::v05::spec::SpecError>| {
+            result.unwrap_err().to_string()
+        };
+        assert!(capture("attention-heads", "heads = [0, 1]").is_ok());
+        assert!(message(capture("attention-output", "heads = [0]"))
+            .contains("use site attention-heads"));
+        assert!(message(capture("attention-heads", "heads = []")).contains("empty"));
+        assert!(message(capture("attention-heads", "heads = [1, 0]")).contains("ascending"));
+        assert!(message(capture("attention-heads", "heads = [1, 1]")).contains("ascending"));
+    }
+
+    #[test]
+    fn the_per_head_stage_routes_to_attention_heads_only() {
+        let spec = heads_spec(&format!(
+            r#"
+[[captures]]
+id = "all"
+site = "attention-heads"
+layers = [1]
+{HEADS_TOKENS}"#
+        ))
+        .unwrap();
+        let experiment = new_experiment(&spec, 0);
+        assert!(experiment.uses_activation_site(
+            ActivationStage::BeforeOProj,
+            Some(1),
+            ExecutionPhase::Prefill,
+        ));
+        assert!(!experiment.uses_activation_site(
+            ActivationStage::BeforeOProj,
+            Some(0),
+            ExecutionPhase::Prefill,
+        ));
+        assert!(!experiment.uses_activation_site(
+            ActivationStage::AfterAttention,
+            Some(1),
+            ExecutionPhase::Prefill,
+        ));
+        // A spec without the site never asks for the stage.
+        let other = new_experiment(&test_spec(), 0);
+        assert!((0..2).all(|layer| !other.uses_activation_site(
+            ActivationStage::BeforeOProj,
+            Some(layer),
+            ExecutionPhase::Prefill,
+        )));
     }
 
     #[test]

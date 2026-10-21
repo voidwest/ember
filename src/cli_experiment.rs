@@ -320,6 +320,17 @@ impl Experiment for V05Adapter {
             .before_layer(ctx, hidden)
     }
 
+    fn before_o_proj(
+        &mut self,
+        ctx: &LayerContext<'_>,
+        heads: &mut TensorAccess<'_>,
+    ) -> Result<(), ExperimentError> {
+        self.0
+            .lock()
+            .expect("v05 experiment lock")
+            .before_o_proj(ctx, heads)
+    }
+
     fn after_attention(
         &mut self,
         ctx: &LayerContext<'_>,
@@ -951,6 +962,8 @@ pub(crate) fn new_input_experiment(
         n_layers: prepared.n_layers,
         embed_dim: prepared.embed_dim,
         vocab_size: prepared.model.config.vocab_size,
+        n_heads: prepared.model.config.n_heads,
+        head_dim: prepared.model.config.head_dim,
     };
     let input = resolved
         .inputs

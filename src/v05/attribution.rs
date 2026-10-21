@@ -161,6 +161,16 @@ impl AttributionSpec {
                     format!("site {site} has no layer; attribution ranks per-layer sites"),
                 );
             }
+            // The direct-path readout `r` has the embedding width, and a
+            // per-head difference reaches the residual only through o_proj.
+            if *site == SemanticHookSite::AttentionHeads {
+                return at(
+                    &format!("sites[{index}]"),
+                    "attribution ranks embedding-width sites; attention-heads enters the \
+                     residual stream only through the output projection"
+                        .into(),
+                );
+            }
             if self.sites[..index].contains(site) {
                 return at(
                     &format!("sites[{index}]"),

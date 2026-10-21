@@ -427,7 +427,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const state = {
-  models: [], session: null, hookStages: [],
+  models: [], session: null, hookStages: [], perLayerStages: new Set(),
   busy: false, lastResult: null, lastBaselineText: null
 };
 
@@ -471,9 +471,9 @@ function modelShortName(path) {
 }
 
 /* ---------- form wiring ---------- */
-const PER_LAYER_SITES = new Set(["before-layer", "after-attention", "after-mlp", "after-layer"]);
 const SITE_DESC = {
   "before-layer": "residual stream entering the block",
+  "before-o-proj": "per-head attention outputs, before the output projection",
   "after-attention": "attention output, pre-residual",
   "after-mlp": "MLP output, pre-residual",
   "after-layer": "residual stream leaving the block",
@@ -501,7 +501,7 @@ function currentCfg() {
 
 function refreshForm() {
   const site = $("site").value;
-  const perLayer = PER_LAYER_SITES.has(site);
+  const perLayer = state.perLayerStages.has(site);
   $("layer-field").classList.toggle("hidden", !perLayer);
   $("source-layer-field").classList.toggle("hidden", !(perLayer && $("source-field").classList.contains("visible")));
   $("site-hint").textContent = SITE_DESC[site] || "";
@@ -747,6 +747,7 @@ async function init() {
   $("ver").textContent = "v" + res.version + " · " + (res.commit || "").slice(0, 8);
   state.models = res.models || [];
   state.hookStages = res.hook_stages || [];
+  state.perLayerStages = new Set(res.per_layer_stages || []);
   state.session = res.session || null;
   const sel = $("model-select");
   sel.innerHTML = "";

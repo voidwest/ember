@@ -75,6 +75,7 @@ pub enum ExperimentHook {
     BeforeLogits,
     AfterLogits,
     GenerationComplete,
+    BeforeOProj,
 }
 
 impl core::fmt::Display for ExperimentHook {
@@ -89,6 +90,7 @@ impl core::fmt::Display for ExperimentHook {
             Self::BeforeLogits => "before_logits",
             Self::AfterLogits => "after_logits",
             Self::GenerationComplete => "on_generation_complete",
+            Self::BeforeOProj => "before_o_proj",
         };
         formatter.write_str(name)
     }
@@ -188,11 +190,14 @@ pub trait Experiment: Send {
     }
 
     /// Whether this experiment can observe or mutate a semantic activation
-    /// stage. The conservative default is `true` so third-party/internal
-    /// experiments written before this method was added never lose a hook;
-    /// implementations should override it for precise fusion planning.
-    fn uses_activation_stage(&self, _stage: ActivationStage) -> bool {
-        true
+    /// stage. The conservative default is `true` for the six original stages
+    /// so third-party/internal experiments written before this method was
+    /// added never lose a hook; implementations should override it for
+    /// precise fusion planning. [`ActivationStage::BeforeOProj`] is opt-in:
+    /// an experiment that does not name it leaves every plan exactly as it
+    /// was before that stage existed.
+    fn uses_activation_stage(&self, stage: ActivationStage) -> bool {
+        stage != ActivationStage::BeforeOProj
     }
 
     /// Layer-specific refinement for plan de-fusion. `None` denotes a global
@@ -224,6 +229,18 @@ pub trait Experiment: Send {
         &mut self,
         _ctx: &LayerContext<'_>,
         _hidden: &mut TensorAccess<'_>,
+    ) -> Result<(), ExperimentError> {
+        Ok(())
+    }
+
+    /// The per-head attention outputs before the output projection,
+    /// `[rows, n_heads * head_dim]`, head `h` in columns
+    /// `h * head_dim..(h + 1) * head_dim`. The projection reads the tensor
+    /// after the hook returns.
+    fn before_o_proj(
+        &mut self,
+        _ctx: &LayerContext<'_>,
+        _heads: &mut TensorAccess<'_>,
     ) -> Result<(), ExperimentError> {
         Ok(())
     }
@@ -394,6 +411,14 @@ pub trait ActivationCapture: Send {
         dispatch: DispatchPath,
     ) -> Result<(), ExperimentError>;
 
+    fn before_o_proj(
+        &mut self,
+        execution: &ExecutionContext<'_>,
+        layer: usize,
+        tensor: &TensorAccess<'_>,
+        dispatch: DispatchPath,
+    ) -> Result<(), ExperimentError>;
+
     fn after_attention(
         &mut self,
         execution: &ExecutionContext<'_>,
@@ -529,6 +554,7 @@ impl ExperimentRunner {
             ActivationStage::AfterAttention,
             ActivationStage::AfterMlp,
             ActivationStage::AfterLayer,
+            ActivationStage::BeforeOProj,
         ] {
             let active: Vec<usize> = (0..layer_count)
                 .filter(|&layer| self.uses_activation_site(stage, Some(layer), phase))
@@ -545,6 +571,29 @@ impl ExperimentRunner {
             }
         }
         sites
+    }
+
+    /// Fail closed when the experiment or capture asks for `stage` on a model
+    /// path that does not fire it, instead of letting the request do nothing.
+    pub(crate) fn refuse_stage(
+        &self,
+        stage: ActivationStage,
+        layer_count: usize,
+        phase: ExecutionPhase,
+        family: &str,
+    ) -> Result<(), ExperimentFailure> {
+        match (0..layer_count).find(|&layer| self.uses_activation_site(stage, Some(layer), phase)) {
+            None => Ok(()),
+            Some(layer) => Err(ExperimentFailure::new(
+                self.name(),
+                ExperimentHook::ModelLoaded,
+                Some(phase),
+                Some(layer),
+                ExperimentError::new(format!(
+                    "hook stage {stage} is not supported for {family} models"
+                )),
+            )),
+        }
     }
 
     /// Record the kernel/dispatch path used by the current evaluation.
@@ -643,6 +692,7 @@ impl ExperimentRunner {
     }
 
     forward_layer_hook!(before_layer, ExperimentHook::BeforeLayer);
+    forward_layer_hook!(before_o_proj, ExperimentHook::BeforeOProj);
     forward_layer_hook!(after_attention, ExperimentHook::AfterAttention);
     forward_layer_hook!(after_mlp, ExperimentHook::AfterMlp);
     forward_layer_hook!(after_layer, ExperimentHook::AfterLayer);
@@ -680,6 +730,7 @@ pub trait ExperimentalForwardModel: ForwardModel<CpuBackend> {
 pub(crate) trait LayerHooks<T, E> {
     fn note_dispatch(&mut self, _path: DispatchPath) {}
     fn before_layer(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
+    fn before_o_proj(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
     fn after_attention(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
     fn after_mlp(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
     fn after_layer(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
@@ -691,6 +742,7 @@ pub(crate) struct DisabledHooks;
 
 impl_disabled_hooks! {
     fn before_layer(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
+    fn before_o_proj(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
     fn after_attention(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
     fn after_mlp(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
     fn after_layer(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
@@ -774,6 +826,14 @@ impl<T: ActivationStorage> LayerHooks<T, CpuError> for ActiveHooks<'_, '_> {
         let mut access = TensorAccess::new(rows, columns, tensor.values_mut());
         self.runner
             .before_layer(self.execution, layer_index, &mut access)?;
+        Ok(())
+    }
+
+    fn before_o_proj(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), CpuError> {
+        let [rows, columns] = tensor.shape_2d();
+        let mut access = TensorAccess::new(rows, columns, tensor.values_mut());
+        self.runner
+            .before_o_proj(self.execution, layer_index, &mut access)?;
         Ok(())
     }
 
@@ -907,6 +967,15 @@ pub(crate) mod test_support {
             hidden: &mut TensorAccess<'_>,
         ) -> Result<(), ExperimentError> {
             self.record_layer(ExperimentHook::BeforeLayer, ctx, hidden);
+            Ok(())
+        }
+
+        fn before_o_proj(
+            &mut self,
+            ctx: &LayerContext<'_>,
+            heads: &mut TensorAccess<'_>,
+        ) -> Result<(), ExperimentError> {
+            self.record_layer(ExperimentHook::BeforeOProj, ctx, heads);
             Ok(())
         }
 

@@ -475,6 +475,17 @@ pub fn resolve_record_path(manifest_path: &str, record_path: &str) -> Result<Pat
 }
 
 /// Validate manifest structure and every declared tensor payload.
+/// Whether a record of `stage` may be `width` wide. Layer and final-norm
+/// stages are the hidden size; logits are the vocabulary, and the per-head
+/// stage is `n_heads * head_dim`, which the manifest does not record (a patch
+/// checks it against the live tensor's exact shape).
+fn record_width_fits(stage: ActivationStage, width: usize, hidden_size: usize) -> bool {
+    matches!(
+        stage,
+        ActivationStage::AfterLogits | ActivationStage::BeforeOProj
+    ) || width == hidden_size
+}
+
 pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<(), String> {
     if manifest.schema_version != ACTIVATION_ARTIFACT_SCHEMA {
         return Err(format!(
@@ -634,9 +645,7 @@ pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<()
                 record.index
             ));
         }
-        if record.stage != ActivationStage::AfterLogits
-            && record.shape[1] != manifest.model.hidden_size
-        {
+        if !record_width_fits(record.stage, record.shape[1], manifest.model.hidden_size) {
             return Err(format!(
                 "record {} width {} does not match model hidden size {}",
                 record.index, record.shape[1], manifest.model.hidden_size
@@ -701,6 +710,38 @@ pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    use super::ActivationStage;
+
+    #[test]
+    fn record_widths_follow_the_stage() {
+        // Qwen3-0.6B: hidden 1024, 16 heads of 128 at the per-head stage.
+        assert!(super::record_width_fits(
+            ActivationStage::BeforeOProj,
+            2048,
+            1024
+        ));
+        assert!(super::record_width_fits(
+            ActivationStage::AfterLogits,
+            151_936,
+            1024
+        ));
+        assert!(super::record_width_fits(
+            ActivationStage::AfterMlp,
+            1024,
+            1024
+        ));
+        assert!(!super::record_width_fits(
+            ActivationStage::AfterMlp,
+            2048,
+            1024
+        ));
+        assert!(!super::record_width_fits(
+            ActivationStage::BeforeLogits,
+            2048,
+            1024
+        ));
+    }
+
     #[test]
     fn oversized_or_endless_inputs_fail_instead_of_loading() {
         let dir = std::env::temp_dir().join(format!("ember-capped-{}", std::process::id()));

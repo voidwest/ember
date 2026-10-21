@@ -148,9 +148,9 @@ entire raw specification at once.
    workflow rail.
 4. **Advanced controls**: exposes the exact execution engine, numeric token
    limit, raw model path, stage id, operation id, and token-selection id.
-5. **Hook stage**: one of the six v0.5 semantic sites, labelled with their
-   v0.4 stage ids: `before-layer`, `after-attention`, `after-mlp`,
-   `after-layer`, `before-logits`, `after-logits`. The list comes from
+5. **Hook stage**: one of the seven v0.5 semantic sites, labelled with their
+   v0.4 stage ids: `before-layer`, `before-o-proj`, `after-attention`,
+   `after-mlp`, `after-layer`, `before-logits`, `after-logits`. The list comes from
    `SemanticHookSite::ALL` (`stage_id()`), not a duplicated table.
 6. **Layer**: 0..n-1 for per-layer sites; hidden for the two head-boundary
    sites.
@@ -225,7 +225,7 @@ requests return a readable error envelope, never a silent failure.
 
 - `ember::v05::spec`: raw + resolved spec types, `resolve()` validation
   (Gate A)
-- `ember::v05::hook::SemanticHookSite`: the six hook sites and their stage
+- `ember::v05::hook::SemanticHookSite`: the seven hook sites and their stage
   ids (source of truth for the hook selector)
 - `ember::v05::intervention` / `capture` / `token_select`: operation,
   source, layer, and token semantics (prompt-final / matched-span)

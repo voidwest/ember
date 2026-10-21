@@ -236,6 +236,16 @@ impl Experiment for SharedPass {
         })
     }
 
+    fn before_o_proj(
+        &mut self,
+        ctx: &LayerContext<'_>,
+        heads: &mut TensorAccess<'_>,
+    ) -> Result<(), ExperimentError> {
+        self.fire_layer(ctx, heads, |experiment, ctx, tensor| {
+            experiment.before_o_proj(ctx, tensor)
+        })
+    }
+
     fn after_attention(
         &mut self,
         ctx: &LayerContext<'_>,
@@ -1837,6 +1847,171 @@ layers = {layers}
         assert_eq!(paths(&recorded[1]), vec![resumed(1), resumed(1)]);
         assert_eq!(paths(&recorded[2]), vec![resumed(3), resumed(3)]);
         assert_eq!(paths(&recorded[3]), vec![resumed(2), resumed(2)]);
+    }
+
+    /// Captures at `attention-heads`: every head at every layer, and two
+    /// heads of one layer at a generated step.
+    const HEAD_CAPTURES: &str = r#"
+[[captures]]
+id = "heads-all"
+site = "attention-heads"
+layers = "all"
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "heads-decode"
+site = "attention-heads"
+layers = [1]
+heads = [1, 3]
+[captures.tokens]
+kind = "generated-step"
+step = 1
+"#;
+
+    /// Interventions at `attention-heads` keep the prefix contract (the
+    /// boundary is the intervened block) and batched decode gives each
+    /// sequence its own row: every variant equals its full recompute and the
+    /// sequential pass.
+    fn attention_heads_suite(model: &TinyModel, mode: &str) {
+        let base = format!("{INPUTS}{CAPTURES}{HEAD_CAPTURES}");
+        let with = |parts: &[String]| format!("{base}{}", parts.concat());
+        // Two of the tiny model's four 16-wide heads.
+        let direction: Vec<f32> = (0..32).map(|i| ((i * 5 % 9) as f32 - 4.0) * 0.25).collect();
+        let zero_head = with(&[intervention(
+            "zero-head",
+            "attention-heads",
+            "[2]",
+            "heads = [1]\noperation = { kind = \"zero\" }",
+            PROMPT_FINAL,
+        )]);
+        let steer_heads = with(&[intervention(
+            "steer-heads",
+            "attention-heads",
+            "[1]",
+            &format!(
+                "heads = [0, 2]\noperation = {{ kind = \"steer\", alpha = 2.0 }}\nsource = {{ kind = \"inline-vector\", values = {direction:?} }}"
+            ),
+            PROMPT_FINAL,
+        )]);
+        let restore_head = with(&[
+            intervention(
+                "scale-heads",
+                "attention-heads",
+                "[3]",
+                "operation = { kind = \"scale\", factor = -2.0 }",
+                PROMPT_FINAL,
+            ),
+            intervention(
+                "restore-head",
+                "attention-heads",
+                "[3]",
+                "heads = [0]\noperation = { kind = \"restore-original\" }",
+                PROMPT_FINAL,
+            ),
+        ]);
+        let decode_head = with(&[intervention(
+            "decode-head",
+            "attention-heads",
+            "[0]",
+            "heads = [3]\noperation = { kind = \"scale\", factor = -1.0 }",
+            "kind = \"generated-step\"\nstep = 2",
+        )]);
+        let contrastive_head = with(&[intervention(
+            "contrast-head",
+            "attention-heads",
+            "[3]",
+            "heads = [2]\noperation = { kind = \"steer\", alpha = 1.0, normalize = \"unit\" }\nsource = { kind = \"contrastive\", positive = [\"w1 w2 w3\", \"w4 w5\"], negative = [\"w9 w8 w7\"] }",
+            PROMPT_FINAL,
+        )]);
+        let recorded = check(
+            model,
+            mode,
+            0.0,
+            &base,
+            &[],
+            &[
+                &zero_head,
+                &steer_heads,
+                &restore_head,
+                &decode_head,
+                &contrastive_head,
+            ],
+        );
+        let resumed = |layer| ("resumed".to_string(), Some(layer));
+        let n = model.n_layers as u64;
+        assert_eq!(paths(&recorded[0]), vec![resumed(2), resumed(2)]);
+        assert_eq!(paths(&recorded[1]), vec![resumed(1), resumed(1)]);
+        assert_eq!(paths(&recorded[2]), vec![resumed(3), resumed(3)]);
+        assert_eq!(paths(&recorded[3]), vec![resumed(n), resumed(n)]);
+        assert_eq!(paths(&recorded[4]), vec![resumed(3), resumed(3)]);
+    }
+
+    #[test]
+    fn attention_heads_variants_resume_bit_identically() {
+        let q8 = tiny_model("prefix-heads-q8", 4, 64, true);
+        attention_heads_suite(&q8, "reference");
+        attention_heads_suite(&q8, "planned");
+        attention_heads_suite(&q8, "planned-fused");
+        let f32 = tiny_model("prefix-heads-f32", 4, 64, false);
+        attention_heads_suite(&f32, "reference");
+    }
+
+    /// Every head zeroed before the output projection is the attention
+    /// output zeroed (the projection has no bias): same tokens and logits.
+    /// One zeroed head is neither.
+    #[test]
+    fn zeroing_every_head_equals_zeroing_the_attention_output() {
+        let model = tiny_model("heads-vs-output", 4, 64, true);
+        let logits = r#"
+[[captures]]
+id = "logits"
+site = "logits"
+[captures.tokens]
+kind = "prompt-final"
+"#;
+        let body = |site: &str, heads: &str| {
+            format!(
+                "{INPUTS}{logits}{}",
+                intervention(
+                    "zero",
+                    site,
+                    "[1]",
+                    &format!("{heads}operation = {{ kind = \"zero\" }}"),
+                    PROMPT_FINAL,
+                )
+            )
+        };
+        let run = |name: &str, body: &str| {
+            let text = spec_text(&model, "planned", 4, body);
+            let resolved = resolve(&text);
+            let mut prepared = prepare_run(&resolved, KStrategy::Auto, false).unwrap();
+            let (_, _, report, results) = execute_prepared(
+                &mut prepared,
+                &resolved,
+                &text,
+                &out_dir(&model.dir, name),
+                false,
+                None,
+            )
+            .unwrap();
+            assert!(report.ok, "{:?}", report.checks);
+            results
+                .iter()
+                .map(|result| {
+                    let row = &result.captures[0].rows;
+                    (
+                        result.generated_token_ids.clone(),
+                        row.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let heads = run("zero-heads", &body("attention-heads", ""));
+        let output = run("zero-output", &body("attention-output", ""));
+        assert_eq!(heads, output);
+        let one = run("zero-one-head", &body("attention-heads", "heads = [2]\n"));
+        assert_ne!(one, heads);
     }
 
     #[test]

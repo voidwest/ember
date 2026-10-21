@@ -507,7 +507,15 @@ fn hook_route(materials: &BundleMaterials, capture: &CapturedTensor) -> (String,
                 site_record.stage == site.stage_id() && site_record.layer == Some(layer)
             })
             .map(|site_record| site_record.route.clone())
-            .unwrap_or_else(|| "unknown".to_string())
+            // The plan records the per-head site only where it is active in
+            // decode; no fusion ever eliminates it, so it is always unfused.
+            .unwrap_or_else(|| {
+                if site == crate::v05::hook::SemanticHookSite::AttentionHeads {
+                    "unfused".to_string()
+                } else {
+                    "unknown".to_string()
+                }
+            })
     } else {
         "unfused".to_string()
     };

@@ -169,6 +169,7 @@ fn operation_explainer(operation: &str) -> &'static str {
 fn site_label(site: &str) -> &'static str {
     match site {
         "before-layer" => "Layer input",
+        "before-o-proj" => "Attention heads",
         "after-attention" => "After attention",
         "after-mlp" => "After MLP block",
         "after-layer" => "Layer output",
@@ -182,6 +183,7 @@ fn site_label(site: &str) -> &'static str {
 fn site_contract_name(site: &str) -> &'static str {
     match site {
         "before-layer" => "before-layer",
+        "before-o-proj" => "before-o-proj",
         "after-attention" => "after-attention",
         "after-mlp" => "after-mlp",
         "after-layer" => "after-layer",

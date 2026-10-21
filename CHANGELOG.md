@@ -15,6 +15,17 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Hook sites: `attention-heads` (v0.4 stage `before-o-proj`), the per-head
+  attention outputs before the output projection,
+  `[seq, n_heads * head_dim]`. A `heads = [..]` selector on captures and
+  interventions stores or changes only those heads. The site is an addition
+  to `ember.hook.v1` (ADR-0002): `hook_schema` stays 1, and specs, plans and
+  bundles that do not use it are unchanged. It fires on the reference, Q8
+  fast, planned, planned-fused and batched decode paths and needs no
+  de-fusion. Gemma-family models, the logit lens, attribution and the probe
+  bridge refuse it. The v0.2 `--capture-activations` and patch paths accept
+  the stage.
+
 - Sweeps: `[sweep.effect]` measures `logit(target) - logit(foil)` in a
   logits capture for every input, and summarizes the change from the
   baseline over all inputs for each point: the mean, the sample standard

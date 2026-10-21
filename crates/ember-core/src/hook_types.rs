@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-/// The six semantic hook stages a capture record can target.
+/// The semantic hook stages a capture record can target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ActivationStage {
@@ -16,6 +16,10 @@ pub enum ActivationStage {
     AfterLayer,
     BeforeLogits,
     AfterLogits,
+    /// The per-head attention outputs before the output projection
+    /// (`[seq, n_heads * head_dim]`). Experiments opt in to it explicitly;
+    /// see `Experiment::uses_activation_stage`.
+    BeforeOProj,
 }
 
 impl fmt::Display for ActivationStage {
@@ -27,6 +31,7 @@ impl fmt::Display for ActivationStage {
             Self::AfterLayer => "after-layer",
             Self::BeforeLogits => "before-logits",
             Self::AfterLogits => "after-logits",
+            Self::BeforeOProj => "before-o-proj",
         };
         f.write_str(name)
     }
@@ -43,9 +48,10 @@ impl FromStr for ActivationStage {
             "after-layer" => Ok(Self::AfterLayer),
             "before-logits" => Ok(Self::BeforeLogits),
             "after-logits" => Ok(Self::AfterLogits),
+            "before-o-proj" => Ok(Self::BeforeOProj),
             _ => Err(format!(
                 "unknown stage '{value}'; expected one of: before-layer, after-attention, \
-                 after-mlp, after-layer, before-logits, after-logits"
+                 after-mlp, after-layer, before-logits, after-logits, before-o-proj"
             )),
         }
     }

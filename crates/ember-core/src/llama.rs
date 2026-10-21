@@ -1031,6 +1031,7 @@ impl<B: Backend> LlamaAttention<B> {
             cache,
             layer,
             start_pos,
+            &mut DisabledHooks,
             &mut scratch,
             &mut out,
         )?;
@@ -1039,18 +1040,23 @@ impl<B: Backend> LlamaAttention<B> {
 
     /// [`LlamaAttention::forward_with_cache`] writing the projected
     /// attention output into `out` and every intermediate into `scratch`,
-    /// so a prefill reuses one set of buffers across all layers.
+    /// so a prefill reuses one set of buffers across all layers. `hooks`
+    /// sees the per-head attention output before the output projection.
     #[allow(clippy::too_many_arguments)]
-    fn forward_with_cache_reusing(
+    fn forward_with_cache_reusing<H>(
         &self,
         backend: &B,
         x: &B::Tensor,
         cache: &mut crate::kv_cache::KVCache,
         layer: usize,
         start_pos: usize,
+        hooks: &mut H,
         scratch: &mut LlamaAttentionScratch<B::Tensor>,
         out: &mut B::Tensor,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         let LlamaAttentionScratch {
@@ -1244,6 +1250,7 @@ impl<B: Backend> LlamaAttention<B> {
                 trace::bytes_from_shape(&[seq_len, attn_out_dim]),
             );
         }
+        hooks.before_o_proj(layer, attention_out)?;
 
         // -- O projection --
         let _span_o = llama_trace_span!(
@@ -1401,6 +1408,7 @@ impl<B: Backend> LlamaBlock<B> {
             cache,
             layer,
             start_pos,
+            hooks,
             attention,
             attention_out,
         )?;
@@ -2258,6 +2266,10 @@ impl Llama<CpuBackend> {
                 )?
             });
 
+            {
+                let mut heads = SliceActivation::new(1, q_dim, attention);
+                hooks.before_o_proj(layer, &mut heads)?;
+            }
             let o_weight = block
                 .self_attn
                 .o_proj
@@ -4735,6 +4747,7 @@ mod tests {
         let records = records.lock().unwrap();
         let expected_per_evaluation = [
             ExperimentHook::BeforeLayer,
+            ExperimentHook::BeforeOProj,
             ExperimentHook::AfterAttention,
             ExperimentHook::AfterMlp,
             ExperimentHook::AfterLayer,
@@ -4757,10 +4770,15 @@ mod tests {
             assert_eq!(record.phase, Some(ExecutionPhase::Decode));
             assert_eq!(record.sequence_length, Some(3));
         }
+        let q_dim = model.config.n_heads * model.config.head_dim;
         assert_eq!(records[0].shape, Some([2, model.config.embed_dim]));
-        assert_eq!(records[4].shape, Some([1, model.config.embed_dim]));
-        assert_eq!(records[5].shape, Some([1, model.config.vocab_size]));
-        assert_eq!(records[6].shape, Some([1, model.config.embed_dim]));
+        // The per-head attention output: every head of every prefill row,
+        // then the single decode row.
+        assert_eq!(records[1].shape, Some([2, q_dim]));
+        assert_eq!(records[5].shape, Some([1, model.config.embed_dim]));
+        assert_eq!(records[6].shape, Some([1, model.config.vocab_size]));
+        assert_eq!(records[7].shape, Some([1, model.config.embed_dim]));
+        assert_eq!(records[8].shape, Some([1, q_dim]));
         for record in records.iter().filter(|record| record.layer_index.is_some()) {
             assert_eq!(record.layer_index, Some(0));
         }
@@ -4806,7 +4824,7 @@ mod tests {
 
         assert_eq!(observed, normal);
         let records = records.lock().unwrap();
-        assert_eq!(records.len(), 6);
+        assert_eq!(records.len(), 7);
         assert!(records
             .iter()
             .all(|record| record.phase == Some(ExecutionPhase::Decode)));
@@ -5557,6 +5575,247 @@ mod tests {
         );
     }
 
+    /// `(layer, shape, values)` of every per-head row a probe saw.
+    type HeadRows = Vec<(usize, [usize; 2], Vec<f32>)>;
+
+    /// Uses only the per-head stage: records every per-head row it sees and,
+    /// with `zero = Some((layer, head))`, zeroes that head (`None`: every
+    /// head) of that layer before the output projection reads it.
+    struct HeadsProbe {
+        head_dim: usize,
+        zero: Option<(usize, Option<usize>)>,
+        seen: std::sync::Arc<std::sync::Mutex<HeadRows>>,
+    }
+
+    impl crate::experiments::Experiment for HeadsProbe {
+        fn name(&self) -> &'static str {
+            "heads-probe"
+        }
+
+        fn intervenes(&self) -> bool {
+            self.zero.is_some()
+        }
+
+        fn uses_activation_stage(&self, stage: crate::hook_types::ActivationStage) -> bool {
+            stage == crate::hook_types::ActivationStage::BeforeOProj
+        }
+
+        fn before_o_proj(
+            &mut self,
+            ctx: &crate::experiments::LayerContext<'_>,
+            heads: &mut crate::experiments::TensorAccess<'_>,
+        ) -> Result<(), crate::experiments::ExperimentError> {
+            let shape = *heads.shape();
+            self.seen
+                .lock()
+                .unwrap()
+                .push((ctx.layer_index, shape, heads.values().to_vec()));
+            if let Some((layer, head)) = self.zero
+                && layer == ctx.layer_index
+            {
+                let width = self.head_dim;
+                for row in heads.values_mut().chunks_exact_mut(shape[1]) {
+                    match head {
+                        None => row.fill(0.0),
+                        Some(head) => row[head * width..(head + 1) * width].fill(0.0),
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Decode through `mode` with a [`HeadsProbe`]: the logits and every
+    /// `(layer, shape, values)` the probe saw.
+    fn decode_with_heads_probe(
+        model: &Llama<CpuBackend>,
+        mode: ExecutionMode,
+        zero: Option<(usize, Option<usize>)>,
+    ) -> (CpuTensor, HeadRows) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let probe = HeadsProbe {
+            head_dim: model.config.head_dim,
+            zero,
+            seen: std::sync::Arc::clone(&seen),
+        };
+        let logits = decode_with_runner(model, mode, &mut ExperimentRunner::new(probe));
+        let seen = seen.lock().unwrap().clone();
+        (logits, seen)
+    }
+
+    /// The per-head site fires once per layer with one `[1, n_heads *
+    /// head_dim]` row on the Q8 fast, generic, planned and planned-fused
+    /// decode paths, and observing it changes no logit. The generic, planned
+    /// and planned-fused values are bit-identical; the fast path quantizes
+    /// its activations on its own route, so it agrees to 1% of the row's
+    /// largest value.
+    #[test]
+    fn per_head_site_fires_on_every_decode_path() {
+        let fast = test_llama_model_with_layers(2);
+        assert!(fast.fast_decode_inter_dim.is_some());
+        let mut generic = test_llama_model_with_layers(2);
+        generic.fast_decode_inter_dim = None;
+        let q_dim = generic.config.n_heads * generic.config.head_dim;
+
+        let (_, reference) = decode_with_heads_probe(&generic, ExecutionMode::Reference, None);
+        assert_eq!(
+            reference
+                .iter()
+                .map(|(layer, shape, _)| (*layer, *shape))
+                .collect::<Vec<_>>(),
+            [(0, [1, q_dim]), (1, [1, q_dim])]
+        );
+        let paths = [
+            ("fast", &fast, ExecutionMode::Reference),
+            ("generic", &generic, ExecutionMode::Reference),
+            ("planned", &generic, ExecutionMode::Planned),
+            ("planned-fused", &generic, ExecutionMode::PlannedFused),
+        ];
+        for (label, model, mode) in paths {
+            let (logits, seen) = decode_with_heads_probe(model, mode, None);
+            assert_eq!(seen.len(), 2, "{label}");
+            for ((layer, shape, values), (_, _, expected)) in seen.iter().zip(&reference) {
+                assert_eq!(*shape, [1, q_dim], "{label} layer {layer}");
+                let max_abs = max_abs_diff(values, expected);
+                if label == "fast" {
+                    let scale = expected.iter().fold(0f32, |m, v| m.max(v.abs()));
+                    assert!(max_abs <= 0.01 * scale, "{label} layer {layer}: {max_abs}");
+                } else {
+                    assert_eq!(values, expected, "{label} layer {layer}");
+                }
+            }
+            let plain = plain_decode(model, mode, 5);
+            assert_eq!(
+                plain.data(),
+                logits.data(),
+                "{label}: observing the per-head site changed the logits"
+            );
+        }
+    }
+
+    /// On a model whose output projection planned-fused fuses (F5), the
+    /// per-head site leaves F5 fused: its tensor is the attention op's own
+    /// output, which F5 reads.
+    #[test]
+    fn per_head_site_keeps_f5_fused() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        for (layer, block) in model.blocks.iter_mut().enumerate() {
+            block.self_attn.o_proj = test_f32_linear(32, 32, 100 + layer);
+        }
+        let (_, reference) = decode_with_heads_probe(&model, ExecutionMode::Reference, None);
+        crate::planned_decode::reset_fused_execution_counts();
+        let (logits, seen) = decode_with_heads_probe(&model, ExecutionMode::PlannedFused, None);
+        let counts = crate::planned_decode::fused_execution_counts();
+        assert!(counts.f5_output_proj_residual > 0, "{counts:?}");
+        assert_eq!(seen, reference);
+        assert_eq!(
+            logits.data(),
+            plain_decode(&model, ExecutionMode::PlannedFused, 5).data()
+        );
+        // An intervention there lands before F5 reads the tensor.
+        let (zeroed_reference, _) =
+            decode_with_heads_probe(&model, ExecutionMode::Reference, Some((1, Some(1))));
+        crate::planned_decode::reset_fused_execution_counts();
+        let (zeroed_fused, _) =
+            decode_with_heads_probe(&model, ExecutionMode::PlannedFused, Some((1, Some(1))));
+        let counts = crate::planned_decode::fused_execution_counts();
+        assert!(counts.f5_output_proj_residual > 0, "{counts:?}");
+        let max_abs = max_abs_diff(zeroed_reference.data(), zeroed_fused.data());
+        assert!(max_abs <= 1e-4, "{max_abs}");
+        assert_ne!(zeroed_fused.data(), logits.data());
+    }
+
+    /// Zeroing every head before the output projection is zeroing the
+    /// attention output (the projection has no bias), on every decode path.
+    #[test]
+    fn zeroing_every_head_matches_zeroing_the_attention_output() {
+        let fast = test_llama_model_with_layers(2);
+        let mut generic = test_llama_model_with_layers(2);
+        generic.fast_decode_inter_dim = None;
+        let paths = [
+            ("fast", &fast, ExecutionMode::Reference),
+            ("generic", &generic, ExecutionMode::Reference),
+            ("planned", &generic, ExecutionMode::Planned),
+            ("planned-fused", &generic, ExecutionMode::PlannedFused),
+        ];
+        for (label, model, mode) in paths {
+            let (heads_zeroed, _) = decode_with_heads_probe(model, mode, Some((0, None)));
+            let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(ZeroLayerOutputSpec::new(
+                0,
+                ZeroLayerOutputStage::Attention,
+            )));
+            let output_zeroed = decode_with_runner(model, mode, &mut runner);
+            assert_eq!(heads_zeroed.data(), output_zeroed.data(), "{label}");
+            let (one_head, _) = decode_with_heads_probe(model, mode, Some((0, Some(0))));
+            assert_ne!(
+                one_head.data(),
+                plain_decode(model, mode, 5).data(),
+                "{label}"
+            );
+            assert_ne!(one_head.data(), heads_zeroed.data(), "{label}");
+        }
+    }
+
+    /// A plan records the per-head site only where it is active; every other
+    /// part of the plan is the plan without it.
+    #[test]
+    fn per_head_site_is_recorded_only_when_active() {
+        let model = test_llama_model_with_layers(2);
+        for mode in [ExecutionMode::Planned, ExecutionMode::PlannedFused] {
+            let plan = |sites: &[&str]| {
+                model
+                    .execution_plan(mode, HookMode::Observe, sites, 8, None, None)
+                    .unwrap()
+            };
+            let base = plan(&["after-mlp"]);
+            let with = plan(&["after-mlp", "before-o-proj@1"]);
+            assert!(base
+                .hook_sites
+                .sites
+                .iter()
+                .all(|site| site.stage != "before-o-proj"));
+            let records: Vec<_> = with
+                .hook_sites
+                .sites
+                .iter()
+                .filter(|site| site.stage == "before-o-proj")
+                .collect();
+            assert_eq!(records.len(), 1);
+            let attention_out = with.layers[1]
+                .ops
+                .iter()
+                .find_map(|op| match op {
+                    PlannedOp::Attention { out, .. } => Some(out.id),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(records[0].layer, Some(1));
+            assert_eq!(records[0].tensor, Some(attention_out));
+            assert!(records[0].materialized);
+            let others: Vec<_> = with
+                .hook_sites
+                .sites
+                .iter()
+                .filter(|site| site.stage != "before-o-proj")
+                .map(|site| serde_json::to_value(site).unwrap())
+                .collect();
+            let base_sites: Vec<_> = base
+                .hook_sites
+                .sites
+                .iter()
+                .map(|site| serde_json::to_value(site).unwrap())
+                .collect();
+            assert_eq!(others, base_sites, "{mode:?}");
+            assert_eq!(
+                serde_json::to_value(&with.layers).unwrap(),
+                serde_json::to_value(&base.layers).unwrap(),
+                "{mode:?}: the per-head site changed the op sequence"
+            );
+            assert_eq!(with.validate().ok(), Some(()));
+        }
+    }
+
     /// Gate C: the planned path fires the six semantic hook sites with the
     /// same stages, layers, and shapes as the reference path.
     #[test]
@@ -5911,7 +6170,8 @@ mod tests {
     // -- batched multi-sequence decode ------------------------------------------
 
     /// Records every hook site's activation bits and applies a
-    /// sequence-specific intervention after layer 0 attention.
+    /// sequence-specific intervention after layer 0 attention and on the
+    /// layer 1 per-head attention output.
     struct BatchProbeHooks {
         nudge: f32,
         records: Vec<(u8, usize, Vec<u32>)>,
@@ -5929,7 +6189,7 @@ mod tests {
 
         fn record(&mut self, site: u8, layer: usize, tensor: &mut SliceActivation<'_>) {
             let values = tensor.values_mut_for_test();
-            if site == 1 && layer == 0 {
+            if (site == 1 && layer == 0) || (site == 6 && layer == 1) {
                 values[0] += self.nudge;
             }
             self.records
@@ -5947,6 +6207,14 @@ mod tests {
             t: &mut SliceActivation<'a>,
         ) -> Result<(), CpuError> {
             self.record(0, layer, t);
+            Ok(())
+        }
+        fn before_o_proj(
+            &mut self,
+            layer: usize,
+            t: &mut SliceActivation<'a>,
+        ) -> Result<(), CpuError> {
+            self.record(6, layer, t);
             Ok(())
         }
         fn after_attention(
