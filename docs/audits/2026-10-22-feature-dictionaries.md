@@ -83,7 +83,7 @@ Host: Apple M1 Pro, macOS, Rust 1.98.1 (GUI) and 1.92.0 (headless MSRV),
 
 | Severity | Finding / evidence | Owner or issue | Due / disposition |
 | --- | --- | --- | --- |
-| required | Verify compared the recorded row norm for exact equality. `serde_json` without `float_roundtrip` can read a written f64 back one unit in the last place off, so a valid bundle could fail. | research maintainer | fixed before merge: compared to within 1e-12 relative, with a test |
+| required | Verify compared the recorded row norm for exact equality. `serde_json` without `float_roundtrip` can read a written f64 back one unit in the last place off, so a valid bundle could fail. | research maintainer | fixed before merge: compared to within 1e-12 relative, with a test. CI on x86_64 then showed the same round trip in an end-to-end test (`relative_error` read back one unit in the last place off); the test now compares the f64 fields to within 1e-12 too |
 | required | `cfg.json` fields that change the encode were ignored: `activation_fn_str` (a TopK SAE would have run as ReLU), `activation_fn_kwargs`, `finetuning_scaling_factor` and `hook_head_index`. A missing `apply_b_dec_to_input` became false. | research maintainer | fixed before merge: each is refused, and `apply_b_dec_to_input` must be stated |
 | required | Only the weights were hash-pinned, but `cfg.json` selects the architecture. | research maintainer | fixed before merge: `config_sha256` is required and recorded, and verify compares it |
 | required | The session cache was keyed by folder and weights hash only, so a second entry with another `config_sha256` came from the cache unchecked. | research maintainer | fixed before merge: the key holds both hashes, with a test |

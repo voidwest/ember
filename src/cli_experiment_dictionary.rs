@@ -291,7 +291,25 @@ kind = "prompt-final"
         for (row, (result, input)) in artifact.rows.iter().zip(results.iter().zip(["a", "b"])) {
             let values = rows(result, "post1", SemanticHookSite::ResidualPostMlp, 1);
             let expected = dictionary.feature_row(&values, 4, input, 1, row.position);
-            assert_eq!(*row, expected);
+            // The f64 fields to within JSON precision: serde_json's default
+            // parser can read a written f64 back one unit in the last place
+            // off (seen on x86_64).
+            let close = |a: f64, b: f64| (a - b).abs() <= 1e-12 * b.abs();
+            assert!(close(row.norm, expected.norm), "{row:?} vs {expected:?}");
+            assert!(
+                close(row.relative_error, expected.relative_error),
+                "{row:?} vs {expected:?}"
+            );
+            let exact = |row: &ember::v05::dictionary::FeatureRow| {
+                (
+                    row.input_id.clone(),
+                    row.layer,
+                    row.position,
+                    row.l0,
+                    row.features.clone(),
+                )
+            };
+            assert_eq!(exact(row), exact(&expected));
         }
         assert!(
             artifact.rows.iter().any(|row| row.l0 > 0),
