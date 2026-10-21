@@ -44,6 +44,13 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
   `examples/experiments/capital-clean.toml` and
   `examples/experiments/capital-patching-sweep.toml`.
 
+### Fixed
+
+- Multimodal: `resize` refuses pixels outside [0, 255] (and NaN) with an
+  error. The fuzzer found that an out-of-range pixel saturated the cast to
+  `i64` and overflowed the fixed-point accumulator, which panicked. Decoded
+  images and video frames are always in range, so their output is unchanged.
+
 ## [1.0.0] — release candidate (staged; pending external acceptance gates)
 
 This is the 1.0.0 changelog, staged for the release cut. The local release

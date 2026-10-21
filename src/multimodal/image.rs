@@ -409,6 +409,15 @@ pub fn resize(
             .is_some(),
         "resize to {out_h}x{out_w} overflows"
     );
+    // The fixed-point passes assume uint8 values: a pixel far outside them
+    // saturates the `as i64` cast and overflows the accumulator.
+    anyhow::ensure!(
+        image
+            .data()
+            .iter()
+            .all(|value| (0.0..=255.0).contains(value)),
+        "resize expects uint8-valued pixels in [0, 255]"
+    );
     let (filter, support) = match resample {
         Resample::Lanczos => (lanczos as fn(f64) -> f64, 3.0),
         Resample::Bicubic => (bicubic as fn(f64) -> f64, 2.0),
