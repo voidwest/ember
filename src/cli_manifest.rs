@@ -44,7 +44,9 @@ fn verify_manifest(cmd: &VerifyCommand) -> Result<()> {
     let recomputed = verify_manifest_identity(&manifest)?;
     println!(
         "OK  execution identity {recomputed} (schema {})",
-        manifest["identity"]["schema"].as_str().unwrap()
+        manifest["identity"]["schema"]
+            .as_str()
+            .expect("verify_manifest_identity checked identity.schema")
     );
     print_summary(&manifest);
     Ok(())

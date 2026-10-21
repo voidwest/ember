@@ -488,22 +488,25 @@ pub fn replay(
                     .unwrap_or("")
                     .to_string();
 
-                if !ok || expected.is_empty() || recorded.is_none() {
-                    report.outcomes.push(ReplayOutcome {
-                        seq: e["seq"].as_u64().unwrap_or(0),
-                        tool: tool_name,
-                        ok,
-                        matches: None,
-                        recorded_replay_sha256: expected,
-                        computed_replay_sha256: String::new(),
-                    });
-                    continue;
-                }
+                let recorded = match recorded {
+                    Some(recorded) if ok && !expected.is_empty() => recorded,
+                    _ => {
+                        report.outcomes.push(ReplayOutcome {
+                            seq: e["seq"].as_u64().unwrap_or(0),
+                            tool: tool_name,
+                            ok,
+                            matches: None,
+                            recorded_replay_sha256: expected,
+                            computed_replay_sha256: String::new(),
+                        });
+                        continue;
+                    }
+                };
                 let Some(tool) = registry.get(&tool_name) else {
                     anyhow::bail!("registry lacks recorded tool `{tool_name}`");
                 };
                 let schema = tool.schema();
-                let args_text = canonical_json(&recorded.unwrap());
+                let args_text = canonical_json(&recorded);
                 let validated = ValidatedArguments::parse(&schema, &args_text)?;
                 let invocation = ToolInvocation {
                     tool: Arc::clone(tool),

@@ -511,12 +511,12 @@ fn select_covering_tokens(
             intersecting.push(index);
         }
     }
-    if intersecting.is_empty() {
+    let (Some(&first), Some(&last)) = (intersecting.first(), intersecting.last()) else {
         return (Vec::new(), CoverageKind::None, None, None);
-    }
+    };
     let selected = match subtoken_selection {
-        SubtokenSelection::First => vec![intersecting[0]],
-        SubtokenSelection::Final => vec![*intersecting.last().unwrap()],
+        SubtokenSelection::First => vec![first],
+        SubtokenSelection::Final => vec![last],
         SubtokenSelection::All => intersecting,
     };
     // Coverage: union of selected intervals vs the span.

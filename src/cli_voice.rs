@@ -210,7 +210,7 @@ fn converse(command: &VoiceCommand, seconds: f64) -> Result<()> {
     let mut turn_index = 0usize;
     while t0.elapsed() < duration && conv.turns_completed() < 4096 {
         for event in conv.pump() {
-            print_event(event, &saver, &mut turn_index);
+            print_event(event, saver.as_deref(), &mut turn_index);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -254,7 +254,7 @@ fn converse(command: &VoiceCommand, seconds: f64) -> Result<()> {
     Ok(())
 }
 
-fn print_event(event: ConverseEvent, saver: &Option<std::path::PathBuf>, turn_index: &mut usize) {
+fn print_event(event: ConverseEvent, saver: Option<&std::path::Path>, turn_index: &mut usize) {
     match event {
         ConverseEvent::SpeechStarted => println!("🎤 listening…"),
         ConverseEvent::PartialTranscript { text } => {
