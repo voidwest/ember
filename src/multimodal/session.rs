@@ -807,14 +807,14 @@ impl<'m> VoiceSession<'m> {
         let eot_id = *eot_ids.first().expect("eot id");
         self.committed_len = self.cache.cursor(); // resync with real decode position
         let terminal: Vec<u32> = if stopped_on_eos && ids.last() == Some(&eot_id) {
-            vec![*ids.last().unwrap()]
-        } else if ids.is_empty() {
-            eot_ids.clone()
-        } else {
+            vec![eot_id]
+        } else if let Some(&last) = ids.last() {
             let mut v = Vec::with_capacity(eot_ids.len() + 1);
-            v.push(*ids.last().unwrap());
+            v.push(last);
             v.extend_from_slice(&eot_ids);
             v
+        } else {
+            eot_ids.clone()
         };
         let terminal_emb = lookup_embeddings_for(self.model, self.backend, &terminal)?;
         let _ = self.model.llm.forward_last_logits_embeddings_with_cache(

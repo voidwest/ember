@@ -28,6 +28,64 @@ implementation helpers, document experimental APIs explicitly, and include a
 migration note for intentional breaks. Keep the declared Rust 1.92 MSRV and
 run both default and `--no-default-features` checks.
 
+## Rust style
+
+`rustfmt` and `clippy` with the CI flags are the required gates. For a style
+question that they do not decide, use these references in this order:
+
+1. The [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) and
+   the [Rust Style Guide](https://doc.rust-lang.org/style-guide/).
+2. The [Google Rust Style Guide](https://google.github.io/styleguide/rustguide.html).
+   Treat its rules for library code as recommendations, because all public
+   Rust modules are experimental (see `docs/api-stability.md`).
+
+Apply the Google guide to new code and to code that a change already touches.
+Do not make a style pass over the whole repository.
+
+For new code, apply these Google rules:
+
+- In non-test code, use `expect("<reason>")`, not `unwrap()`, when a panic is
+  the correct result. Use `let ... else`, `if let` or `match`, not a check
+  that an `unwrap()` follows.
+- Write a message in `assert!` when the condition alone does not explain the
+  invariant.
+- Use `Option<&T>`, `&[T]` and `&str` for parameters, not `&Option<T>`,
+  `&Vec<T>` and `&String`.
+- Use an `enum`, not a `bool` parameter, when the call site does not show
+  what the value means.
+- Add `#[non_exhaustive]` to a new public enum if a later version can add a
+  variant. Do not add it to a released enum, because that is a breaking
+  change.
+- Public items need rustdoc as `docs/api-stability.md` states. The
+  `missing_docs` lint is not enabled.
+
+Ember keeps these exceptions to the Google guide:
+
+- **Unwind boundaries.** `catch_unwind` is permitted where a panic in a
+  dependency or a tool must become an error or a reply. Examples are
+  `parse_tokenizer`, agent tool calls, GUI workers and multimodal model load.
+  The decode pool records a worker panic and panics again in the caller with
+  `resume_unwind`. Write a comment that states the reason for each new use.
+- **Poisoned mutexes.** Code can get a poisoned guard with `into_inner()` if
+  the protected data stays valid after a panic, for example a cache or a
+  queue. Write a comment that states the reason. If the data can be invalid,
+  use `expect`.
+- **Formatting.** `rustfmt.toml` uses only stable options and keeps
+  `style_edition = "2021"`. Do not add the Google options that need nightly
+  rustfmt (`imports_granularity`, `hex_literal_case`, `format_macro_matchers`).
+- **Crates and modules.** The workspace split sets the crate boundaries. The
+  Chromium, Android and Fuchsia rules (small crates, flat file layout, test
+  frameworks, import macros) do not apply.
+- **Shared ownership.** `Arc` is the usual way to share state with rayon,
+  worker threads and the GUI.
+- **Kernels.** Hot kernels take slices, not iterators. A serial `for_each`
+  is permitted when it is the other branch of a rayon `par_iter().for_each`.
+  `try_into().unwrap()` on a slice that has a constant length is permitted,
+  because the conversion cannot fail.
+- **Glob imports.** `use rayon::prelude::*` and `use gpui_kit::prelude::*`
+  are permitted. The `use gpui_kit::*` imports in `src/gui_native/` can
+  stay. In a new module, import names one by one or use the prelude.
+
 ## Local validation
 
 `rust-toolchain.toml` pins Rust 1.98.1, which the default GUI build needs;

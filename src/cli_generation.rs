@@ -1557,12 +1557,12 @@ where
 
     let output = tokenizer.decode(&generated)?;
 
-    if benchmark {
+    // Both timers are `Some` exactly when `benchmark` is set.
+    if let (Some(prefill_elapsed), Some(decode_start)) = (prefill_elapsed, decode_start) {
         // Snapshot each duration once so the printed latency and derived rate
         // use exactly the same interval. This matters to machine parsers and
         // is especially visible for short smoke-model runs.
-        let prefill_elapsed = prefill_elapsed.unwrap();
-        let decode_elapsed = decode_start.unwrap().elapsed();
+        let decode_elapsed = decode_start.elapsed();
         let prefill_seconds = prefill_elapsed.as_secs_f64();
         let decode_seconds = decode_elapsed.as_secs_f64();
         eprintln!("--- benchmark ---");

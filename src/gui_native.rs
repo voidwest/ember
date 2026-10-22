@@ -84,7 +84,7 @@ use harness::{seed_runs_requested, seed_store};
 use history::{open_store, record_bundles, record_result};
 use input::{InputEvent, InputId, InputKind, TextInput};
 use menu::{app_menus, register_menu_actions};
-use palette::Command;
+use palette::{Command, PaletteMode};
 use runs_table::{fmt_bytes, quant_of, relative_time, truncate_path_start, RunsDelegate};
 use sweep::Sweep;
 use theme::{AppearanceMode, Colors, Radius, Space, Type};
@@ -228,6 +228,21 @@ fn model_display_name(path: &str) -> String {
         .unwrap_or(path)
         .trim_end_matches(".gguf")
         .to_string()
+}
+
+/// The most rows Go to run lists at once.
+const GO_TO_RUN_LIMIT: usize = 50;
+
+/// A saved run as Go to run lists it: the number, then the prompt on one
+/// line, short enough to scan. The prompt is a bidi isolate, so an Arabic
+/// prompt does not turn the row right-to-left and move the number to its end.
+fn run_palette_label(run: &RunRecord) -> String {
+    let prompt = run.prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!(
+        "#{}  \u{2068}{}\u{2069}",
+        run.number,
+        truncate_chars(&prompt, 64)
+    )
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -480,6 +495,7 @@ struct Console {
     palette_open: bool,
     palette_query: String,
     palette_index: usize,
+    palette_mode: PaletteMode,
     palette_input: Entity<TextInput>,
     step: WorkspaceStep,
     view: View,
@@ -707,7 +723,7 @@ impl Console {
                 InputId::PaletteQuery,
                 InputKind::Text,
                 String::new(),
-                "Type a command…",
+                PaletteMode::Commands.placeholder(),
                 &colors,
                 window,
                 cx,
@@ -788,6 +804,7 @@ impl Console {
             palette_open: false,
             palette_query: String::new(),
             palette_index: 0,
+            palette_mode: PaletteMode::Commands,
             palette_input,
             step: WorkspaceStep::Prompt,
             // Land on Home rather than inside a half-configured experiment.
@@ -1538,37 +1555,95 @@ impl Console {
 
     // -- command palette -----------------------------------------------------
 
-    /// Open or close the palette. Opening clears the previous query and puts
-    /// focus in the field, so Cmd+K, type, Enter just works.
+    /// Open or close the command list.
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.palette_open = !self.palette_open;
+        self.open_palette(PaletteMode::Commands, window, cx);
+    }
+
+    /// Open the palette in `mode`, or close it when it is already open in
+    /// that mode. Opening clears the previous query and puts focus in the
+    /// field, so Cmd+K, type, Enter just works; the other mode's key switches
+    /// an open palette over instead of closing it.
+    fn open_palette(&mut self, mode: PaletteMode, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_open = !(self.palette_open && self.palette_mode == mode);
         if self.palette_open {
+            self.palette_mode = mode;
             self.palette_query.clear();
             self.palette_index = 0;
             self.palette_input.update(cx, |input, cx| {
                 input.set_value("", cx);
+                input.set_placeholder(mode.placeholder(), cx);
                 input.focus(window, cx);
             });
+        } else {
+            self.focus_handle.focus(window, cx);
         }
         cx.notify();
     }
 
-    /// The palette's candidate list: the catalog filtered by the query, case
-    /// and word order insensitive enough for one-screen use.
+    /// Whether the palette lists saved runs: Go to run, until the query
+    /// starts with `>`.
+    fn palette_lists_runs(&self) -> bool {
+        self.palette_mode == PaletteMode::Runs && !self.palette_query.trim_start().starts_with('>')
+    }
+
+    /// The palette's command list: the catalog ranked by a fuzzy match on the
+    /// label, then any command whose hint holds the query, in catalog order.
+    /// A leading `>` is the editor's command prefix and is not matched.
     fn palette_candidates(&self) -> Vec<Command> {
-        let query = self.palette_query.trim().to_lowercase();
-        Command::ALL
+        let query = self.palette_query.trim().trim_start_matches('>').trim();
+        if query.is_empty() {
+            return Command::ALL.to_vec();
+        }
+        let lowered = query.to_lowercase();
+        let mut scored: Vec<(u32, Command)> = Command::ALL
             .into_iter()
-            .filter(|command| {
-                query.is_empty()
-                    || command.label().to_lowercase().contains(&query)
-                    || command.hint().to_lowercase().contains(&query)
+            .filter_map(|command| {
+                palette::fuzzy_score(query, command.label())
+                    .or_else(|| {
+                        command
+                            .hint()
+                            .to_lowercase()
+                            .contains(&lowered)
+                            .then_some(0)
+                    })
+                    .map(|score| (score, command))
             })
-            .collect()
+            .collect();
+        // Stable, so equal scores keep the catalog order.
+        scored.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+        scored.into_iter().map(|(_, command)| command).collect()
+    }
+
+    /// Go to run's list: the saved runs that can be reopened, ranked by
+    /// [`palette::run_score`], newest first among equals. At most
+    /// [`GO_TO_RUN_LIMIT`] rows, as the Runs table also draws only a window
+    /// of a long history; the query narrows the rest.
+    fn run_candidates(&self) -> Vec<u64> {
+        let query = self.palette_query.trim();
+        let mut scored: Vec<(u32, u64)> = self
+            .store
+            .runs
+            .iter()
+            .filter(|run| run.result.is_some() && run.config.is_some())
+            .filter_map(|run| {
+                let prompt = run.prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+                let detail = format!("{} {}", run.intervention, run.model);
+                palette::run_score(query, run.number, &prompt, &detail)
+                    .map(|score| (score, run.number))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+        scored.truncate(GO_TO_RUN_LIMIT);
+        scored.into_iter().map(|(_, number)| number).collect()
     }
 
     fn palette_move(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let count = self.palette_candidates().len();
+        let count = if self.palette_lists_runs() {
+            self.run_candidates().len()
+        } else {
+            self.palette_candidates().len()
+        };
         if count == 0 {
             return;
         }
@@ -1578,6 +1653,13 @@ impl Console {
     }
 
     fn palette_execute(&mut self, cx: &mut Context<Self>) {
+        if self.palette_lists_runs() {
+            if let Some(number) = self.run_candidates().get(self.palette_index).copied() {
+                self.palette_open = false;
+                self.open_run(number, cx);
+            }
+            return;
+        }
         let candidates = self.palette_candidates();
         let Some(command) = candidates.get(self.palette_index).copied() else {
             return;
@@ -1609,12 +1691,62 @@ impl Console {
             Command::GoExperiments => self.goto(View::Experiment, cx),
             Command::GoModels => self.goto(View::Models, cx),
             Command::GoRuns => self.goto(View::Runs, cx),
-            Command::GoSettings => self.goto(View::Settings, cx),
+            Command::GoSettings | Command::KeyboardShortcuts => self.goto(View::Settings, cx),
+            Command::GoToRun => {
+                // The field keeps focus, so the palette stays open and
+                // switches lists, as Cmd+P would.
+                self.palette_open = true;
+                self.palette_mode = PaletteMode::Runs;
+                self.palette_query.clear();
+                self.palette_index = 0;
+                self.palette_input.update(cx, |input, cx| {
+                    input.set_value("", cx);
+                    input.set_placeholder(PaletteMode::Runs.placeholder(), cx);
+                });
+            }
+            Command::ShowOverview => self.show_result_view(ResultView::Overview, cx),
+            Command::ShowLayers => self.show_result_view(ResultView::Layers, cx),
+            Command::ShowTokens => self.show_result_view(ResultView::Tokens, cx),
+            Command::ShowTrace => self.show_result_view(ResultView::Trace, cx),
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTheme => self.cycle_appearance(cx),
             Command::TogglePresentation => self.toggle_presentation(cx),
             Command::CancelRun => self.cancel_run(cx),
         }
+        cx.notify();
+    }
+
+    /// The result tabs on offer: the four views, and Sweep once a sweep has
+    /// finished.
+    fn result_views(&self) -> Vec<ResultView> {
+        let mut views = ResultView::ALL.to_vec();
+        if self.sweep.as_ref().is_some_and(|sweep| sweep.finished) {
+            views.push(ResultView::Sweep);
+        }
+        views
+    }
+
+    /// Show one result tab, when there is a result to show it for.
+    fn show_result_view(&mut self, view: ResultView, cx: &mut Context<Self>) {
+        if self.comparison.is_none() || !self.result_views().contains(&view) {
+            return;
+        }
+        if self.view != View::Experiment {
+            self.goto(View::Experiment, cx);
+        }
+        self.result_view = view;
+        cx.notify();
+    }
+
+    /// The next result tab, or with `back` the previous one, wrapping round.
+    fn cycle_result_view(&mut self, back: bool, cx: &mut Context<Self>) {
+        let views = self.result_views();
+        let current = views
+            .iter()
+            .position(|view| *view == self.result_view)
+            .unwrap_or(0);
+        let step = if back { views.len() - 1 } else { 1 };
+        self.result_view = views[(current + step) % views.len()];
         cx.notify();
     }
 
@@ -1863,10 +1995,22 @@ impl Console {
             cx.notify();
             return;
         }
+        if cmd && !shift && key == "," {
+            self.goto(View::Settings, cx);
+            cx.notify();
+            return;
+        }
 
         // The palette is a modal: while it is open it owns the keyboard.
-        if cmd && !shift && key == "k" {
-            self.toggle_palette(window, cx);
+        // Cmd+K and Cmd+Shift+P (VS Code's spelling) open the command list;
+        // Cmd+P opens Go to run, the editor's quick open.
+        let p = key.eq_ignore_ascii_case("p");
+        if cmd && ((!shift && key == "k") || (shift && p)) {
+            self.open_palette(PaletteMode::Commands, window, cx);
+            return;
+        }
+        if cmd && !shift && p {
+            self.open_palette(PaletteMode::Runs, window, cx);
             return;
         }
         if self.palette_open {
@@ -1880,6 +2024,11 @@ impl Console {
                 "enter" | "return" if !cmd => self.palette_execute(cx),
                 _ => {}
             }
+            // A closed palette hands the keyboard back to the console, so the
+            // next shortcut works without a click first.
+            if !self.palette_open {
+                self.focus_handle.focus(window, cx);
+            }
             return;
         }
         // Esc stops a run in flight. Only then: elsewhere it is left to the
@@ -1889,6 +2038,16 @@ impl Console {
             return;
         }
 
+        // Ctrl+Tab and Ctrl+Shift+Tab step through the result tabs, as they
+        // step through an editor's tabs.
+        if event.keystroke.modifiers.control
+            && key == "tab"
+            && self.view == View::Experiment
+            && self.comparison.is_some()
+        {
+            self.cycle_result_view(shift, cx);
+            return;
+        }
         if cmd {
             let result_view = match key {
                 "1" => Some(ResultView::Overview),

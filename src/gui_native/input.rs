@@ -39,6 +39,7 @@ pub(super) struct TextInput {
     // Programmatic changes can arrive from worker replies without a Window.
     // Apply them at the next render; Kit set_value deliberately emits no Change.
     pending: Option<SharedString>,
+    pending_placeholder: Option<&'static str>,
 }
 impl EventEmitter<InputEvent> for TextInput {}
 impl TextInput {
@@ -87,6 +88,7 @@ impl TextInput {
         Self {
             control,
             pending: None,
+            pending_placeholder: None,
         }
     }
     #[cfg(all(test, feature = "gui-tests"))]
@@ -108,6 +110,13 @@ impl TextInput {
         self.pending = Some(value.into());
         cx.notify();
     }
+
+    /// Replace the hint shown while the field is empty. Applied at the next
+    /// render, as [`Self::set_value`] is, so it needs no Window.
+    pub(super) fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+        self.pending_placeholder = Some(placeholder);
+        cx.notify();
+    }
 }
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -116,11 +125,21 @@ impl Render for TextInput {
                 if let Some(value) = self.pending.take() {
                     state.update(cx, |state, cx| state.set_value(value, window, cx));
                 }
+                if let Some(placeholder) = self.pending_placeholder.take() {
+                    state.update(cx, |state, cx| {
+                        state.set_placeholder(placeholder, window, cx)
+                    });
+                }
                 Input::new(state).w_full().into_any_element()
             }
             Control::Paragraph(state) => {
                 if let Some(value) = self.pending.take() {
                     state.update(cx, |state, cx| state.set_value(value, window, cx));
+                }
+                if let Some(placeholder) = self.pending_placeholder.take() {
+                    state.update(cx, |state, cx| {
+                        state.set_placeholder(placeholder, window, cx)
+                    });
                 }
                 Textarea::new(state)
                     .h_full()
