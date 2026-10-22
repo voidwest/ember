@@ -714,10 +714,20 @@ download and conversion steps.
   the margin by only 0.74 of 9.83 (7 of 8 prompts, sign test p = 0.07). The
   answer is also carried elsewhere in the row.
 
-This is the layer where the head sweep found head 23 moving the answer to
-the final token (`capital-head-patching-sweep.toml`). These runs do not show
-that head 23 writes this feature; that needs a patch of the head with a
-feature capture downstream.
+**Head 23 writes the feature.** This is the layer where the head sweep found
+head 23 moving the answer to the final token
+(`capital-head-patching-sweep.toml`), and
+`examples/experiments/capital-head-feature-mediation.toml` connects the two.
+
+- Patching only head 23 of layer 9 from the clean run turns the country
+  feature on in the corrupted prompt: from 0.00 to 77% of its clean value on
+  average (43% to 96%).
+- That patch recovers +8.46 logits (7.85–9.20, 8/0/0). With the country
+  feature held at its corrupted value (0) entering block 10, the same patch
+  recovers only +3.58 (2.79–4.61, 8/0/0).
+- Thus 58% of the head's effect passes through this one feature. The rest
+  goes through other features and through the part of the row that the SAE
+  does not reconstruct.
 
 ## Determinism and identity
 
