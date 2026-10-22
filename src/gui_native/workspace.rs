@@ -26,6 +26,12 @@ use std::sync::Arc;
 
 /// Width of the setup pane.
 pub(super) const SETUP_WIDTH: f32 = 372.0;
+/// Width of the setup pane while it shows the spec view: room for a TOML
+/// line such as a `source = { ... }` table. It shrinks toward
+/// `SETUP_WIDTH` before the results go below `SPEC_RESULTS_MIN_WIDTH`.
+pub(super) const SPEC_WIDTH: f32 = 560.0;
+/// The narrowest the results column becomes to make room for the spec view.
+pub(super) const SPEC_RESULTS_MIN_WIDTH: f32 = 520.0;
 
 /// A result kept to judge later runs against. Only what the comparison shows:
 /// the per-layer series, the landmarks and the intervention's words.
@@ -648,12 +654,20 @@ impl Console {
                 )
             });
 
+        let spec_view = self.spec_open.then(|| self.spec_view(colors, cx));
         let rule = || rule_h(colors);
         div()
             .flex()
             .flex_col()
-            .w(px(SETUP_WIDTH))
-            .flex_none()
+            .map(|pane| {
+                if self.spec_open {
+                    pane.w(px(SPEC_WIDTH))
+                        .min_w(px(SETUP_WIDTH))
+                        .flex_shrink(1.0)
+                } else {
+                    pane.w(px(SETUP_WIDTH)).flex_none()
+                }
+            })
             .min_h(px(0.0))
             .h_full()
             .bg(colors.surface)
@@ -685,23 +699,97 @@ impl Console {
                                     console.examples_open = !console.examples_open;
                                     cx.notify();
                                 }),
-                            )),
+                            ))
+                            .child(
+                                text_button(
+                                    "setup-spec",
+                                    if self.spec_open { "Form" } else { "TOML" },
+                                    cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                        console.toggle_spec(cx);
+                                    }),
+                                )
+                                .tooltip(if self.spec_open {
+                                    "Show the form"
+                                } else {
+                                    "Show the experiment as ember.experiment.v1 TOML"
+                                }),
+                            ),
                     )
                     .when(self.examples_open, |pane| {
                         pane.child(self.examples_list(colors, cx))
                     })
-                    .child(if collapse_model { model_summary } else { model })
-                    .child(rule())
-                    .child(prompt)
-                    .child(length)
-                    .child(rule())
-                    .child(change)
-                    .child(where_)
-                    .child(target)
-                    .child(rule())
-                    .child(advanced),
+                    .when_some(spec_view, |pane, view| pane.child(view))
+                    .when(!self.spec_open, |pane| {
+                        pane.child(if collapse_model { model_summary } else { model })
+                            .child(rule())
+                            .child(prompt)
+                            .child(length)
+                            .child(rule())
+                            .child(change)
+                            .child(where_)
+                            .child(target)
+                            .child(rule())
+                            .child(advanced)
+                    }),
             )
             .child(footer)
+    }
+
+    /// The spec view: the experiment that the form runs, as editable
+    /// `ember.experiment.v1` TOML. An edit that the form can hold updates
+    /// the form; the view keeps any other edit, with the reason, until
+    /// Revert.
+    fn spec_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let status = match &self.spec_note {
+            Some(note) => label(note.clone(), Type::META, colors.warn),
+            None => label(
+                "Matches the form. An edit here changes the form.",
+                Type::META,
+                colors.text_faint,
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .gap(px(Space::SM))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(super::theme::scaled(360.0)))
+                    .w_full()
+                    .child(self.spec_input.clone()),
+            )
+            .child(status)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(Space::SM))
+                    .child(
+                        text_button(
+                            "spec-copy",
+                            "Copy",
+                            cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                let text = console.spec_input.read(cx).value(cx);
+                                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            }),
+                        )
+                        .tooltip("Copy the TOML, to save it and run it with ember experiment run"),
+                    )
+                    .when(self.spec_held, |row| {
+                        row.child(
+                            text_button(
+                                "spec-revert",
+                                "Revert",
+                                cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                    console.revert_spec(cx);
+                                }),
+                            )
+                            .tooltip("Drop the edit and show the form's spec again"),
+                        )
+                    }),
+            )
     }
 
     /// One cell per layer: where the chosen layer sits in the model, and a

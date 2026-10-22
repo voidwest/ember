@@ -16,11 +16,15 @@ pub(super) enum InputId {
     MaxTokens,
     Prompt,
     PaletteQuery,
+    /// The spec view's TOML editor.
+    Spec,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InputKind {
     Text,
     Multiline,
+    /// Multi-line, in the monospace face: the spec view's TOML.
+    Code,
     Integer,
     Decimal,
 }
@@ -40,6 +44,8 @@ pub(super) struct TextInput {
     // Apply them at the next render; Kit set_value deliberately emits no Change.
     pending: Option<SharedString>,
     pending_placeholder: Option<&'static str>,
+    /// Drawn in the monospace face (`InputKind::Code`).
+    code: bool,
 }
 impl EventEmitter<InputEvent> for TextInput {}
 impl TextInput {
@@ -52,7 +58,7 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let control = if kind == InputKind::Multiline {
+        let control = if matches!(kind, InputKind::Multiline | InputKind::Code) {
             let state = cx.new(|cx| {
                 let mut state = TextareaState::new(window, cx).placeholder(placeholder);
                 state.set_value(value, window, cx);
@@ -89,6 +95,7 @@ impl TextInput {
             control,
             pending: None,
             pending_placeholder: None,
+            code: kind == InputKind::Code,
         }
     }
     #[cfg(all(test, feature = "gui-tests"))]
@@ -104,6 +111,18 @@ impl TextInput {
             Control::Paragraph(state) => state.read(cx).focus_handle(cx),
         };
         handle.focus(window, cx);
+    }
+
+    /// The text the control holds: the value set for the next render, if
+    /// there is one, else the text on screen.
+    pub(super) fn value(&self, cx: &App) -> String {
+        if let Some(value) = &self.pending {
+            return value.to_string();
+        }
+        match &self.control {
+            Control::Line(state) => state.read(cx).value().to_string(),
+            Control::Paragraph(state) => state.read(cx).value().to_string(),
+        }
     }
 
     pub(super) fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -141,12 +160,17 @@ impl Render for TextInput {
                         state.set_placeholder(placeholder, window, cx)
                     });
                 }
+                let (font, size, line) = if self.code {
+                    (super::FONT_MONO_NAME, 13.0, 20.0)
+                } else {
+                    (super::FONT_ARABIC_NAME, 18.0, 30.0)
+                };
                 Textarea::new(state)
                     .h_full()
                     .w_full()
-                    .font_family(super::FONT_ARABIC_NAME)
-                    .text_size(px(super::theme::scaled(18.0)))
-                    .line_height(px(super::theme::scaled(30.0)))
+                    .font_family(font)
+                    .text_size(px(super::theme::scaled(size)))
+                    .line_height(px(super::theme::scaled(line)))
                     .into_any_element()
             }
         }

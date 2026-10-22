@@ -61,6 +61,45 @@ impl FormValues {
         }
     }
 
+    /// The intervention spec this form runs, as TOML (the spec view).
+    pub(super) fn spec_text(&self) -> Result<String, String> {
+        let request = self.build_run_request()?;
+        let config = crate::gui::parse_run_request(&request)?;
+        crate::gui::intervention_spec_text(&config)
+    }
+
+    /// This form with the fields that the edited spec `text` sets. A field
+    /// the spec does not set (the factor of a `zero`, say) keeps its value,
+    /// but a spec without a source gives the default source, `capture`: the
+    /// zero source needs an operation that takes a source. Fails, with the
+    /// reason, unless the new form generates the same experiment as `text`.
+    pub(super) fn with_spec(&self, text: &str) -> Result<FormValues, String> {
+        let fields = crate::gui::spec_fields(text)?;
+        let mut form = self.clone();
+        form.model_path = fields.model_path;
+        form.prompt = fields.prompt;
+        form.max_tokens = fields.max_new_tokens.to_string();
+        form.execution = fields.execution;
+        form.site = fields.site;
+        if let Some(layer) = fields.layer {
+            form.layer = layer.to_string();
+        }
+        form.op = fields.operation;
+        if let Some(value) = fields.value {
+            form.value = value.to_string();
+        }
+        form.source = fields.source.unwrap_or_else(|| "capture".to_string());
+        if let Some(layer) = fields.source_layer {
+            form.source_layer = layer.to_string();
+        }
+        form.token = fields.token;
+        if let Some(span) = fields.span {
+            form.span = span;
+        }
+        crate::gui::check_same_experiment(text, &form.spec_text()?)?;
+        Ok(form)
+    }
+
     pub(super) fn build_run_request(&self) -> Result<RunRequest, String> {
         let layer = if per_layer(&self.site) {
             Some(

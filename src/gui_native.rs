@@ -497,6 +497,16 @@ struct Console {
     palette_index: usize,
     palette_mode: PaletteMode,
     palette_input: Entity<TextInput>,
+    // spec view
+    spec_open: bool,
+    spec_input: Entity<TextInput>,
+    /// The form's spec as the view last showed it.
+    spec_shown: String,
+    /// The view holds an edit the form could not take; it follows the form
+    /// again after Revert or a valid edit.
+    spec_held: bool,
+    /// Why the view holds its edit, or why the form has no spec.
+    spec_note: Option<String>,
     step: WorkspaceStep,
     view: View,
     /// The Review page is showing the built-in illustrative sample, not a run.
@@ -733,6 +743,21 @@ impl Console {
             console.input_changed(event, cx);
         })
         .detach();
+        let spec_input = cx.new(|cx| {
+            TextInput::new(
+                InputId::Spec,
+                InputKind::Code,
+                String::new(),
+                "",
+                &colors,
+                window,
+                cx,
+            )
+        });
+        cx.subscribe(&spec_input, |console, _input, event: &InputEvent, cx| {
+            console.input_changed(event, cx);
+        })
+        .detach();
         let pickers = [
             ComboId::Model,
             ComboId::Site,
@@ -806,6 +831,11 @@ impl Console {
             palette_index: 0,
             palette_mode: PaletteMode::Commands,
             palette_input,
+            spec_open: false,
+            spec_input,
+            spec_shown: String::new(),
+            spec_held: false,
+            spec_note: None,
             step: WorkspaceStep::Prompt,
             // Land on Home rather than inside a half-configured experiment.
             view: View::Home,
@@ -1708,6 +1738,17 @@ impl Console {
             Command::ShowLayers => self.show_result_view(ResultView::Layers, cx),
             Command::ShowTokens => self.show_result_view(ResultView::Tokens, cx),
             Command::ShowTrace => self.show_result_view(ResultView::Trace, cx),
+            Command::ToggleSpec => {
+                // From another page, the command shows the view.
+                if self.view != View::Experiment {
+                    self.goto(View::Experiment, cx);
+                    if !self.spec_open {
+                        self.toggle_spec(cx);
+                    }
+                } else {
+                    self.toggle_spec(cx);
+                }
+            }
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTheme => self.cycle_appearance(cx),
             Command::TogglePresentation => self.toggle_presentation(cx),
@@ -1778,6 +1819,10 @@ impl Console {
             InputId::Span => self.span.clone_from(&event.value),
             InputId::MaxTokens => self.max_tokens.clone_from(&event.value),
             InputId::Prompt => self.prompt.clone_from(&event.value),
+            InputId::Spec => {
+                self.spec_edited(&event.value, cx);
+                return;
+            }
             InputId::PaletteQuery => {
                 // A new query means a new candidate list; the cursor restarts
                 // so Enter always runs what the eye is resting on.
@@ -2082,6 +2127,72 @@ impl Console {
             self.persist();
         }
         self.view = view;
+        cx.notify();
+    }
+
+    // -- spec view ---------------------------------------------------------
+
+    /// Open or close the spec view. When it opens, it shows the form's spec.
+    fn toggle_spec(&mut self, cx: &mut Context<Self>) {
+        self.spec_open = !self.spec_open;
+        self.revert_spec(cx);
+    }
+
+    /// Drop a held edit: the view shows the form's spec again.
+    fn revert_spec(&mut self, cx: &mut Context<Self>) {
+        self.spec_held = false;
+        self.spec_note = None;
+        self.spec_shown.clear();
+        cx.notify();
+    }
+
+    /// Keep the spec view in step with the form, unless it holds an edit
+    /// that the form could not take. Runs before each render.
+    fn sync_spec_view(&mut self, cx: &mut Context<Self>) {
+        if !self.spec_open || self.spec_held {
+            return;
+        }
+        match self.form_values().spec_text() {
+            Ok(text) => {
+                self.spec_note = None;
+                if text != self.spec_shown {
+                    self.spec_shown = text.clone();
+                    self.set_input_value(self.spec_input.clone(), text, cx);
+                }
+            }
+            Err(error) => self.spec_note = Some(format!("The form is not complete: {error}")),
+        }
+    }
+
+    /// An edit in the spec view: the form takes it when it can, and the
+    /// view keeps the text as typed either way.
+    fn spec_edited(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !self.spec_open {
+            return;
+        }
+        if text == self.spec_shown {
+            // The text is the form's spec again: there is no edit to hold.
+            if self.spec_held {
+                self.spec_held = false;
+                self.spec_note = None;
+                cx.notify();
+            }
+            return;
+        }
+        match self.form_values().with_spec(text) {
+            Ok(values) => {
+                self.apply_form_values(values, cx);
+                self.spec_held = false;
+                self.spec_note = None;
+                // The form's own text can put the same spec in a different
+                // layout. The view keeps the typed text.
+                self.spec_shown = self.form_values().spec_text().unwrap_or_default();
+            }
+            Err(error) => {
+                self.spec_held = true;
+                self.spec_note = Some(error);
+            }
+        }
         cx.notify();
     }
 

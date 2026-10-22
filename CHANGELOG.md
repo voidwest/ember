@@ -15,6 +15,13 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Native console: a spec view. **TOML** in the setup pane, or the palette's
+  **Toggle spec view (TOML)**, shows the experiment as the
+  `ember.experiment.v1` intervention spec that Run executes beside its
+  baseline. The view follows the form,
+  and an edit in the view changes the form when the form can hold it. The
+  view keeps any other edit with the reason, until **Revert**. **Copy**
+  copies the spec (`docs/v06-gui.md#spec-view-toml`).
 - Feature dictionaries: `scripts/convert_linear_sae.py` converts a ReLU SAE
   saved as a PyTorch state dict (`torch.nn.Linear` layout) to a SAELens
   folder. It reads the `.pt` without running its pickle and refuses every
