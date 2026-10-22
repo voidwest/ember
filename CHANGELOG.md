@@ -15,6 +15,17 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Feature dictionaries: `scripts/convert_linear_sae.py` converts a ReLU SAE
+  saved as a PyTorch state dict (`torch.nn.Linear` layout) to a SAELens
+  folder. It reads the `.pt` without running its pickle and refuses every
+  global other than an `OrderedDict`, float storages and tensor rebuilds;
+  PyTorch is not needed. Two examples,
+  `examples/experiments/capital-feature-capture.toml` and
+  `capital-feature-patching-sweep.toml`, use it with an Apache-2.0 SAE for
+  Llama-3.2-1B-Instruct: one country feature per prompt, patched alone from
+  the clean run, recovers 3.39 logits of the capital gap
+  (`docs/experiments.md#feature-dictionaries`). `.gitignore` now ignores
+  `/dictionaries/`, where the examples expect the converted SAE.
 - Native console: the Review page marks where the two outputs part. Each
   output card highlights its own text from that point: the intervention in
   the accent tint and the baseline in a neutral tint. A mark that would

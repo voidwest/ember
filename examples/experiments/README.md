@@ -91,6 +91,17 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
     pinned model, layer 9 head 23 alone recovers 8.46 of the gap on all
     eight pairs. Run `capital-clean.toml` first.
 
+11. `capital-feature-capture.toml` and `capital-feature-patching-sweep.toml`
+    — the same study through a sparse autoencoder (feature dictionaries,
+    `docs/experiments.md#feature-dictionaries`). The capture lists the
+    strongest features entering block 10 for the clean and the corrupted
+    prompts: each clean prompt has one country feature that its corrupted
+    prompt lacks. The sweep patches that one feature from the clean run and
+    recovers 3.39 of the gap on all eight pairs. Both need the SAE, which is
+    not in the repository: their header comments give the download and the
+    `scripts/convert_linear_sae.py` step. Run `capital-clean.toml` before the
+    sweep.
+
 ## Commands
 
 ```bash
