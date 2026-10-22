@@ -102,6 +102,12 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
     `scripts/convert_linear_sae.py` step. Run `capital-clean.toml` before the
     sweep.
 
+12. `capital-feature-sweep.toml` — a feature sweep (`[sweep] features`): each
+    of the eight country features, patched into all eight corrupted prompts.
+    Each feature has its largest effect on its own country's prompt. Of the
+    56 other entries, 50 are exactly 0; the header explains the six that are
+    not. Needs the same SAE and `capital-clean.toml`.
+
 ## Commands
 
 ```bash
