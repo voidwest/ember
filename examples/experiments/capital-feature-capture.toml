@@ -1,0 +1,147 @@
+# The feature view of the capital study: the residual stream entering block
+# 10 at the final token, for the eight clean prompts and the eight corrupted
+# ones, with each row's strongest features
+# (artifacts/features/answer-features.json).
+#
+# The dictionary is a sparse autoencoder for Llama-3.2-1B-Instruct, trained
+# on the output of block 9 (Apache-2.0, 32,768 features). That output is the
+# input of block 10, so it is bound to residual-pre-attention layer 10. It is
+# a PyTorch state dict, not a SAELens folder; convert it once:
+#
+#   curl -L -o qresearch-l9.pt https://huggingface.co/qresearch/Llama-3.2-1B-Instruct-SAE-l9/resolve/4fd505efade04b357f98666f69bae5fd718c039c/Llama-3.2-1B-Instruct-SAE-l9.pt
+#   # sha256 d89b1b4953379a824f1e4a31599ac42c66eb8dc3382b7d960dce67d97ebc7ace
+#   python scripts/convert_linear_sae.py qresearch-l9.pt \
+#       dictionaries/qresearch-llama-3.2-1b-instruct-sae-l9 \
+#       --model-name meta-llama/Llama-3.2-1B-Instruct \
+#       --hook-name blocks.9.hook_resid_post \
+#       --source "huggingface.co/qresearch/Llama-3.2-1B-Instruct-SAE-l9@4fd505efade04b357f98666f69bae5fd718c039c" \
+#       --license apache-2.0
+#
+# The two hashes below are the converter's output for that file. On the
+# clean prompts the fit is a mean l0 of 46 active features and a median
+# relative reconstruction error of 0.48.
+#
+# Result on the pinned model (Apple M1 Pro, reference mode, 2026-10-22): each
+# clean row has one strong feature that its corrupted row lacks, a different
+# feature for each country (activation 0.9 to 1.8 against 0.00). Through the
+# final norm and the LM head, each feature's decoder direction gives that
+# country's tokens, often with its capital:
+#
+#   france   3756   France, French, Paris, Marseille
+#   germany  8633   German, Germany
+#   japan    21761  Japan, Japanese, Tokyo, Osaka
+#   egypt    22634  Egypt, Egyptian, Nile
+#   poland   18838  Polish, Poland, Warsaw
+#   portugal 27466  Portuguese, Portugal, Lisbon
+#   italy    22778  Italian, Italy
+#   spain    19172  Spanish, Spain, Catalan, Madrid
+#
+# capital-feature-patching-sweep.toml patches each one alone.
+#
+#   ember experiment run examples/experiments/capital-feature-capture.toml
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "capital-feature-capture"
+description = "Strongest SAE features entering block 10 at the final token, clean and corrupted capital prompts."
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 4
+deterministic = true
+
+[generation]
+max_new_tokens = 0
+temperature = 0.0
+
+[[inputs]]
+id = "france"
+text = "The capital of France is the city of"
+
+[[inputs]]
+id = "germany"
+text = "The capital of Germany is the city of"
+
+[[inputs]]
+id = "japan"
+text = "The capital of Japan is the city of"
+
+[[inputs]]
+id = "egypt"
+text = "The capital of Egypt is the city of"
+
+[[inputs]]
+id = "poland"
+text = "The capital of Poland is the city of"
+
+[[inputs]]
+id = "portugal"
+text = "The capital of Portugal is the city of"
+
+[[inputs]]
+id = "italy"
+text = "The capital of Italy is the city of"
+
+[[inputs]]
+id = "spain"
+text = "The capital of Spain is the city of"
+
+[[inputs]]
+id = "france-corrupted"
+text = "The capital of Italy is the city of"
+
+[[inputs]]
+id = "germany-corrupted"
+text = "The capital of Spain is the city of"
+
+[[inputs]]
+id = "japan-corrupted"
+text = "The capital of Russia is the city of"
+
+[[inputs]]
+id = "egypt-corrupted"
+text = "The capital of Greece is the city of"
+
+[[inputs]]
+id = "poland-corrupted"
+text = "The capital of Austria is the city of"
+
+[[inputs]]
+id = "portugal-corrupted"
+text = "The capital of Sweden is the city of"
+
+[[inputs]]
+id = "italy-corrupted"
+text = "The capital of France is the city of"
+
+[[inputs]]
+id = "spain-corrupted"
+text = "The capital of Germany is the city of"
+
+[[dictionaries]]
+id = "l10"
+path = "dictionaries/qresearch-llama-3.2-1b-instruct-sae-l9"
+sha256 = "8ade5dc5488d13676a26cad16b4d9bf88c947b9f6df44441996fe87ffff6977f"
+config_sha256 = "ac74e31f66b57f8ce784e8741bfec3e7d5ade408b03959e1f465331196cd49f5"
+site = "residual-pre-attention"
+layer = 10
+
+[[captures]]
+id = "answer-features"
+site = "residual-pre-attention"
+layers = [10]
+features = { dictionary = "l10", top_k = 16 }
+
+[captures.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "runs/capital-feature-capture"
+overwrite = false

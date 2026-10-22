@@ -165,3 +165,7 @@ docs/screenshots/console-shell/
 /.claude/untracked-backup-*/
 /.claude/research-data/
 /*.mp4
+
+# Feature dictionaries for the examples (examples/experiments/capital-feature-*.toml);
+# a converted SAE is hundreds of megabytes.
+/dictionaries/

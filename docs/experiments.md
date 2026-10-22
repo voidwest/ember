@@ -593,8 +593,11 @@ usable; the model does not depend on its component along it.
 ## Feature dictionaries
 
 A feature dictionary is a sparse autoencoder (SAE) in the SAELens format: a
-folder with `cfg.json` and `sae_weights.safetensors`. Declare it once, then
-read or edit a site through it (ADR-0003):
+folder with `cfg.json` and `sae_weights.safetensors`. A ReLU SAE saved as a
+PyTorch state dict in the `torch.nn.Linear` layout can be converted with
+`scripts/convert_linear_sae.py`, which reads the file without running its
+pickle and refuses anything but plain tensors. Declare the dictionary once,
+then read or edit a site through it (ADR-0003):
 
 ```toml
 [[dictionaries]]
@@ -677,6 +680,44 @@ one deterministic run.
 - **A no-op edit is bit-identical.** `scale` with factor 1 on every feature
   changes no logit on any of the eight inputs: the effect is exactly 0
   (0/0/8).
+
+**A single-feature result (2026-10-22).** A sparse SAE gives one: the
+Apache-2.0 SAE `qresearch/Llama-3.2-1B-Instruct-SAE-l9` (revision `4fd505e`,
+32,768 features), converted with `scripts/convert_linear_sae.py`. Same model,
+mode, host and one deterministic run as above. The examples are
+`examples/experiments/capital-feature-capture.toml` and
+`capital-feature-patching-sweep.toml`; their header comments give the
+download and conversion steps.
+
+- **It fits at the output of block 9.** The card says only "layer 9". On the
+  clean capital prompts the fit is best at `residual-post-mlp` layer 9, which
+  is `residual-pre-attention` layer 10: a mean `l0` of 46 and a median
+  relative error of 0.48. The neighbouring layers fit worse, and subtracting
+  `b_dec` from the input breaks the fit, so the converted `cfg.json` sets
+  `apply_b_dec_to_input = false`. Ember again agrees with a NumPy encode on
+  every row (values within 3.8e-6).
+- **One feature per country.** At the final token, each clean row has one
+  strong feature that its corrupted row lacks (activation 0.9 to 1.8 against
+  0.00), a different one for each country. Through the final norm and the LM
+  head, its decoder direction gives that country's tokens, often with the
+  capital: feature 3756 gives France, French, Paris and Marseille; 21761 gives
+  Japan, Japanese, Tokyo and Osaka; 18838 gives Polish, Poland and Warsaw.
+- **It is sufficient.** Patched alone from the clean run into each corrupted
+  prompt, the feature recovers +3.39 logits of logit(clean capital) −
+  logit(corrupted capital) (95% interval 2.37–4.53, 8/0/0). The top 3, 10 and
+  30 features recover +3.70, +3.85 and +3.91, and all 32,768 recover +5.65
+  (4.74–6.96). One feature thus carries 60% of what the dictionary can move.
+  The dictionary moves less than the raw row (+9.80), because the
+  reconstruction error, about 46% of the row's norm, stays from the
+  corrupted run.
+- **It is not necessary.** Zeroing the feature in the clean prompts lowers
+  the margin by only 0.74 of 9.83 (7 of 8 prompts, sign test p = 0.07). The
+  answer is also carried elsewhere in the row.
+
+This is the layer where the head sweep found head 23 moving the answer to
+the final token (`capital-head-patching-sweep.toml`). These runs do not show
+that head 23 writes this feature; that needs a patch of the head with a
+feature capture downstream.
 
 ## Determinism and identity
 
