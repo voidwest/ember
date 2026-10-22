@@ -69,6 +69,9 @@ pub const SWEEP_SPEC_FILE: &str = "sweep.toml";
 pub const SWEEP_MANIFEST_FILE: &str = "sweep.json";
 pub const SWEEP_CSV_FILE: &str = "sweep.csv";
 pub const SWEEP_RUNTIME_FILE: &str = "sweep-runtime.json";
+/// The most features one sweep may set, one point each: the width of the
+/// largest dictionary that `MAX_WEIGHTS_BYTES` admits.
+pub const MAX_SWEPT_FEATURES: usize = 65_536;
 
 /// The `[sweep]` table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,6 +92,11 @@ pub struct RawSweepSpec {
     /// one per point: `"all"`, a list, or a range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heads: Option<LayerSelector>,
+    /// Features of a dictionary (ADR-0003) the swept interventions act on,
+    /// one per point: each point gives them `features = { dictionary, ids =
+    /// [F] }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<RawFeatureSweep>,
     /// Intervention ids to sweep (default: every intervention).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interventions: Option<Vec<String>>,
@@ -99,6 +107,26 @@ pub struct RawSweepSpec {
     /// Effect statistics across the inputs (`crate::v05::effect`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<RawEffectSpec>,
+}
+
+/// `[sweep] features`: a dictionary and the feature ids to sweep, as a list
+/// or a `{ start, end, step }` range (end exclusive). There is no `"all"`: a
+/// dictionary can hold tens of thousands of features, one bundle each.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawFeatureSweep {
+    pub dictionary: String,
+    pub ids: LayerSelector,
+}
+
+/// The features a sweep moves its interventions through (`sweep.json`
+/// records it as it is).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeatureSweep {
+    pub dictionary: String,
+    /// Ascending, without repeats.
+    pub ids: Vec<usize>,
 }
 
 /// A parsed and validated sweep specification.
@@ -113,6 +141,8 @@ pub struct SweepDefinition {
     pub positions: Option<Vec<usize>>,
     /// `None`: the swept interventions keep their declared heads.
     pub heads: Option<LayerSelector>,
+    /// `None`: the swept interventions act on whole rows, as declared.
+    pub features: Option<FeatureSweep>,
     /// Swept `alpha` values, ascending.
     pub alphas: Option<Vec<f64>>,
     /// Swept intervention ids, in declaration order.
@@ -135,6 +165,7 @@ pub struct DerivedSpec {
     pub id: String,
     pub layer: Option<usize>,
     pub head: Option<usize>,
+    pub feature: Option<usize>,
     pub position: Option<usize>,
     pub alpha: Option<f64>,
     /// The derived spec text (becomes the bundle's `experiment.toml`).
@@ -227,12 +258,20 @@ impl SweepDefinition {
                     .collect()
             }
         };
-        if sweep.layers.is_none() && sweep.heads.is_none() && sweep.alphas.is_none() {
+        if sweep.layers.is_none()
+            && sweep.heads.is_none()
+            && sweep.features.is_none()
+            && sweep.alphas.is_none()
+        {
             return Err(SpecError::at(
                 "sweep",
-                "a sweep needs `layers`, `heads`, `alphas`, or a combination",
+                "a sweep needs `layers`, `heads`, `features`, `alphas`, or a combination",
             ));
         }
+        let features = match &sweep.features {
+            None => None,
+            Some(raw) => Some(Self::parse_features(raw, &sweep, &template, &swept)?),
+        };
         if sweep.layers.is_none() && sweep.positions.is_some() {
             return Err(SpecError::at(
                 "sweep.positions",
@@ -418,12 +457,141 @@ impl SweepDefinition {
             layers: sweep.layers,
             positions,
             heads: sweep.heads,
+            features,
             alphas,
             interventions: swept,
             move_bundle_sources,
             effect,
             template,
             document,
+        })
+    }
+
+    /// Check `[sweep] features` against the template: a dictionary is
+    /// trained at one site and layer, so the swept interventions stay there
+    /// and the sweep moves nothing else.
+    fn parse_features(
+        raw: &RawFeatureSweep,
+        sweep: &RawSweepSpec,
+        template: &ExperimentSpecV1,
+        swept: &[String],
+    ) -> Result<FeatureSweep, SpecError> {
+        if sweep.layers.is_some() || sweep.heads.is_some() || sweep.positions.is_some() {
+            return Err(SpecError::at(
+                "sweep.features",
+                "a feature sweep keeps the swept interventions at the dictionary's site and \
+                 layer; it cannot also sweep layers, heads or positions",
+            ));
+        }
+        let dictionary = template
+            .dictionaries
+            .iter()
+            .find(|dictionary| dictionary.id == raw.dictionary)
+            .ok_or_else(|| {
+                SpecError::at(
+                    "sweep.features.dictionary",
+                    format!("no [[dictionaries]] entry has id {:?}", raw.dictionary),
+                )
+            })?;
+        let ids = match &raw.ids {
+            LayerSelector::All(_) => {
+                return Err(SpecError::at(
+                    "sweep.features.ids",
+                    "list the feature ids, or give a { start, end, step } range: a sweep of \
+                     every feature would write one bundle per feature",
+                ))
+            }
+            LayerSelector::List(list) => {
+                if list.is_empty() {
+                    return Err(SpecError::at(
+                        "sweep.features.ids",
+                        "the feature list is empty",
+                    ));
+                }
+                let mut list = list.clone();
+                list.sort_unstable();
+                list.dedup();
+                list
+            }
+            LayerSelector::Range(range) => {
+                if range.step == 0 || range.start >= range.end {
+                    return Err(SpecError::at(
+                        "sweep.features.ids",
+                        "a feature range needs start < end and step >= 1",
+                    ));
+                }
+                // Count the range before allocating it: an end near
+                // usize::MAX must fail here, not exhaust memory.
+                let count = (range.end - range.start - 1) / range.step + 1;
+                if count > MAX_SWEPT_FEATURES {
+                    return Err(SpecError::at(
+                        "sweep.features.ids",
+                        format!(
+                            "the range selects {count} features; a sweep sets at most \
+                             {MAX_SWEPT_FEATURES}"
+                        ),
+                    ));
+                }
+                (range.start..range.end).step_by(range.step).collect()
+            }
+        };
+        if ids.len() > MAX_SWEPT_FEATURES {
+            return Err(SpecError::at(
+                "sweep.features.ids",
+                format!(
+                    "the list names {} features; a sweep sets at most {MAX_SWEPT_FEATURES}",
+                    ids.len()
+                ),
+            ));
+        }
+        for (index, intervention) in template.interventions.iter().enumerate() {
+            if !swept.contains(&intervention.id) {
+                continue;
+            }
+            let path = format!("interventions[{index}]");
+            if intervention.features.is_some() {
+                return Err(SpecError::at(
+                    format!("{path}.features"),
+                    "a feature sweep sets features at each point; remove features here",
+                ));
+            }
+            use crate::v05::intervention::InterventionOperation as Op;
+            if matches!(
+                intervention.operation,
+                Op::Steer { .. } | Op::AblateProjection | Op::RestoreOriginal
+            ) {
+                return Err(SpecError::at(
+                    "sweep.features",
+                    format!(
+                        "intervention '{}': {} does not act on features; use zero, scale, \
+                         replace, add-delta or interpolate",
+                        intervention.id,
+                        intervention.operation.kind_name()
+                    ),
+                ));
+            }
+            let at_dictionary = intervention.site == dictionary.site
+                && match &intervention.layers {
+                    LayerSelector::List(layers) => layers.as_slice() == [dictionary.layer],
+                    LayerSelector::Range(range) => {
+                        range.start == dictionary.layer && range.end == dictionary.layer + 1
+                    }
+                    LayerSelector::All(_) => false,
+                };
+            if !at_dictionary {
+                return Err(SpecError::at(
+                    path,
+                    format!(
+                        "a feature sweep acts at dictionary {:?}'s site and layer: set site = \
+                         \"{}\" and layers = [{}]",
+                        dictionary.id, dictionary.site, dictionary.layer
+                    ),
+                ));
+            }
+        }
+        Ok(FeatureSweep {
+            dictionary: raw.dictionary.clone(),
+            ids,
         })
     }
 
@@ -504,10 +672,15 @@ impl SweepDefinition {
             Some(_) => self.resolve_heads(n_heads)?.len(),
             None => 1,
         };
+        let features = self
+            .features
+            .as_ref()
+            .map_or(1, |features| features.ids.len());
         let positions = self.positions.as_ref().map_or(1, Vec::len);
         let alphas = self.alphas.as_ref().map_or(1, Vec::len);
         Ok(layers
             .checked_mul(heads)
+            .and_then(|count| count.checked_mul(features))
             .and_then(|count| count.checked_mul(positions))
             .and_then(|count| count.checked_mul(alphas)))
     }
@@ -606,6 +779,7 @@ impl SweepDefinition {
             id: id.to_string(),
             layer: None,
             head: None,
+            feature: None,
             position: None,
             alpha: None,
             text,
@@ -627,7 +801,7 @@ impl SweepDefinition {
     }
 
     /// Every point for an `n_layers`-layer, `n_heads`-head model: layers
-    /// ascending, then heads, then positions, then alphas.
+    /// ascending, then heads, then features, then positions, then alphas.
     pub fn points(&self, n_layers: usize, n_heads: usize) -> Result<Vec<DerivedSpec>, SpecError> {
         let resolved_layers = self.resolve_layers(n_layers)?;
         let layers: Vec<Option<usize>> = if self.layers.is_some() {
@@ -641,6 +815,15 @@ impl SweepDefinition {
             vec![None]
         };
         let head_width = n_heads.saturating_sub(1).to_string().len().max(2);
+        let features: Vec<Option<usize>> = match &self.features {
+            None => vec![None],
+            Some(features) => features.ids.iter().copied().map(Some).collect(),
+        };
+        let feature_width = self
+            .features
+            .as_ref()
+            .and_then(|features| features.ids.last())
+            .map_or(2, |&last| last.to_string().len().max(2));
         let alphas: Vec<Option<f64>> = match &self.alphas {
             None => vec![None],
             Some(list) => list.iter().copied().map(Some).collect(),
@@ -678,12 +861,16 @@ impl SweepDefinition {
             None => vec![None],
             Some(list) => list.iter().copied().map(Some).collect(),
         };
-        let mut out =
-            Vec::with_capacity(layers.len() * heads.len() * positions.len() * alphas.len());
-        let grid = layers
-            .iter()
-            .flat_map(|&layer| heads.iter().map(move |&head| (layer, head)));
-        for (layer, head) in grid {
+        let mut out = Vec::with_capacity(
+            layers.len() * heads.len() * features.len() * positions.len() * alphas.len(),
+        );
+        let grid = layers.iter().flat_map(|&layer| {
+            heads.iter().flat_map({
+                let features = &features;
+                move |&head| features.iter().map(move |&feature| (layer, head, feature))
+            })
+        });
+        for (layer, head, feature) in grid {
             for &position in &positions {
                 for &alpha in &alphas {
                     let mut parts = Vec::new();
@@ -692,6 +879,9 @@ impl SweepDefinition {
                     }
                     if let Some(head) = head {
                         parts.push(format!("head-{head:0head_width$}"));
+                    }
+                    if let Some(feature) = feature {
+                        parts.push(format!("feature-{feature:0feature_width$}"));
                     }
                     if let Some(position) = position {
                         parts.push(format!("pos-{position}"));
@@ -736,6 +926,18 @@ impl SweepDefinition {
                                     toml::Value::Array(vec![toml::Value::Integer(head as i64)]),
                                 );
                             }
+                            if let (Some(feature), Some(features)) = (feature, &self.features) {
+                                let mut selection = toml::Table::new();
+                                selection.insert(
+                                    "dictionary".into(),
+                                    toml::Value::String(features.dictionary.clone()),
+                                );
+                                selection.insert(
+                                    "ids".into(),
+                                    toml::Value::Array(vec![toml::Value::Integer(feature as i64)]),
+                                );
+                                table.insert("features".into(), toml::Value::Table(selection));
+                            }
                             if let (Some(alpha), Some(toml::Value::Table(operation))) =
                                 (alpha, table.get_mut("operation"))
                             {
@@ -757,6 +959,9 @@ impl SweepDefinition {
                     if let Some(head) = head {
                         coordinates.push(format!("head {head}"));
                     }
+                    if let Some(feature) = feature {
+                        coordinates.push(format!("feature {feature}"));
+                    }
                     if let Some(position) = position {
                         coordinates.push(format!("token {position}"));
                     }
@@ -770,6 +975,7 @@ impl SweepDefinition {
                     let mut derived = self.derive(&id, &what, document, format!("points/{id}"))?;
                     derived.layer = layer;
                     derived.head = head;
+                    derived.feature = feature;
                     derived.position = position;
                     derived.alpha = alpha;
                     out.push(derived);
@@ -838,6 +1044,9 @@ pub struct SweepPointRecord {
     /// The point's head, for head sweeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<usize>,
+    /// The point's feature, for feature sweeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<usize>,
     #[serde(flatten)]
     pub bundle: SweepBundleRef,
     pub inputs: Vec<SweepInputMetrics>,
@@ -867,6 +1076,9 @@ pub struct SweepManifest {
     pub heads: Option<Vec<usize>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_count: Option<usize>,
+    /// For feature sweeps: the dictionary and the swept feature ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<FeatureSweep>,
     pub interventions: Vec<String>,
     /// With `[sweep.effect]`: the metric, interval settings and resolved
     /// target/foil tokens.
@@ -895,8 +1107,10 @@ impl SweepManifest {
         // The alpha column exists only for alpha sweeps, so earlier sweeps
         // keep their exact table.
         let with_alpha = self.alphas.is_some();
-        // The head column likewise exists only for head sweeps.
+        // The head column likewise exists only for head sweeps, and the
+        // feature column only for feature sweeps.
         let with_head = self.heads.is_some();
+        let with_feature = self.features.is_some();
         let mut out = String::from(if with_alpha {
             "point,layer,position,alpha,"
         } else {
@@ -904,6 +1118,9 @@ impl SweepManifest {
         });
         if with_head {
             out.push_str("head,");
+        }
+        if with_feature {
+            out.push_str("feature,");
         }
         out.push_str(
             "input_id,first_divergent_step,generated_text_equal,\
@@ -926,6 +1143,9 @@ impl SweepManifest {
                 };
                 if with_head {
                     alpha.push_str(&format!("{},", opt(&point.head)));
+                }
+                if with_feature {
+                    alpha.push_str(&format!("{},", opt(&point.feature)));
                 }
                 let effect = if with_effect {
                     format!(
@@ -964,14 +1184,18 @@ impl SweepManifest {
             value.as_ref().map(ToString::to_string).unwrap_or_default()
         }
         self.effect.as_ref()?;
-        // A head column only for head sweeps, so earlier tables stay as they
-        // were.
+        // A head column only for head sweeps and a feature column only for
+        // feature sweeps, so earlier tables stay as they were.
         let with_head = self.heads.is_some();
+        let with_feature = self.features.is_some();
         let mut out = String::from(if with_head {
             "point,layer,position,alpha,head,"
         } else {
             "point,layer,position,alpha,"
         });
+        if with_feature {
+            out.push_str("feature,");
+        }
         out.push_str(
             "n,mean,sd,standard_error,ci_low,ci_high,positive,negative,zero,sign_test_p\n",
         );
@@ -979,11 +1203,14 @@ impl SweepManifest {
             let Some(effect) = &point.effect else {
                 continue;
             };
-            let head = if with_head {
+            let mut head = if with_head {
                 format!("{},", opt(&point.head))
             } else {
                 String::new()
             };
+            if with_feature {
+                head.push_str(&format!("{},", opt(&point.feature)));
+            }
             out.push_str(&format!(
                 "{},{},{},{},{head}{},{},{},{},{},{},{},{},{},{}\n",
                 point.id,
@@ -1291,11 +1518,12 @@ fn verify_and_load_sweep(
         definition.name == manifest.experiment
             && layers == manifest.layers
             && heads == manifest.heads
+            && definition.features == manifest.features
             && definition.positions == manifest.positions
             && definition.alphas == manifest.alphas
             && definition.interventions == manifest.interventions,
-        "experiment name, layers, heads, positions, alphas and swept interventions match the \
-         spec",
+        "experiment name, layers, heads, features, positions, alphas and swept interventions \
+         match the spec",
     );
     match (&definition.effect, &manifest.effect) {
         (None, None) => {}
@@ -1462,22 +1690,24 @@ fn verify_and_load_sweep(
                     point.text.as_str(),
                     point.layer,
                     point.head,
+                    point.feature,
                     point.position,
                     point.alpha,
                 )
             });
         match expected {
-            Some((text, layer, head, position, alpha)) => {
+            Some((text, layer, head, feature, position, alpha)) => {
                 bundle_checks(&mut report, &label, &bundle, &record.bundle, text);
                 report.check(
                     format!("{label} coordinates"),
                     layer == record.layer
                         && head == record.head
+                        && feature == record.feature
                         && position == record.position
                         && alpha.map(f64::to_bits) == record.alpha.map(f64::to_bits),
                     format!(
-                        "layer {:?} head {:?} position {:?} alpha {:?}",
-                        record.layer, record.head, record.position, record.alpha
+                        "layer {:?} head {:?} feature {:?} position {:?} alpha {:?}",
+                        record.layer, record.head, record.feature, record.position, record.alpha
                     ),
                 );
             }
@@ -1789,6 +2019,118 @@ interventions = ["replace"]
         )
     }
 
+    /// SPEC with a dictionary at the swept intervention's site and layer
+    /// (residual-post-mlp, layer 7) and a feature sweep in place of the
+    /// layer sweep.
+    fn feature_spec(sweep: &str) -> String {
+        let hash = "0".repeat(64);
+        SPEC.replace(
+            "[output]\n",
+            &format!(
+                "[[dictionaries]]\nid = \"d\"\npath = \"dict\"\nsha256 = \"{hash}\"\n\
+                 config_sha256 = \"{hash}\"\nsite = \"residual-post-mlp\"\nlayer = 7\n\n[output]\n"
+            ),
+        )
+        .replace(
+            "[sweep]\nlayers = { start = 0, end = 12, step = 4 }\ninterventions = [\"replace\"]\n",
+            &format!("[sweep]\n{sweep}interventions = [\"replace\"]\n"),
+        )
+    }
+
+    #[test]
+    fn feature_sweeps_set_one_feature_per_point() {
+        let text = feature_spec("features = { dictionary = \"d\", ids = [40, 3, 40, 12] }\n");
+        let definition = SweepDefinition::parse(&text).unwrap();
+        let features = definition.features.clone().unwrap();
+        assert_eq!(features.ids, vec![3, 12, 40], "ascending, without repeats");
+        assert_eq!(definition.point_count(12, 4).unwrap(), Some(3));
+        let points = definition.points(12, 4).unwrap();
+        let ids: Vec<&str> = points.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["feature-03", "feature-12", "feature-40"]);
+        let point = &points[1];
+        assert_eq!(point.feature, Some(12));
+        assert_eq!(point.layer, None);
+        let find = |id: &str| {
+            point
+                .resolved
+                .interventions
+                .iter()
+                .find(|i| i.id == id)
+                .unwrap()
+                .clone()
+        };
+        let swept = find("replace");
+        assert_eq!(
+            swept.features,
+            Some(crate::v05::dictionary::FeatureSelection {
+                dictionary: "d".into(),
+                ids: vec![12],
+            })
+        );
+        assert_eq!(
+            swept.layers,
+            LayerSelector::List(vec![7]),
+            "it stays at the dictionary's layer"
+        );
+        assert_eq!(
+            find("fixed").features,
+            None,
+            "an unswept intervention is unchanged"
+        );
+
+        let range = feature_spec(
+            "features = { dictionary = \"d\", ids = { start = 0, end = 10, step = 5 } }\n",
+        );
+        let range = SweepDefinition::parse(&range).unwrap();
+        assert_eq!(range.features.unwrap().ids, vec![0, 5]);
+    }
+
+    #[test]
+    fn feature_sweeps_refuse_what_a_dictionary_cannot_do() {
+        let refuse = |text: &str| SweepDefinition::parse(text).unwrap_err().to_string();
+        let features = "features = { dictionary = \"d\", ids = [1] }\n";
+        assert!(refuse(&feature_spec(
+            "features = { dictionary = \"d\", ids = \"all\" }\n"
+        ))
+        .contains("list the feature ids"));
+        assert!(refuse(&feature_spec(
+            "features = { dictionary = \"d\", ids = [] }\n"
+        ))
+        .contains("empty"));
+        assert!(refuse(&feature_spec(&format!("layers = [7]\n{features}")))
+            .contains("cannot also sweep"));
+        assert!(refuse(&feature_spec(
+            "features = { dictionary = \"x\", ids = [1] }\n"
+        ))
+        .contains("no [[dictionaries]] entry"));
+        let declared = feature_spec(features).replace(
+            "source = { kind = \"capture-from-current-run\", capture_id = \"rows\" }",
+            "source = { kind = \"capture-from-current-run\", capture_id = \"rows\" }\n\
+             features = { dictionary = \"d\", ids = [2] }",
+        );
+        assert!(refuse(&declared).contains("remove features here"));
+        let elsewhere = feature_spec(features).replacen("layers = [7]", "layers = [3]", 1);
+        assert!(refuse(&elsewhere).contains("layers = [7]"));
+        // A huge range fails before it allocates.
+        let huge = format!(
+            "features = {{ dictionary = \"d\", ids = {{ start = 0, end = {}, step = 1 }} }}\n",
+            i64::MAX
+        );
+        assert!(refuse(&feature_spec(&huge)).contains("a sweep sets at most 65536"));
+        let ceiling =
+            "features = { dictionary = \"d\", ids = { start = 0, end = 65536, step = 1 } }\n";
+        assert!(SweepDefinition::parse(&feature_spec(ceiling)).is_ok());
+        let steer = feature_spec(features).replace(
+            "operation = { kind = \"replace\" }\nsource = { kind = \"capture-from-current-run\", \
+             capture_id = \"rows\" }",
+            "operation = { kind = \"steer\", alpha = 2.0 }\n\
+             source = { kind = \"inline-vector\", values = [1.0] }",
+        );
+        assert_ne!(steer, feature_spec(features));
+        let error = refuse(&steer);
+        assert!(error.contains("steer does not act on features"), "{error}");
+    }
+
     #[test]
     fn head_sweeps_set_one_head_per_point() {
         let text = head_spec("layers = [3, 7]\nheads = \"all\"\n");
@@ -1979,12 +2321,14 @@ interventions = ["replace"]
             alphas: None,
             heads: None,
             head_count: None,
+            features: None,
             points: vec![SweepPointRecord {
                 id: "layer-01".into(),
                 layer: Some(1),
                 position: None,
                 alpha: None,
                 head: None,
+                feature: None,
                 bundle: SweepBundleRef {
                     bundle: "points/layer-01".into(),
                     ..reference

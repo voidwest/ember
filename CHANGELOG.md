@@ -15,6 +15,16 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Sweeps: `features = { dictionary, ids }` in `[sweep]` sweeps the features
+  of a feature dictionary, one per point: each point gives the swept
+  interventions `features = { dictionary, ids = [F] }`. `ids` is a list or
+  a range. The swept interventions stay at the dictionary's site and layer,
+  so a feature sweep crosses only with `alphas`. `sweep.json` records
+  `features` and each point's `feature`, and `sweep.csv` and
+  `sweep-effect.csv` gain a `feature` column for feature sweeps only.
+  Sweeps without `features` write the same files and `sweep_hash` as
+  before. `examples/experiments/capital-feature-sweep.toml` sweeps eight
+  country features across eight capital prompts.
 - Feature dictionaries: `scripts/convert_linear_sae.py` converts a ReLU SAE
   saved as a PyTorch state dict (`torch.nn.Linear` layout) to a SAELens
   folder. It reads the `.pt` without running its pickle and refuses every
