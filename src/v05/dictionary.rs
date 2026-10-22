@@ -74,9 +74,11 @@ pub struct FeatureCapture {
     pub top_k: usize,
 }
 
-/// The SAELens architectures that version 1 reads.
+/// The SAELens architectures that version 1 reads. A later version can add
+/// one (TopK, for example), so the enum is not exhaustive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum Architecture {
     /// `f = relu(pre)`.
     Standard,
@@ -186,10 +188,12 @@ pub struct Weights {
 }
 
 impl Dictionary {
+    /// The width of the rows the dictionary reads.
     pub fn d_in(&self) -> usize {
         self.record.d_in
     }
 
+    /// The number of features.
     pub fn d_sae(&self) -> usize {
         self.record.d_sae
     }
