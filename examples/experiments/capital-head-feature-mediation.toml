@@ -1,0 +1,352 @@
+# Does layer 9 head 23 move the answer through the country feature? For
+# each corrupted capital prompt, patch head 23 of layer 9 from the clean run
+# (as capital-head-patching-sweep.toml does) and, at the same time, hold the
+# clean prompt's country feature (capital-feature-capture.toml) at its
+# corrupted value, 0, entering block 10. The baseline is the corrupted run.
+# Without the hold, the same patch recovers 8.46 logits.
+#
+# The dictionary is a sparse autoencoder for Llama-3.2-1B-Instruct, trained
+# on the output of block 9 (Apache-2.0, 32,768 features). That output is the
+# input of block 10, so it is bound to residual-pre-attention layer 10. It is
+# a PyTorch state dict, not a SAELens folder; convert it once:
+#
+#   curl -L -o qresearch-l9.pt https://huggingface.co/qresearch/Llama-3.2-1B-Instruct-SAE-l9/resolve/4fd505efade04b357f98666f69bae5fd718c039c/Llama-3.2-1B-Instruct-SAE-l9.pt
+#   # sha256 d89b1b4953379a824f1e4a31599ac42c66eb8dc3382b7d960dce67d97ebc7ace
+#   python scripts/convert_linear_sae.py qresearch-l9.pt \
+#       dictionaries/qresearch-llama-3.2-1b-instruct-sae-l9 \
+#       --model-name meta-llama/Llama-3.2-1B-Instruct \
+#       --hook-name blocks.9.hook_resid_post \
+#       --source "huggingface.co/qresearch/Llama-3.2-1B-Instruct-SAE-l9@4fd505efade04b357f98666f69bae5fd718c039c" \
+#       --license apache-2.0
+#
+# The two hashes below are the converter's output for that file. On the
+# clean prompts the fit is a mean l0 of 46 active features and a median
+# relative reconstruction error of 0.48.
+#
+# Result on the pinned model (Apple M1 Pro, reference mode, 2026-10-22; one
+# deterministic run), for logit(clean capital) - logit(corrupted capital):
+#
+#   patched                              mean effect   95% interval    +/-/0
+#   head 23 alone                        +8.46         [7.85, 9.20]    8/0/0
+#   head 23, country feature held at 0   +3.58         [2.79, 4.61]    8/0/0
+#
+# The head patch also turns the feature on: from 0.00 to 77% of its clean
+# value on average (43% to 96%; "f10" in the point bundle's
+# artifacts/features). So head 23 writes the country feature, and 58% of the
+# head's effect passes through that one feature on its way to the answer.
+#
+#   ember experiment run examples/experiments/capital-clean.toml
+#   ember experiment run examples/experiments/capital-head-feature-mediation.toml
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "capital-head-feature-mediation"
+description = "Patch layer 9 head 23 from the clean run with the country feature held at its corrupted value entering block 10."
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 4
+deterministic = true
+
+[generation]
+max_new_tokens = 0
+temperature = 0.0
+
+[[inputs]]
+id = "france"
+text = "The capital of Italy is the city of"
+
+[[inputs]]
+id = "germany"
+text = "The capital of Spain is the city of"
+
+[[inputs]]
+id = "japan"
+text = "The capital of Russia is the city of"
+
+[[inputs]]
+id = "egypt"
+text = "The capital of Greece is the city of"
+
+[[inputs]]
+id = "poland"
+text = "The capital of Austria is the city of"
+
+[[inputs]]
+id = "portugal"
+text = "The capital of Sweden is the city of"
+
+[[inputs]]
+id = "italy"
+text = "The capital of France is the city of"
+
+[[inputs]]
+id = "spain"
+text = "The capital of Germany is the city of"
+
+[[dictionaries]]
+id = "l10"
+path = "dictionaries/qresearch-llama-3.2-1b-instruct-sae-l9"
+sha256 = "8ade5dc5488d13676a26cad16b4d9bf88c947b9f6df44441996fe87ffff6977f"
+config_sha256 = "ac74e31f66b57f8ce784e8741bfec3e7d5ade408b03959e1f465331196cd49f5"
+site = "residual-pre-attention"
+layer = 10
+
+[[captures]]
+id = "answer"
+site = "logits"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "f10"
+site = "residual-pre-attention"
+layers = [10]
+features = { dictionary = "l10", top_k = 16 }
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-france"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["france"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "france", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-france"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["france"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [3756] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-germany"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["germany"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "germany", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-germany"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["germany"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [8633] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-japan"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["japan"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "japan", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-japan"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["japan"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [21761] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-egypt"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["egypt"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "egypt", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-egypt"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["egypt"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [22634] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-poland"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["poland"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "poland", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-poland"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["poland"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [18838] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-portugal"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["portugal"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "portugal", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-portugal"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["portugal"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [27466] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-italy"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["italy"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "italy", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-italy"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["italy"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [22778] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "head-spain"
+site = "attention-heads"
+layers = [9]
+heads = [23]
+inputs = ["spain"]
+operation = { kind = "replace" }
+source = { kind = "capture-from-bundle", bundle_path = "runs/capital-clean", capture_id = "final-heads", input_id = "spain", layer = 9 }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[[interventions]]
+id = "hold-spain"
+site = "residual-pre-attention"
+layers = [10]
+inputs = ["spain"]
+operation = { kind = "zero" }
+features = { dictionary = "l10", ids = [19172] }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "runs/capital-head-feature-mediation"
+overwrite = false
+
+[sweep]
+layers = [9]
+interventions = ["head-france", "head-germany", "head-japan", "head-egypt", "head-poland", "head-portugal", "head-italy", "head-spain"]
+move_bundle_sources = true
+
+[sweep.effect]
+capture = "answer"
+
+[[sweep.effect.targets]]
+input = "france"
+target = " Paris"
+foil = " Rome"
+
+[[sweep.effect.targets]]
+input = "germany"
+target = " Berlin"
+foil = " Madrid"
+
+[[sweep.effect.targets]]
+input = "japan"
+target = " Tokyo"
+foil = " Moscow"
+
+[[sweep.effect.targets]]
+input = "egypt"
+target = " Cairo"
+foil = " Athens"
+
+[[sweep.effect.targets]]
+input = "poland"
+target = " Warsaw"
+foil = " Vienna"
+
+[[sweep.effect.targets]]
+input = "portugal"
+target = " Lisbon"
+foil = " Stockholm"
+
+[[sweep.effect.targets]]
+input = "italy"
+target = " Rome"
+foil = " Paris"
+
+[[sweep.effect.targets]]
+input = "spain"
+target = " Madrid"
+foil = " Berlin"

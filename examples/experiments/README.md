@@ -102,6 +102,12 @@ copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
     `scripts/convert_linear_sae.py` step. Run `capital-clean.toml` before the
     sweep.
 
+12. `capital-head-feature-mediation.toml` — connects 10 and 11: patch layer 9
+    head 23 from the clean run while the country feature entering block 10
+    is held at its corrupted value. The head patch alone recovers 8.46; with
+    the feature held, 3.58. The head writes the feature, and 58% of its
+    effect passes through it. Needs the same SAE and `capital-clean.toml`.
+
 ## Commands
 
 ```bash
