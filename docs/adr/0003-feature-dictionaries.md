@@ -1,7 +1,8 @@
 # ADR-0003: Feature dictionaries
 
-- **Status:** Proposed on 2026-10-22. The owner accepts it by merging the
-  pull request that implements it.
+- **Status:** Accepted on 2026-10-22, when the owner merged the pull
+  request that implements it (voidwest/ember#26, merge commit `600163e`).
+  It was proposed on the same day.
 - **Date:** 2026-10-22
 - **Scope:** `ember.experiment.v1` (a `[[dictionaries]]` section and a
   `features` field on captures and interventions), two new artifact schemas
