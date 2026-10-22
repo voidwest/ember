@@ -25,6 +25,11 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
   Sweeps without `features` write the same files and `sweep_hash` as
   before. `examples/experiments/capital-feature-sweep.toml` sweeps eight
   country features across eight capital prompts.
+- Examples: `capital-head-feature-mediation.toml` patches layer 9 head 23
+  with the clean prompt's country feature held at its corrupted value. The
+  head writes the feature (77% of its clean value on average), and 58% of
+  the head's 8.46-logit effect passes through it
+  (`docs/experiments.md#feature-dictionaries`).
 - Feature dictionaries: `scripts/convert_linear_sae.py` converts a ReLU SAE
   saved as a PyTorch state dict (`torch.nn.Linear` layout) to a SAELens
   folder. It reads the `.pt` without running its pickle and refuses every
