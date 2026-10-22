@@ -484,7 +484,11 @@ impl Console {
                     // can scroll it; a no-op outside `test-support`.
                     .test_support()
                     .flex_1()
-                    .min_w(px(0.0))
+                    .min_w(px(if self.spec_open {
+                        super::workspace::SPEC_RESULTS_MIN_WIDTH
+                    } else {
+                        0.0
+                    }))
                     .h_full()
                     // Vertical scroll only: a wide page must not push the
                     // inspector off the window (see the width tests).
@@ -2861,6 +2865,7 @@ const SIDEBAR_MIN_WINDOW: f32 = 1240.0;
 
 impl Render for Console {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_spec_view(cx);
         // Narrow windows give up the sidebar so the two workspace panes keep
         // the room they need. The stored flag is untouched: widening the
         // window brings it back exactly as the user left it.

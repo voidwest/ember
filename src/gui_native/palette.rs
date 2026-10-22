@@ -47,6 +47,7 @@ pub(super) enum Command {
     ShowTokens,
     ShowTrace,
     KeyboardShortcuts,
+    ToggleSpec,
     ToggleSidebar,
     ToggleTheme,
     TogglePresentation,
@@ -56,7 +57,7 @@ impl Command {
     /// Catalog order: creation first, then navigation, then view toggles,
     /// then the experiment flow -- the order a new user discovers in and a
     /// regular user stops reading.
-    pub(super) const ALL: [Command; 20] = [
+    pub(super) const ALL: [Command; 21] = [
         Command::NewExperiment,
         Command::LoadModel,
         Command::RunExperiment,
@@ -74,6 +75,7 @@ impl Command {
         Command::ShowTokens,
         Command::ShowTrace,
         Command::KeyboardShortcuts,
+        Command::ToggleSpec,
         Command::ToggleSidebar,
         Command::ToggleTheme,
         Command::TogglePresentation,
@@ -98,6 +100,7 @@ impl Command {
             Command::ShowTokens => "Show Tokens",
             Command::ShowTrace => "Show Raw trace",
             Command::KeyboardShortcuts => "Keyboard shortcuts",
+            Command::ToggleSpec => "Toggle spec view (TOML)",
             Command::ToggleSidebar => "Toggle sidebar",
             Command::ToggleTheme => "Toggle theme",
             Command::TogglePresentation => "Presentation mode",
@@ -124,6 +127,7 @@ impl Command {
             Command::ShowTokens => "Result tab: token-by-token comparison",
             Command::ShowTrace => "Result tab: the raw event trace",
             Command::KeyboardShortcuts => "Every key the console answers to",
+            Command::ToggleSpec => "Read and edit the experiment as ember.experiment.v1 TOML",
             Command::ToggleSidebar => "Show or hide the navigation sidebar",
             Command::ToggleTheme => "Cycle system, dark, light",
             Command::TogglePresentation => "Larger text, sidebar hidden",

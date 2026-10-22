@@ -371,3 +371,21 @@ fn a_mark_is_split_across_the_lines_it_covers() {
         vec![("ab", None), ("", None), ("cd", None)]
     );
 }
+
+#[test]
+fn a_spec_without_a_source_gives_the_default_source() {
+    let mut zeroed = form();
+    zeroed.op = "replace".to_string();
+    zeroed.source = "zero".to_string();
+    // The spec of a `zero` operation has no source.
+    let mut target = form();
+    target.op = "zero".to_string();
+    let text = target.spec_text().expect("spec");
+    let edited = zeroed
+        .with_spec(&text)
+        .expect("the form holds a zero operation");
+    assert_eq!(
+        (edited.op.as_str(), edited.source.as_str()),
+        ("zero", "capture")
+    );
+}

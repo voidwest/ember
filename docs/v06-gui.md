@@ -510,6 +510,34 @@ without `#`, puts that run first; other queries match the whole prompt, then
 the change and the model. Type `>` to switch it to the command list.
 Settings › Keyboard lists the same keys.
 
+### Spec view (TOML)
+
+**TOML** at the top of the setup pane (or the palette's **Toggle spec view
+(TOML)**) shows the experiment as the `ember.experiment.v1` intervention
+spec that Run executes. Run also executes a baseline spec without the
+intervention, and compares the two. The view takes the place of the form
+sections, and the pane becomes wider. **Form** goes back to the form.
+
+- The view follows the form. A change from the examples, the palette or
+  the keys (a rerun, for example) shows in the view at once.
+- An edit in the view changes the form when the form can hold it: the model
+  path, the prompt, the token limit, the execution mode, the site, the
+  layer, the operation and its value, the source and its layer, and the
+  target tokens.
+- The view keeps any other edit, and a line under it gives the reason. For
+  example, a second input, another token selector or a changed `seed` is
+  not a form setting. The form keeps its values, and the view does not
+  follow the form until **Revert**.
+- The view shows `runs/gui/intervention` as the output directory. A run
+  from the console writes to its own directory, as before.
+- **Copy** copies the text in the view. Save it to a file to run it with
+  `ember experiment run` or to make it a sweep. That run writes only the
+  intervention bundle, without the console's baseline.
+
+The console compares the edited spec with the spec that the new form
+generates, once both are resolved. Only the name, the description and the
+recorded defaults may differ, because the console sets them.
+
 ### What changed from the wizard
 
 The contextual inspector is gone (it restated the setup). Its advanced controls
