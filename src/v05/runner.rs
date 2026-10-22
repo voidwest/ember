@@ -69,6 +69,8 @@ pub struct InterventionTarget {
     pub generated_steps: Vec<usize>,
     /// Selected heads at `attention-heads` (`None`: every column).
     pub heads: Option<Vec<usize>>,
+    /// The dictionary features the operation acts on (ADR-0003).
+    pub features: Option<crate::v05::dictionary::FeatureSelection>,
 }
 
 /// The values of `row` in the columns of `heads` (each `head_dim` wide), in
@@ -234,6 +236,8 @@ pub struct V05Experiment {
     /// Resolved directions of `vector-file`/`contrastive` sources, keyed by
     /// (intervention id, layer); head sites use layer 0.
     directions: HashMap<(String, usize), Vec<f32>>,
+    /// Dictionaries the driver loaded before execution, by id (ADR-0003).
+    dictionaries: HashMap<String, std::sync::Arc<crate::v05::dictionary::Dictionary>>,
     // runtime state
     prompt_len: usize,
     tokenizations: HashMap<TextNormalization, TokenizationInfo>,
@@ -273,6 +277,7 @@ impl V05Experiment {
             interventions: Vec::new(),
             bundle_sources: Vec::new(),
             directions: HashMap::new(),
+            dictionaries: HashMap::new(),
             prompt_len: 0,
             tokenizations: HashMap::new(),
             result: None,
@@ -327,6 +332,15 @@ impl V05Experiment {
     pub fn inject_direction(&mut self, intervention_id: &str, layer: usize, values: Vec<f32>) {
         self.directions
             .insert((intervention_id.to_string(), layer), values);
+    }
+
+    /// Inject a dictionary the driver loaded before execution.
+    pub fn inject_dictionary(
+        &mut self,
+        dictionary: std::sync::Arc<crate::v05::dictionary::Dictionary>,
+    ) {
+        self.dictionaries
+            .insert(dictionary.record.id.clone(), dictionary);
     }
 
     /// Inject the tokenization computed by the CLI driver.
@@ -419,6 +433,7 @@ impl V05Experiment {
                 static_record,
                 generated_steps,
                 heads: intervention.heads.clone(),
+                features: intervention.features.clone(),
             });
         }
 
@@ -667,8 +682,65 @@ impl V05Experiment {
                 if positions.is_empty() {
                     continue;
                 }
-                // The width the operation sees: the row, or its selected heads.
-                let width = target_width(target.heads.as_deref(), columns, head_dim)?;
+                // A feature target: the operation sees the selected features
+                // of a dictionary read at this site, not the row.
+                let feature_view = match &target.features {
+                    None => None,
+                    Some(selection) => {
+                        let dictionary =
+                            self.dictionaries
+                                .get(&selection.dictionary)
+                                .ok_or_else(|| {
+                                    ExperimentError::new(format!(
+                                        "intervention '{}': dictionary '{}' was not loaded before \
+                                     execution",
+                                        target.intervention_id, selection.dictionary
+                                    ))
+                                })?;
+                        if dictionary.d_in() != columns {
+                            return Err(ExperimentError::new(format!(
+                                "intervention '{}': dictionary '{}' reads {} columns; site \
+                                 {site} has {columns}",
+                                target.intervention_id,
+                                selection.dictionary,
+                                dictionary.d_in()
+                            )));
+                        }
+                        dictionary.check_ids(&selection.ids).map_err(|error| {
+                            ExperimentError::new(format!(
+                                "intervention '{}': {error}",
+                                target.intervention_id
+                            ))
+                        })?;
+                        Some((std::sync::Arc::clone(dictionary), selection.ids.as_slice()))
+                    }
+                };
+                // A capture source holds raw site rows; a feature target
+                // encodes them with its dictionary.
+                let fit_source =
+                    |rows: &[f32], source_columns: usize, width: usize| match &feature_view {
+                        Some((dictionary, ids)) => {
+                            (source_columns == columns && columns > 0).then(|| {
+                                rows.chunks_exact(columns)
+                                    .flat_map(|row| dictionary.encode_selected(row, ids))
+                                    .collect()
+                            })
+                        }
+                        None => source_for_width(
+                            rows,
+                            source_columns,
+                            columns,
+                            width,
+                            target.heads.as_deref(),
+                            head_dim,
+                        ),
+                    };
+                // The width the operation sees: the row, its selected heads,
+                // or its selected features.
+                let width = match &feature_view {
+                    Some((_, ids)) => ids.len(),
+                    None => target_width(target.heads.as_deref(), columns, head_dim)?,
+                };
                 let source_rows: Option<Vec<f32>> = match &target.source {
                     None => None,
                     Some(InterventionSource::Zero) => Some(vec![0.0; width]),
@@ -711,23 +783,13 @@ impl V05Experiment {
                             );
                         }
                         let (rows, source_columns) = &current_sources[capture_id];
-                        Some(
-                            source_for_width(
-                                rows,
-                                *source_columns,
-                                columns,
-                                width,
-                                target.heads.as_deref(),
-                                head_dim,
-                            )
-                            .ok_or_else(|| {
-                                ExperimentError::new(format!(
-                                    "intervention '{}': source capture '{capture_id}' has \
+                        Some(fit_source(rows, *source_columns, width).ok_or_else(|| {
+                            ExperimentError::new(format!(
+                                "intervention '{}': source capture '{capture_id}' has \
                                      {source_columns} columns; the target has {width}",
-                                    target.intervention_id
-                                ))
-                            })?,
-                        )
+                                target.intervention_id
+                            ))
+                        })?)
                     }
                     Some(InterventionSource::CaptureFromBundle { .. }) => {
                         let bundle = self
@@ -742,15 +804,7 @@ impl V05Experiment {
                                 ))
                             })?;
                         Some(
-                            source_for_width(
-                                &bundle.rows,
-                                bundle.columns,
-                                columns,
-                                width,
-                                target.heads.as_deref(),
-                                head_dim,
-                            )
-                            .ok_or_else(|| {
+                            fit_source(&bundle.rows, bundle.columns, width).ok_or_else(|| {
                                 ExperimentError::new(format!(
                                     "intervention '{}': cross-bundle source has {} columns; the \
                                      target has {width}",
@@ -817,8 +871,16 @@ impl V05Experiment {
                         .snapshots
                         .get(&(site, layer, position))
                         .map(|snapshot| gather_heads(snapshot, target.heads.as_deref(), head_dim));
-                    match target.heads.as_deref() {
-                        None => apply_operation(
+                    match (&feature_view, target.heads.as_deref()) {
+                        (Some((dictionary, ids)), _) => {
+                            let before = dictionary.encode_selected(row, ids);
+                            let mut view = before.clone();
+                            apply_operation(
+                                target, &mut view, source_row, None, site, layer, position,
+                            )?;
+                            dictionary.add_decoded(row, ids, &before, &view);
+                        }
+                        (None, None) => apply_operation(
                             target,
                             row,
                             source_row,
@@ -827,7 +889,7 @@ impl V05Experiment {
                             layer,
                             position,
                         )?,
-                        Some(heads) => {
+                        (None, Some(heads)) => {
                             let mut view = gather_heads(row, Some(heads), head_dim);
                             apply_operation(
                                 target,

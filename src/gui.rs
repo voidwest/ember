@@ -834,6 +834,7 @@ fn raw_spec(
         sweep: None,
         attribution: None,
         probe: None,
+        dictionaries: None,
     }
 }
 
@@ -1337,6 +1338,7 @@ fn build_and_resolve_spec(
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
         heads: None,
+        features: None,
     };
     // One selected activation row per layer gives the native workbench a
     // scientifically meaningful residual-stream trace without retaining a
@@ -1351,6 +1353,7 @@ fn build_and_resolve_spec(
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
         heads: None,
+        features: None,
     };
 
     let operation = match cfg.operation {
@@ -1379,6 +1382,7 @@ fn build_and_resolve_spec(
         shape_policy: ShapePolicy::Strict,
         compatibility: CompatibilityPolicy::default(),
         heads: None,
+        features: None,
     };
     let restore = InterventionSpec {
         id: "restore-1".to_string(),
@@ -1391,6 +1395,7 @@ fn build_and_resolve_spec(
         shape_policy: ShapePolicy::Strict,
         compatibility: CompatibilityPolicy::default(),
         heads: None,
+        features: None,
     };
 
     let (name, captures, interventions) = match kind {

@@ -162,6 +162,25 @@ that layer (global head sites use layer zero). Cross-layer and cross-site
 transfer require a separately specified future interface; this schema rejects
 those mismatches.
 
+**2026-10-22 amendment: feature dictionaries.** A spec may declare
+`[[dictionaries]]` (sparse autoencoders in the SAELens format, each pinned by
+the SHA-256 of its weights and of its `cfg.json` and bound to one
+`embed`-wide per-layer site and one layer), and a capture or an intervention at that site and layer may name
+`features` (`docs/adr/0003-feature-dictionaries.md`). The operation set does
+not change: with `features`, an operation acts on the selected feature
+activations, and the target row changes by the decoded difference only,
+`x' = x + (f' - f)_S · W_dec[S]`, so the reconstruction error stays in the
+row and an edit that changes nothing is bit-identical. A source for a feature
+target is either feature values (`inline-vector`) or raw site rows (capture
+sources), which are encoded with the same dictionary; this is the second
+exception to the column rule above. `steer`, `ablate-projection` and
+`restore-original` refuse `features`. A feature capture stores its raw rows
+as before and adds `artifacts/features/<id>.json` (`ember.features.v1`); each
+bundle records its dictionaries in `artifacts/dictionaries/<id>.json`
+(`ember.dictionary.v1`), not their weights. A spec without these fields
+resolves, plans and bundles exactly as before; a binary without them fails
+closed on a spec or bundle that names them (unknown field).
+
 ## 4. Layer numbering
 
 Layers are numbered `0..n_layers - 1` in model order, matching the v0.4
@@ -303,7 +322,8 @@ token-position conventions, site semantics (sections 1-6), capture plan
 fields, intervention operation set (`replace`, `zero`, `scale`,
 `interpolate`, `add-delta`, `restore-original`, and the direction
 operations `steer` and `ablate-projection`, whose source is a direction:
-see `docs/interventions.md`), bundle layout, bundle
+see `docs/interventions.md`; with `features`, each acts in a dictionary's
+feature space, section 3), bundle layout, bundle
 schema version, semantic manifest fields, semantic hash definition.
 
 Diagnostic (may evolve within 0.5.x): kernel names, dispatch details,

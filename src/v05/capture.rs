@@ -177,6 +177,10 @@ pub struct CaptureSpec {
     /// order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heads: Option<Vec<usize>>,
+    /// Also record the strongest features of every stored row under a
+    /// dictionary (ADR-0003), as `artifacts/features/<id>.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<crate::v05::dictionary::FeatureCapture>,
 }
 
 /// Check a `heads` selector without model metadata: only at

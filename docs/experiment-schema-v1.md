@@ -47,6 +47,7 @@ layers = "all"                      # optional: all|[list]|{start,end,step} (end
 storage = "selected-rows"           # optional: selected-rows|full-tensor|summary-only
 dtype = "f32"                       # optional: f32|f16
 # heads = [0, 3]                    # attention-heads only: ascending heads to store
+# features = { dictionary = "l9", top_k = 32 }  # also record each row's strongest features
 
 [captures.tokens]                   # required
 kind = "prompt-final"               # see token selectors
@@ -58,6 +59,7 @@ layers = [0]                        # optional
 operation = { kind = "zero" }       # required; see operations
 # source = { kind = "zero" }        # required by replace/interpolate/add-delta/steer/ablate-projection
 # heads = [1]                       # attention-heads only: ascending heads to change
+# features = { dictionary = "l9", ids = [12, 40] }  # act on these features, not the row
 [interventions.tokens]              # required
 kind = "prompt-final"
 
@@ -106,6 +108,34 @@ An optional `[probe]` table (`site`, `layer`, `target`, and `train` or
 training needs both labels, `ridge_lambda > 0`, at least one of `ablate` and
 `steer_alphas`, the behavioural inputs must not be probe examples, the site
 is per-layer, and the spec declares no interventions and no `[attribution]`.
+
+## Feature dictionaries
+
+Optional `[[dictionaries]]` entries (ADR-0003) name sparse autoencoders in
+the SAELens format, which captures and interventions then use by id:
+
+```toml
+[[dictionaries]]
+id = "l9"                           # required; path-safe, unique
+path = "dictionaries/l9"            # required; folder with cfg.json and sae_weights.safetensors
+sha256 = "<64 hex>"                 # required; SHA-256 of sae_weights.safetensors
+config_sha256 = "<64 hex>"          # required; SHA-256 of cfg.json
+site = "residual-post-mlp"          # required; residual-pre-attention|attention-output|mlp-output|residual-post-mlp
+layer = 9                           # required; the one layer it was trained at
+```
+
+Version 1 reads the `standard` and `jumprelu` architectures with a ReLU
+activation, `normalize_activations = "none"`, F32 or F16 tensors, and an
+explicit `apply_b_dec_to_input`; it refuses TopK, `finetuning_scaling_factor`
+and `hook_head_index`. A capture or an intervention with `features` must
+be at the dictionary's site and set `layers = [<its layer>]`, and cannot
+also select `heads`. A feature capture needs `dtype = "f32"` and stored rows
+(not `summary-only`), and `1 <= top_k <= 4096`. Feature `ids` are ascending
+without repeats; `steer`, `ablate-projection` and `restore-original` do not
+take `features`. When the run starts, the two files must match `sha256` and `config_sha256`,
+`d_in` must equal the model's width, the layer must exist, and every feature
+id must be below `d_sae`. See `docs/interventions.md#features` and
+`docs/experiments.md#feature-dictionaries`.
 
 ## Operations and sources
 
@@ -206,6 +236,9 @@ inputs = ["i1", "i2"]   # explicit list
 - `generated-step` selectors require `generation.max_new_tokens > 0`;
 - `heads` outside `attention-heads`, an empty or unordered `heads` list,
   or a head beyond the model fails;
+- `features` naming no `[[dictionaries]]` entry, at another site or layer
+  than the dictionary's, with `heads`, with unordered ids, or (for a capture)
+  with f16 or summary-only storage fails;
 - cross-bundle sources reference a capture that exists in the current
   spec only for `capture-from-current-run`; bundle sources are validated
   against the source bundle at run time.

@@ -61,6 +61,7 @@ pub(crate) fn capture(
         storage,
         dtype: CaptureDType::F32,
         heads: None,
+        features: None,
     }
 }
 
@@ -343,6 +344,7 @@ pub(crate) fn attribution_report(
             shape_policy: ShapePolicy::Strict,
             compatibility: CompatibilityPolicy::default(),
             heads: None,
+            features: None,
         }];
         let patched = run_derived(prepared, &patch)?;
         let metric = logit_difference(&patched[0], LOGITS, target.token_id, foil.token_id)?;

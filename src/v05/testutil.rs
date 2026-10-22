@@ -250,6 +250,7 @@ directory = "out"
             storage: CaptureStorage::SelectedRows,
             dtype: crate::v05::capture::CaptureDType::F32,
             heads: None,
+            features: None,
         }],
         interventions: Vec::new(),
         generated: ManifestGenerated {

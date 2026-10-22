@@ -210,6 +210,7 @@ fn probe_report(
         shape_policy: ShapePolicy::Strict,
         compatibility: CompatibilityPolicy::default(),
         heads: None,
+        features: None,
     };
     let token = target.token_id as usize;
     let baseline = behaviour(None)?;
