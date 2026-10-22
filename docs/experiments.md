@@ -216,6 +216,7 @@ an ordinary spec (see `examples/experiments/morphology-layer-sweep.toml`):
 layers = "all"                # or [2, 4, 8], or { start = 0, end = 16, step = 2 }
 positions = [3, 7]            # optional: absolute token positions
 heads = "all"                 # optional: one attention head per point (attention-heads only)
+# features = { dictionary = "l10", ids = [3756, 8633] }  # optional: one feature per point; not with layers, heads or positions
 alphas = [0.0, 2.0, 4.0]      # optional: sets `alpha` of the swept interventions
 interventions = ["replace"]   # optional: which interventions move (default: all)
 ```
@@ -246,6 +247,27 @@ only would patch every head from those heads, so a head sweep refuses it
 before it runs. A layers x heads grid makes one
 bundle per point, so a sweep of 2 layers of a 32-head model writes 65
 bundles.
+
+`features = { dictionary, ids }` sweeps the features of a dictionary (see
+[feature dictionaries](#feature-dictionaries)): each point gives the swept
+interventions `features = { dictionary, ids = [F] }`, so each acts on one
+feature. `ids` is a list or a `{ start, end, step }` range; there is no
+`"all"`, because a dictionary can hold tens of thousands of features and a
+sweep writes one bundle per point. A dictionary is trained at one site and
+layer, so the swept interventions must be at that site with `layers =
+[<its layer>]`, must not declare `features` themselves, and the sweep cannot
+also move layers, heads or positions; it can cross with `alphas`. The swept
+interventions must use `zero`, `scale`, `replace`, `add-delta` or
+`interpolate`, as for any feature intervention. A sweep sets at most 65,536
+features, and the run checks every id against the dictionary's width before
+the first point runs. Point ids are `feature-03756`. `sweep.json` records
+`features` (the dictionary and the ids) and each point's `feature`, and
+`sweep.csv` and `sweep-effect.csv` gain a `feature` column for feature
+sweeps only. See
+`examples/experiments/capital-feature-sweep.toml`: eight country features
+across eight capital prompts. Each feature has its largest effect on its own
+country's prompt. Of the 56 other entries, 50 are exactly 0; the example
+header explains the six that are not.
 
 Each *point* is the spec with the swept interventions at `layers = [L]`
 (and, with `positions`, `tokens = { kind = "absolute-token", index = P }`);
