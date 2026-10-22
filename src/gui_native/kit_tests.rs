@@ -1151,3 +1151,86 @@ async fn a_full_history_builds_only_the_rows_on_screen(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+/// The code-editor keys: Cmd+Shift+P and Cmd+P open the two palette lists,
+/// `>` turns Go to run into commands, Enter opens a run and hands the
+/// keyboard back, Ctrl+Tab steps through the result tabs, Cmd+, is Settings.
+#[gpui_kit::test]
+async fn editor_keys_drive_the_palette_go_to_run_and_the_result_tabs(cx: &mut TestAppContext) {
+    let cmd = |key: &str| {
+        if cfg!(target_os = "macos") {
+            format!("cmd-{key}")
+        } else {
+            format!("ctrl-{key}")
+        }
+    };
+    let (handle, console) = console_window(cx).await;
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            // Seeded: only the newest run (#7) kept a result and a config.
+            console.store = super::seed_store();
+            console.goto(View::Home, cx);
+            console.focus_handle.focus(window, cx);
+        });
+        window.draw(cx).clear(cx);
+
+        window.press(&cmd("shift-p"), cx);
+        assert!(console.read(cx).palette_open);
+        assert!(!console.read(cx).palette_lists_runs());
+        // The other list's key switches the open palette over...
+        window.press(&cmd("p"), cx);
+        assert!(console.read(cx).palette_open);
+        assert!(console.read(cx).palette_lists_runs());
+        assert_eq!(console.read(cx).run_candidates(), [7]);
+        window.draw(cx).clear(cx);
+        assert!(window
+            .try_find(SharedString::from("palette-run:7"))
+            .is_some());
+        assert!(
+            window
+                .try_find(SharedString::from("palette-run:6"))
+                .is_none(),
+            "a run that Open cannot reopen is not offered"
+        );
+        // ...and its own key closes it.
+        window.press(&cmd("p"), cx);
+        assert!(!console.read(cx).palette_open);
+
+        window.press(&cmd("p"), cx);
+        window.input(">tsb", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!console.read(cx).palette_lists_runs(), "> lists commands");
+        assert_eq!(
+            console.read(cx).palette_candidates().first(),
+            Some(&super::palette::Command::ToggleSidebar)
+        );
+        window.press("escape", cx);
+        assert!(!console.read(cx).palette_open);
+        window.press(&cmd("p"), cx);
+        window.press("enter", cx);
+        {
+            let console = console.read(cx);
+            assert!(!console.palette_open);
+            assert_eq!(console.saved_run, Some(7));
+            assert_eq!(console.view, View::Experiment);
+            assert_eq!(console.result_view, super::ResultView::Overview);
+        }
+
+        // No click needed: the keyboard came back with the palette closed.
+        window.press("ctrl-tab", cx);
+        assert_eq!(console.read(cx).result_view, super::ResultView::Layers);
+        window.press("ctrl-shift-tab", cx);
+        window.press("ctrl-shift-tab", cx);
+        assert_eq!(
+            console.read(cx).result_view,
+            super::ResultView::Trace,
+            "it wraps round"
+        );
+
+        window.press(&cmd(","), cx);
+        assert_eq!(console.read(cx).view, View::Settings);
+    })
+    .unwrap();
+}

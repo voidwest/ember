@@ -7,43 +7,95 @@ use gpui_kit::component::TitleBar;
 // -- shell: top bar, navigation, palette, inspector, status bar -----------
 impl Console {
     /// The palette as an overlay surface: dim backdrop, one floating panel,
-    /// the query field, the candidates, the keys. Escape and Cmd+K dismiss
-    /// it; nothing else on the page responds while it is open.
+    /// the query field, the candidates, the keys. Escape and the key that
+    /// opened it dismiss it; nothing else on the page responds while it is
+    /// open. Go to run lists saved runs in the same panel.
     fn palette_overlay(&self, colors: &Colors, cx: &mut Context<Self>) -> Stateful<Div> {
-        let candidates = self.palette_candidates();
-        let selected = self.palette_index.min(candidates.len().saturating_sub(1));
-        let rows = candidates
+        let lists_runs = self.palette_lists_runs();
+        let row = |id: String, title: String, hint: String, shortcut: Option<Kbd>, index: usize| {
+            Button::new(SharedString::from(id))
+                .ghost()
+                .w_full()
+                .h(px(32.0))
+                .justify_start()
+                .rounded(px(Radius::SM))
+                .accessibility_label(format!("{title}, {hint}"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(Space::MD))
+                        .w_full()
+                        .px_2()
+                        .overflow_hidden()
+                        .child(label(title, Type::LABEL, colors.text))
+                        .child(div().w_full())
+                        .child(label(hint, Type::MICRO, colors.text_faint))
+                        .children(shortcut),
+                )
+                .on_click(cx.listener(move |console, _: &ClickEvent, window, cx| {
+                    console.palette_index = index;
+                    console.palette_execute(cx);
+                    if !console.palette_open {
+                        console.focus_handle.focus(window, cx);
+                    }
+                }))
+        };
+        let rows = if lists_runs {
+            self.run_candidates()
+                .into_iter()
+                .filter_map(|number| self.store.runs.iter().find(|run| run.number == number))
+                .enumerate()
+                .map(|(index, run)| {
+                    row(
+                        format!("palette-run:{}", run.number),
+                        run_palette_label(run),
+                        format!("{}  \u{00b7}  {}", run.intervention, run.model),
+                        None,
+                        index,
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            self.palette_candidates()
+                .into_iter()
+                .enumerate()
+                .map(|(index, command)| {
+                    row(
+                        format!("palette-cmd:{:?}", command),
+                        command.label().to_string(),
+                        command.hint().to_string(),
+                        palette_shortcut(command),
+                        index,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let selected = self.palette_index.min(rows.len().saturating_sub(1));
+        let empty = rows.is_empty().then(|| {
+            let note = if !lists_runs {
+                "No command matches."
+            } else if self.palette_query.trim().is_empty() {
+                "No saved run with a result yet."
+            } else {
+                "No saved run matches."
+            };
+            div()
+                .px_2()
+                .py_2()
+                .child(label(note, Type::LABEL, colors.text_faint))
+        });
+        let rows = rows
             .into_iter()
             .enumerate()
-            .map(|(index, command)| {
-                Button::new(SharedString::from(format!("palette-cmd:{:?}", command)))
-                    .ghost()
-                    .w_full()
-                    .h(px(32.0))
-                    .justify_start()
-                    .rounded(px(Radius::SM))
-                    .selected(index == selected)
-                    .accessibility_label(format!("{}, {}", command.label(), command.hint()))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(Space::MD))
-                            .w_full()
-                            .px_2()
-                            .overflow_hidden()
-                            .child(label(command.label(), Type::LABEL, colors.text))
-                            .child(div().w_full())
-                            .child(label(command.hint(), Type::MICRO, colors.text_faint))
-                            .children(palette_shortcut(command)),
-                    )
-                    .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
-                        console.palette_index = index;
-                        console.palette_execute(cx);
-                    }))
-            })
+            .map(|(index, row)| row.selected(index == selected))
             .collect::<Vec<_>>();
+        let legend = if lists_runs {
+            "up down navigate \u{00b7} enter open \u{00b7} > commands \u{00b7} esc close"
+        } else {
+            "up down navigate \u{00b7} enter run \u{00b7} esc close \u{00b7} cmd-p go to run"
+        };
 
         div()
             .id("palette-backdrop")
@@ -56,8 +108,9 @@ impl Console {
             .pt(px(96.0))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|console, _: &MouseDownEvent, _, cx| {
+                cx.listener(|console, _: &MouseDownEvent, window, cx| {
                     console.palette_open = false;
+                    console.focus_handle.focus(window, cx);
                     cx.notify();
                 }),
             )
@@ -75,6 +128,15 @@ impl Console {
                     .p(px(Space::SM))
                     // Clicks inside the panel are not backdrop clicks.
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    // Go to run keeps its name visible once the placeholder
+                    // gives way to the query.
+                    .when(lists_runs, |panel| {
+                        panel.child(div().px_2().pt_1().child(label(
+                            "Go to run",
+                            Type::LABEL,
+                            colors.text_muted,
+                        )))
+                    })
                     // The query field and the key legend stay put; only the
                     // candidate list scrolls.
                     .child(div().px_2().pt_1().pb_2().child(text_input(
@@ -93,13 +155,15 @@ impl Console {
                             .overflow_y_scroll()
                             .flex()
                             .flex_col()
-                            .children(rows),
+                            .children(rows)
+                            .children(empty),
                     )
-                    .child(div().px_2().py_2().child(mono(
-                        "up down navigate \u{00b7} enter run \u{00b7} esc close \u{00b7} cmd-k palette",
-                        Type::MICRO,
-                        colors.text_faint,
-                    ))),
+                    .child(
+                        div()
+                            .px_2()
+                            .py_2()
+                            .child(mono(legend, Type::MICRO, colors.text_faint)),
+                    ),
             )
     }
 
@@ -1909,11 +1973,7 @@ impl Console {
 
     /// Result sub-views: Overview, Layers, Tokens, Trace.
     fn result_tabs(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        // The Sweep tab exists only once a sweep has finished.
-        let mut views: Vec<ResultView> = ResultView::ALL.to_vec();
-        if self.sweep.as_ref().is_some_and(|sweep| sweep.finished) {
-            views.push(ResultView::Sweep);
-        }
+        let views = self.result_views();
         let count = views.len();
         let tabs: Vec<(&'static str, &'static str, String)> = views
             .iter()
@@ -2775,16 +2835,25 @@ fn shortcut_rows() -> Vec<(String, &'static str)> {
         "Ctrl"
     };
     vec![
-        (format!("{cmd}+K"), "Command palette"),
+        (
+            format!("{cmd}+K  or  {cmd}+Shift+P"),
+            "Command palette (fuzzy: \"tsb\" finds Toggle sidebar)",
+        ),
+        (format!("{cmd}+P"), "Go to a saved run; type > for commands"),
         (format!("{cmd}+Enter"), "Continue, or run the experiment"),
         (format!("{cmd}+N"), "New experiment"),
         (format!("{cmd}+R"), "Rerun the last run"),
-        (format!("{cmd}+1 / 2 / 3"), "Prompt / Intervention / Review"),
         (
             format!("{cmd}+1 - 4 on Review"),
             "Overview / Layers / Tokens / Raw trace",
         ),
+        (
+            "Ctrl+Tab  /  Ctrl+Shift+Tab".to_string(),
+            "Next / previous result tab",
+        ),
         (format!("{cmd}+B"), "Show or hide the sidebar"),
+        (format!("{cmd}+,"), "Settings"),
+        ("Esc".to_string(), "Cancel the run, or close the palette"),
     ]
 }
 
@@ -2873,11 +2942,20 @@ fn short_id(hash: &str) -> String {
 /// the same spelling the keybindings use, so the hint cannot drift from the
 /// binding it advertises.
 fn palette_shortcut(command: Command) -> Option<Kbd> {
+    // `secondary` is Cmd on macOS and Ctrl elsewhere, the key the handler
+    // answers to; `cmd` would read "Win" on Linux.
     let stroke = match command {
-        Command::NewExperiment => "cmd-n",
-        Command::RerunExperiment => "cmd-r",
-        Command::RunExperiment => "cmd-enter",
-        Command::ToggleSidebar => "cmd-b",
+        Command::NewExperiment => "secondary-n",
+        Command::RerunExperiment => "secondary-r",
+        Command::RunExperiment => "secondary-enter",
+        Command::CancelRun => "escape",
+        Command::GoSettings => "secondary-,",
+        Command::GoToRun => "secondary-p",
+        Command::ShowOverview => "secondary-1",
+        Command::ShowLayers => "secondary-2",
+        Command::ShowTokens => "secondary-3",
+        Command::ShowTrace => "secondary-4",
+        Command::ToggleSidebar => "secondary-b",
         _ => return None,
     };
     Some(Kbd::new(Keystroke::parse(stroke).ok()?))
