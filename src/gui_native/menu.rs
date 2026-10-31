@@ -87,7 +87,7 @@ pub(super) fn register_menu_actions(
     // The palette needs the window to focus its field. A menu action runs
     // while that window is already being updated, and a nested update is
     // refused, so the work is deferred to just after the dispatch.
-    let palette_console = console.clone();
+    let palette_console = console;
     cx.on_action(move |_: &OpenPalette, cx: &mut App| {
         let console = palette_console.clone();
         cx.defer(move |cx| {

@@ -117,7 +117,10 @@ fn f16_at(block: &[u8], offset: usize) -> f32 {
 /// columns exist in `data`.
 #[inline]
 #[target_feature(enable = "neon,dotprod")]
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "the index is also used in arithmetic or to index several arrays"
+)]
 pub(super) unsafe fn q4_tile<const C: usize>(
     data: &[u8],
     blocks: usize,
@@ -207,7 +210,10 @@ pub(super) unsafe fn q4_tile<const C: usize>(
 /// As [`q4_tile`].
 #[inline]
 #[target_feature(enable = "neon,dotprod")]
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "the index is also used in arithmetic or to index several arrays"
+)]
 pub(super) unsafe fn q6_tile<const C: usize>(
     data: &[u8],
     blocks: usize,

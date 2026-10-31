@@ -34,7 +34,10 @@ use crate::tensor::CpuTensor;
 /// single-token evaluation takes the fused decode routes in a full forward,
 /// so resuming it through the generic route could change its numerics.
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+)]
 pub fn forward_last_logits_resumed_with_experiment(
     model: &Llama<CpuBackend>,
     backend: &CpuBackend,

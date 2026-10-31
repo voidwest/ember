@@ -373,7 +373,7 @@ fn converse_barge_in_during_generation_rolls_back_and_recovers() {
         // pressure on an in-flight decode.
         let mic = MicThread::start(&rings, Arc::new(AtomicBool::new(true)), 340.0);
         let interrupted = Arc::new(AtomicBool::new(false));
-        let stop_watcher = interrupted.clone();
+        let stop_watcher = interrupted;
         let events = run_conversation(
             &mut conv,
             &rings,

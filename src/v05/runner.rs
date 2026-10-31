@@ -259,7 +259,10 @@ pub struct PrefixObservations {
 }
 
 impl V05Experiment {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "application call path: each argument is a separate input"
+    )]
     pub fn new(
         spec: ExperimentSpecV1,
         input_index: usize,

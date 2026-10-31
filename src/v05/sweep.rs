@@ -205,7 +205,6 @@ impl SweepDefinition {
         let raw = RawExperimentSpec::from_toml_str(text)?;
         let sweep = raw
             .sweep
-            .clone()
             .ok_or_else(|| SpecError::at("sweep", "the specification has no [sweep] table"))?;
         let mut document: toml::Table =
             toml::from_str(text).map_err(|e| toml_error("<toml>", e))?;

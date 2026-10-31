@@ -167,7 +167,10 @@ fn contrastive_direction(
 /// Per-prompt, per-layer mean of the rows `tokens` selects at `site` (and
 /// `heads`, at `attention-heads`) and `layers`, from a capture-only prefill
 /// of each prompt (`label` names the caller in errors).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn prompt_means<'a>(
     prepared: &PreparedRun,
     resolved: &ExperimentSpecV1,

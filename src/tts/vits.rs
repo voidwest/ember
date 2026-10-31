@@ -713,7 +713,10 @@ fn softmax_rows(x: &mut [f32], rows: usize, cols: usize) {
 /// Depthwise dilated Conv1d over `[C, T]` (kernel 3, dilation `d`,
 /// symmetric pad `d`). Output `[C, T']` with T' = T + d (same-length when
 /// the reference pads by (k*d−d)//2 = d).
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "the index is also used in arithmetic or to index several arrays"
+)]
 fn depthwise_dilated(
     input: &[f32],
     c: usize,
@@ -818,7 +821,10 @@ fn conv_dense_dilated(input: &CpuTensor, c: &DenseConv1d, pad: usize, dil: usize
 }
 
 /// Flip along the channel axis of a `[C,T]` buffer (torch.flip(dim=1)).
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "the index is also used in arithmetic or to index several arrays"
+)]
 fn flip_channels(x: &[f32], c: usize, t: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; c * t];
     for ci in 0..c {
@@ -987,7 +993,10 @@ impl DdsConv {
 /// runs inference backwards through the duration-predictor flows).
 /// `inputs[x_len]`, parameter rows `[x_len, bins*3-1]` already divided by
 /// sqrt(filter_channels). Returns transformed values.
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "the index is also used in arithmetic or to index several arrays"
+)]
 fn spline_reverse(
     inputs: &[f32],
     widths_unnorm: &[Vec<f32>],
@@ -1394,7 +1403,10 @@ impl FlowLayer {
 
 impl ConvTranspose1d {
     /// Input `[C_in, T]` -> output `[C_out, (T-1)*stride - 2*padding + k]`.
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also used in arithmetic or to index several arrays"
+    )]
     fn forward(&self, input: &[f32], c_in: usize, t: usize) -> Vec<f32> {
         let k = self.w.shape()[2];
         let c_out = self.w.shape()[1];
@@ -1585,13 +1597,19 @@ impl HifiGan {
         let hc = &hidden;
         wave.par_chunks_mut(t_out).enumerate().for_each(|(o, ow)| {
             // every t_out = tl + 2*3 - 7 + 1 output index is a valid window
-            #[allow(clippy::needless_range_loop)]
+            #[allow(
+                clippy::needless_range_loop,
+                reason = "the index is also used in arithmetic or to index several arrays"
+            )]
             for ti in 0..t_out {
                 let mut acc = 0.0f64;
                 for ci in 0..c_last {
                     let wc = &w[(o * c_last + ci) * 7..(o * c_last + ci) * 7 + 7];
                     let base = ti; // pad=3
-                    #[allow(clippy::needless_range_loop)]
+                    #[allow(
+                        clippy::needless_range_loop,
+                        reason = "the index is also used in arithmetic or to index several arrays"
+                    )]
                     for kk in 0..7 {
                         let p = base + kk;
                         if p >= 3 && p < 3 + tl {
@@ -1608,7 +1626,10 @@ impl HifiGan {
                 let mut acc = 0.0f64;
                 for ci in 0..c_last {
                     let wc = &w[ci * 7..ci * 7 + 7];
-                    #[allow(clippy::needless_range_loop)]
+                    #[allow(
+                        clippy::needless_range_loop,
+                        reason = "the index is also used in arithmetic or to index several arrays"
+                    )]
                     for kk in 0..7 {
                         let p = ti + kk;
                         if p >= 3 && p < 3 + tl {
@@ -1810,7 +1831,7 @@ impl MmsVits {
         if trace {
             tr.ids = Some(ids);
             tr.embed_scaled = Some(emb);
-            tr.encoder_out = Some(x.clone());
+            tr.encoder_out = Some(x);
             tr.prior_means = Some(prior_means);
             tr.log_duration = Some(log_duration);
             tr.expanded_hidden = Some(expanded_hidden);

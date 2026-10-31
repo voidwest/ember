@@ -610,7 +610,10 @@ pub struct LlamaAttention<B: Backend> {
 }
 
 impl<B: Backend> LlamaAttention<B> {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per field of the record that it builds or compares"
+    )]
     pub fn new(
         q_proj: Linear<B>,
         k_proj: Linear<B>,
@@ -643,7 +646,10 @@ impl<B: Backend> LlamaAttention<B> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per field of the record that it builds or compares"
+    )]
     fn new_shared(
         q_proj: Linear<B>,
         k_proj: Linear<B>,
@@ -1042,7 +1048,10 @@ impl<B: Backend> LlamaAttention<B> {
     /// attention output into `out` and every intermediate into `scratch`,
     /// so a prefill reuses one set of buffers across all layers. `hooks`
     /// sees the per-head attention output before the output projection.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+    )]
     fn forward_with_cache_reusing<H>(
         &self,
         backend: &B,
@@ -1353,7 +1362,10 @@ impl<B: Backend> LlamaBlock<B> {
     /// once per layer and operation. Bit-identical to the former
     /// allocate-per-op form: same kernels in the same order, and the
     /// residual adds are the same single IEEE add per element.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+    )]
     fn forward_with_cache_hooked<H>(
         &self,
         backend: &B,
@@ -2027,7 +2039,10 @@ impl Llama<CpuBackend> {
         }))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+    )]
     fn forward_decode_with_workspace<H>(
         &self,
         backend: &CpuBackend,
@@ -3167,7 +3182,10 @@ impl Llama<CpuBackend> {
 /// qwen2/qwen2.5 attention projections carry `blk.{i}.attn_q.bias` /
 /// `attn_k.bias` / `attn_v.bias`; llama and qwen3 GGUFs do not, and pass
 /// through with no bias.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "loader state and load options are separate inputs"
+)]
 fn take_llama_linear(
     loader: &mut crate::loader::GgufLoader,
     name: &str,
@@ -3717,7 +3735,10 @@ impl<B: Backend> Llama<B> {
     }
 
     /// forward pass with activation capture after each transformer block.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_with_activations(
         &self,
         backend: &B,
@@ -3738,7 +3759,10 @@ impl<B: Backend> Llama<B> {
         Ok((activations, logits))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_pooled_activations(
         &self,
         backend: &B,
@@ -3762,7 +3786,10 @@ impl<B: Backend> Llama<B> {
             .map(|(pooled, _)| pooled)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn forward_pooled_hidden_and_output(
         &self,
         backend: &B,
@@ -3801,7 +3828,10 @@ impl<B: Backend> Llama<B> {
     /// cumulative token count after the previous stimulus).
     /// `token_index_groups` maps each output group to the token position(s)
     /// to pool from within its stimulus block.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_pooled_with_blocks(
         &self,
         backend: &B,

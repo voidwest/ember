@@ -115,7 +115,10 @@ pub trait Backend {
     /// `None` asks the caller to use its generic Q8_0 path. This keeps packed
     /// scheduling an optional CPU optimization without making alternate
     /// backends implement or understand the CPU-specific layout.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn matmul_q8_0_packed_pair(
         &self,
         _x: &Self::Tensor,
@@ -211,7 +214,10 @@ pub trait Backend {
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
     /// Consume a tensor's host payload. CPU storage moves without a copy;
     /// the default keeps alternate backends source-compatible.
-    #[allow(clippy::wrong_self_convention)]
+    #[allow(
+        clippy::wrong_self_convention,
+        reason = "`into_` refers to the tensor argument that the method consumes"
+    )]
     fn into_cpu_data(&self, x: Self::Tensor) -> Vec<f32> {
         self.data(&x).to_vec()
     }
@@ -690,7 +696,10 @@ impl CpuBackend {
         self.matmul_q8_0_packed_into_impl::<true>(src, weight, dst)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     fn matmul_q8_0_packed_pair_into_impl<const TIMED: bool>(
         &self,
         src: &[f32],
@@ -734,7 +743,10 @@ impl CpuBackend {
     }
 
     /// Two packed projections sharing one activation quantization.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_packed_pair_into(
         &self,
         src: &[f32],
@@ -747,7 +759,10 @@ impl CpuBackend {
     }
 
     /// Instrumented packed pair sharing one activation quantization.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_packed_pair_into_timed(
         &self,
         src: &[f32],
@@ -759,7 +774,10 @@ impl CpuBackend {
         self.matmul_q8_0_packed_pair_into_impl::<true>(src, first, second, first_dst, second_dst)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     fn matmul_q8_0_packed_triple_into_impl<const TIMED: bool>(
         &self,
         src: &[f32],
@@ -813,7 +831,10 @@ impl CpuBackend {
     }
 
     /// Three packed projections sharing one activation quantization.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_packed_triple_into(
         &self,
         src: &[f32],
@@ -830,7 +851,10 @@ impl CpuBackend {
     }
 
     /// Instrumented packed triple sharing one activation quantization.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_packed_triple_into_timed(
         &self,
         src: &[f32],
@@ -846,7 +870,10 @@ impl CpuBackend {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     fn matmul_q8_0_pair_into_impl<const TIMED: bool>(
         &self,
         src: &[f32],
@@ -893,7 +920,10 @@ impl CpuBackend {
 
     /// Fused dual Q8_0 projection (gate + up): quantize `src` once, compute
     /// both projections in one pass.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_pair_into(
         &self,
         src: &[f32],
@@ -918,7 +948,10 @@ impl CpuBackend {
         self.matmul_q8_0_pair_into_impl::<true>(src, 1, w_a, w_b, dst_a, dst_b)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     fn matmul_q8_0_triple_into_impl<const TIMED: bool>(
         &self,
         src: &[f32],
@@ -976,7 +1009,10 @@ impl CpuBackend {
     /// Fused Q/K/V decode projection: quantize `src` once, compute all three
     /// Q8_0 projections in one pass. For seq_len=1 decode this saves two
     /// activation quantization passes and their scheduling overhead.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_triple_into(
         &self,
         src: &[f32],
@@ -993,7 +1029,10 @@ impl CpuBackend {
 
     /// Instrumented fused-input triple projection used only by operator
     /// profiling.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fused projection: each weight and its output buffer stay separate arguments"
+    )]
     pub fn matmul_q8_0_triple_into_timed(
         &self,
         src: &[f32],
@@ -2090,7 +2129,11 @@ pub(crate) fn softmax_range(row: &mut [f32], start: usize, end: usize) {
 /// (0 = full causal prefix, matching the previous `softmax_prefix` form).
 /// Bit-identical to the pre-consolidation serial bodies: same dot order,
 /// same softmax, same accumulation.
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path; the index is also used in arithmetic or to index several arrays"
+)]
 pub(crate) fn cached_attention_row_head(
     q: &[f32],
     cached_k: &[f16],
@@ -2133,7 +2176,10 @@ pub(crate) fn cached_attention_row_head(
 /// parallel over rows (seq > 1), parallel over heads (seq == 1), serial.
 /// Each branch computes identical per-(row, head) values, with optional
 /// sliding-window masking and an independent physical KV head width.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+)]
 pub(crate) fn cached_attention_dispatch(
     q: &[f32],
     cached_k: &[f16],
@@ -2256,7 +2302,10 @@ pub(crate) fn cached_attention_dispatch(
 /// One (row, head) of prefill (block-diagonal) causal attention: qk dots
 /// over `[start, row]`, softmax, weighted V sum. Shared by the parallel
 /// and serial prefill branches (bit-identical per (row, head)).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+)]
 pub(crate) fn prefill_attention_row_head(
     q_data: &[f32],
     k_data: &[f32],

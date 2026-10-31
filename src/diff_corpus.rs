@@ -1029,7 +1029,7 @@ pub fn run_diff_corpus(request: &CorpusRequest, verbose: bool) -> anyhow::Result
     };
     let summary_path = out_dir.join(format!("summary_{run_tag}.json"));
     create_no_follow(&summary_path)?
-        .write_all((serde_json::to_string_pretty(&summary)? + "\n").as_bytes())?;
+        .write_all(format!("{}\n", serde_json::to_string_pretty(&summary)?).as_bytes())?;
     if verbose {
         for (target, counts) in &stats.per_target {
             println!(
@@ -1329,7 +1329,7 @@ mod tests {
             std::os::unix::fs::symlink(&victim, elsewhere.join("log_raw-3-7.jsonl")).unwrap();
             let planted = CorpusRunConfig {
                 out_dir: elsewhere,
-                ..config.clone()
+                ..config
             };
             assert!(run_corpus(&planted).is_err());
             assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
@@ -1406,10 +1406,7 @@ mod tests {
         assert_eq!(log.lines().count(), 2);
         assert!(outcome.stats.per_target.contains_key("ember"));
         // Invalid requests are refused before any work.
-        let zero = CorpusRequest {
-            n: 0,
-            ..request.clone()
-        };
+        let zero = CorpusRequest { n: 0, ..request };
         assert!(run_diff_corpus(&zero, false).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }

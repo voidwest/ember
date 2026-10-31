@@ -310,7 +310,7 @@ pub(crate) fn run_sweep(
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         head_count: definition.heads.is_some().then_some(n_heads),
         features: definition.features.clone(),
-        interventions: definition.interventions.clone(),
+        interventions: definition.interventions,
         effect,
         baseline: reference(&base, &baseline.relative_dir),
         points: records,
@@ -1357,7 +1357,7 @@ foil = 13
         forged.points[1].feature = Some(6);
         forged.sweep_hash = forged.compute_hash();
         assert!(failed(&reseal(&forged), "point feature-05 coordinates"));
-        let mut forged = manifest.clone();
+        let mut forged = manifest;
         forged.features.as_mut().unwrap().ids = vec![0, 5, 8];
         forged.sweep_hash = forged.compute_hash();
         assert!(failed(&reseal(&forged), "sweep definition"));

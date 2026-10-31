@@ -943,7 +943,10 @@ pub(crate) fn run_batched_pass(
     })
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one sequential batched-run flow whose phases share local state"
+)]
 fn run_batched_inner(
     prepared_mut: &mut PreparedRun,
     base: RunTarget<'_>,

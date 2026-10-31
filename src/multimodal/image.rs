@@ -276,10 +276,10 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
         } else {
             // image is exactly tile-sized after rounding: single frame, no
             // grid (reference reports splits (0, 0) in this case)
-            tiles_uint.push(resized.clone());
+            tiles_uint.push(resized);
         }
     } else {
-        tiles_uint.push(resized.clone());
+        tiles_uint.push(resized);
     }
     timings.tile_ms = t_tile.elapsed().as_secs_f64() * 1e3;
     let t_norm = std::time::Instant::now();

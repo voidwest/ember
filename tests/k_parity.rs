@@ -287,7 +287,7 @@ fn run_frozen_prompt(
     let mut tokens = Vec::new();
     let mut decode_logits = Vec::new();
     let mut position = 0usize;
-    let mut current = ids.clone();
+    let mut current = ids;
     for step in 0..decode_tokens {
         // Trait path (ForwardModel) so v0.4 execution-mode dispatch runs;
         // the inherent Llama method would shadow it.

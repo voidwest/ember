@@ -128,6 +128,14 @@ all = "warn"
 # Every `unsafe` block and `unsafe impl` carries a `// SAFETY:` comment (the
 # unsafe-hygiene contract in src/lib.rs); CI's `-D warnings` enforces it.
 undocumented_unsafe_blocks = "warn"
+# From the BeautifulRust lint table (see CONTRIBUTING.md, "Rust style"):
+# every suppression states its reason, and these leftovers and costs stay out.
+allow_attributes_without_reason = "warn"
+redundant_clone = "warn"
+string_add = "warn"
+rc_buffer = "warn"
+dbg_macro = "warn"
+todo = "warn"
 
 [dev-dependencies]
 ember-core = { path = "crates/ember-core", version = "1.0.0", features = ["testkit"] }

@@ -162,7 +162,10 @@ fn decode_rgb_roundtrip_via_png() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[allow(clippy::needless_range_loop)] // brute-force reference mirrors the math verbatim
+#[allow(
+    clippy::needless_range_loop,
+    reason = "brute-force reference mirrors the math verbatim"
+)]
 fn bidirectional_attention_is_full_attention() {
     // With a constant key/value set, every query attends to all keys
     // equally: the output is the mean of v rows (scaled softmax over equal
@@ -225,7 +228,10 @@ fn bidirectional_attention_is_full_attention() {
 }
 
 #[test]
-#[allow(clippy::needless_range_loop)] // brute-force reference mirrors the HF index math
+#[allow(
+    clippy::needless_range_loop,
+    reason = "brute-force reference mirrors the HF index math"
+)]
 fn pixel_shuffle_matches_hf_semantics() {
     // scale=2 over a 4x4 grid: 16 tokens x 4 dims -> 4 tokens x 16 dims.
     // Hand-compute the HF permutation for one case.

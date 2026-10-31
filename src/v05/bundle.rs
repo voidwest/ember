@@ -188,7 +188,7 @@ impl BundleWriter {
         // The payload hash covers the manifest's payload inventory plus
         // the semantic manifest's own file (which cannot list itself);
         // verification recomputes the same inventory.
-        let mut payload_inventory = semantic_manifest.payloads.clone();
+        let mut payload_inventory = semantic_manifest.payloads;
         payload_inventory.insert("semantic-manifest.json".to_string(), semantic_file_hash);
         let payload_hash = BundleIdentity::payload_hash(&payload_inventory)?;
 

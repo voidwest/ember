@@ -1651,7 +1651,7 @@ mod tests {
         assert!(comparison.cosine_similarity.unwrap() > 0.999);
 
         // perturb the external logits so the argmax flips
-        let mut perturbed = logits.1.clone();
+        let mut perturbed = logits.1;
         perturbed[0] = 100.0; // argmax was index 6 (4.0); now index 0
         fixture.write(&fixture.external, &tokens, Some((&[1usize, 8], perturbed)));
         let report =
