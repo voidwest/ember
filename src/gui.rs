@@ -1462,14 +1462,20 @@ pub(crate) const SPEC_VIEW_OUTPUT_DIR: &str = "runs/gui/intervention";
 
 /// The intervention run's spec for `cfg`, as TOML: what the console runs,
 /// with [`SPEC_VIEW_OUTPUT_DIR`] as the output directory.
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
 pub(crate) fn intervention_spec_text(cfg: &RunConfig) -> Result<String, String> {
     build_and_resolve_spec(cfg, RunKind::Intervention, SPEC_VIEW_OUTPUT_DIR).map(|(text, _)| text)
 }
 
 /// The fields of the console's form that an intervention spec sets. `None`
 /// means the spec does not set that field, so the form keeps its value.
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SpecFields {
     pub model_path: String,
@@ -1494,7 +1500,10 @@ pub(crate) struct SpecFields {
 /// when the spec has a shape that the form cannot hold: other than one
 /// input and one intervention, or another token selector or source. Whether
 /// every other field matches is checked by [`check_same_experiment`].
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
 pub(crate) fn spec_fields(text: &str) -> Result<SpecFields, String> {
     let spec = RawExperimentSpec::from_toml_str(text)
         .and_then(|raw| raw.resolve())
@@ -1601,7 +1610,10 @@ pub(crate) fn spec_fields(text: &str) -> Result<SpecFields, String> {
 /// generates: equal once resolved, apart from the name, the description and
 /// the recorded defaults, which the console sets itself. The error names the
 /// first field that differs.
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
 pub(crate) fn check_same_experiment(edited: &str, generated: &str) -> Result<(), String> {
     let normalize = |text: &str| -> Result<serde_json::Value, String> {
         let mut spec = RawExperimentSpec::from_toml_str(text)
