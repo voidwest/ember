@@ -19,7 +19,10 @@ pub enum OutputEvent {
     TextDelta { token_id: u32, piece: String },
     /// A chunk of PCM samples (future speech output). Not produced by any
     /// current model; see module docs.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "reserved for speech output; no current model produces it"
+    )]
     AudioChunk { pcm: Vec<f32>, sample_rate: u32 },
     /// End of stream.
     Done,

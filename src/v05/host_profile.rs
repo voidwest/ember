@@ -203,7 +203,10 @@ fn detect_cpu_model() -> String {
 }
 
 fn detected_features() -> Vec<String> {
-    #[allow(unused_mut)]
+    #[allow(
+        unused_mut,
+        reason = "mutated only inside the target-architecture cfg blocks"
+    )]
     let mut features: Vec<&str> = Vec::new();
     #[cfg(target_arch = "x86_64")]
     {

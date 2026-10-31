@@ -407,7 +407,10 @@ fn family_for_arch(arch: &str) -> ModelFamily {
 }
 
 /// Run one fully-resolved experiment and write + self-verify its bundle.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn execute_resolved(
     resolved: &ember::v05::spec::ExperimentSpecV1,
     spec_text: &str,
@@ -691,7 +694,10 @@ fn prepare_run_overlapped<'scope, 'env>(
 /// more before the bundle is written. A cancelled run returns
 /// [`ember::cancel::Cancelled`] and writes nothing -- no bundle and no staging
 /// directory -- so there is nothing partial to clean up.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn execute_prepared(
     prepared: &mut PreparedRun,
     resolved: &ember::v05::spec::ExperimentSpecV1,

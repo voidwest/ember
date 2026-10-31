@@ -223,7 +223,7 @@ pub(crate) fn run_tts_command(command: &TtsCommand, _args: &Args) -> Result<()> 
             ("prompt_ids", as_f32(&pids)),
             ("gen_ids", as_f32(&ids)),
             ("codes", as_f32(&tts.extract_codes(&ids))),
-            ("waveform", pcm.clone()),
+            ("waveform", pcm),
         ] {
             write_f32_bin(dir, name, &data)?;
         }

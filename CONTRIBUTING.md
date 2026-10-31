@@ -38,9 +38,39 @@ question that they do not decide, use these references in this order:
 2. The [Google Rust Style Guide](https://google.github.io/styleguide/rustguide.html).
    Treat its rules for library code as recommendations, because all public
    Rust modules are experimental (see `docs/api-stability.md`).
+3. [BeautifulRust](https://github.com/morganlinton/BeautifulRust) (MIT), which
+   combines the guides above with Effective Rust, Rust Design Patterns and
+   Microsoft's Pragmatic Rust Guidelines. Its `rust-review` skill sorts
+   findings into must fix, should fix and consider. The exceptions below
+   apply to it too.
 
 Apply the Google guide to new code and to code that a change already touches.
 Do not make a style pass over the whole repository.
+
+`[workspace.lints.clippy]` in `Cargo.toml` turns on these lints from the
+BeautifulRust lint table, in addition to `clippy::all`:
+
+- `allow_attributes_without_reason`: every `#[allow]` states its reason, for
+  example `#[allow(clippy::too_many_arguments, reason = "...")]`. Use
+  `#[allow]`, not `#[expect]`, when the lint fires only under some features
+  or targets, because `#[expect]` fails where the lint does not fire.
+- `redundant_clone`, `string_add`, `rc_buffer`, `dbg_macro` and `todo`.
+
+These lints from the table stay off. Each one has a reason:
+
+- `missing_docs`, `missing_errors_doc` and `missing_panics_doc`: see the
+  rustdoc rule below. They report about 2,700 items.
+- `as_conversions`, `cast_possible_truncation` and `cast_sign_loss`: kernels
+  and tensor code use checked shapes and `as` casts on purpose. They report
+  about 1,800 items.
+- `print_stdout` and `print_stderr`: the CLI writes its output with
+  `println!` and its diagnostics with `eprintln!`.
+- `fn_params_excessive_bools`, `exhaustive_enums`, `wildcard_imports` and
+  `unwrap_used`: the rules for new code below and the exceptions cover
+  them.
+- `clippy::pedantic` as a group, `unreachable_pub` and
+  `multiple_unsafe_ops_per_block`: they need a style pass over the whole
+  repository, and this guide does not permit that pass.
 
 For new code, apply these Google rules:
 

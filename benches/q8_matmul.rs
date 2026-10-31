@@ -130,7 +130,10 @@ fn sweep_cache(buffer: &mut [u64]) {
     black_box(buffer);
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the benchmark passes each matmul input separately"
+)]
 fn invoke(
     mode: ProjectionMode,
     backend: &CpuBackend,

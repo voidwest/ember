@@ -160,7 +160,10 @@ impl CaptureSink {
     /// Build a capture sink from a TOML config path.
     ///
     /// `prompt` is stored only when the selection does not omit it.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "application call path: each argument is a separate input"
+    )]
     pub fn from_toml_path(
         path: &str,
         prompt: &str,
@@ -271,7 +274,10 @@ impl CaptureSink {
         self.selection.selects(stage, layer, phase, token_position)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "application call path: each argument is a separate input"
+    )]
     fn record(
         &mut self,
         phase: &'static str,
@@ -757,7 +763,7 @@ max_records = 8
     #[test]
     fn selection_filters_by_decode_position() {
         let selection = make_selection(vec![0], vec!["after-mlp"], CapturePhase::Decode);
-        let mut with_positions = selection.clone();
+        let mut with_positions = selection;
         with_positions.token_positions = vec![5];
         assert!(with_positions.selects(ActivationStage::AfterMlp, 0, "decode", Some(5)));
         assert!(!with_positions.selects(ActivationStage::AfterMlp, 0, "decode", Some(6)));

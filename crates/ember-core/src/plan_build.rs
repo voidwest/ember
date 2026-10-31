@@ -40,7 +40,10 @@ impl PlanBuilder {
     }
 
     /// Register a weight tensor and return its stable id.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per field of the record that it builds or compares"
+    )]
     fn add_weight(
         &mut self,
         name: &str,
@@ -328,7 +331,10 @@ impl Llama<CpuBackend> {
     }
 
     /// Construct the full architecture-specific execution plan.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per field of the record that it builds or compares"
+    )]
     fn build_execution_plan(
         &self,
         mode: ExecutionMode,

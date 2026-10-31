@@ -376,7 +376,10 @@ impl<T> SharedMut<T> {
     /// # Safety
     /// No other live reference (from this or any other chunk) may overlap
     /// `start..start + len`, and the source slice must outlive the result.
-    #[allow(clippy::mut_from_ref)]
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "unsafe accessor: the caller's contract keeps returned ranges disjoint"
+    )]
     pub(crate) unsafe fn range(&self, start: usize, len: usize) -> &mut [T] {
         assert!(start <= self.len && len <= self.len - start);
         // SAFETY: in bounds by the assertion; exclusivity is the caller's contract.

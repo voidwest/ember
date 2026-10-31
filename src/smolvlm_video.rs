@@ -427,7 +427,7 @@ impl SmolVlmVideo {
             vision: last_trace,
             projector_output,
             assembled_embeddings: embeddings.clone(),
-            input_ids: input_ids.clone(),
+            input_ids,
         };
         Ok((
             trace,

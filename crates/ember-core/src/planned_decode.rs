@@ -241,7 +241,10 @@ struct PlannedSession {
 }
 
 impl PlannedSession {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per field of the record that it builds or compares"
+    )]
     fn matches(
         &self,
         mode: ExecutionMode,
@@ -863,7 +866,10 @@ fn embed_row_into(
 /// copies, score region reused across layers, and cache-head slices hoisted
 /// so the inner loops iterate contiguous f16 ranges without re-deriving
 /// offsets.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+)]
 pub(crate) fn planned_causal_attention(
     q: &[f32],
     cached_k: &[half::f16],
@@ -1141,7 +1147,10 @@ pub(crate) fn forward_last_logits_planned(
 
 /// Decode directly into caller-owned logits, retaining the arena and output
 /// allocation across tokens. Hook sites and the serialized plan stay identical.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+)]
 pub(crate) fn forward_last_logits_planned_into(
     model: &Llama<CpuBackend>,
     token_ids: &[u32],

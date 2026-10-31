@@ -384,7 +384,7 @@ impl ToolRegistryBuilder {
         if self.tools.contains_key(&schema.name) {
             return Err(DuplicateTool { name: schema.name });
         }
-        self.tools.insert(schema.name.clone(), tool);
+        self.tools.insert(schema.name, tool);
         Ok(self)
     }
 
@@ -411,7 +411,6 @@ impl ToolRegistry {
         self.tools.len()
     }
 
-    #[allow(clippy::len_without_is_empty)]
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }

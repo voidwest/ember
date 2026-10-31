@@ -584,7 +584,10 @@ struct Gemma4Attention<B: Backend> {
 }
 
 impl<B: Backend> Gemma4Attention<B> {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+    )]
     fn forward_with_cache(
         &self,
         backend: &B,
@@ -815,7 +818,10 @@ impl<B: Backend> Gemma4Block<B> {
         self.forward_with_cache_hooked(backend, x, ple, cache, layer, start_pos, &mut hooks)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+    )]
     fn forward_with_cache_hooked<H>(
         &self,
         backend: &B,
@@ -2181,7 +2187,10 @@ impl<B: Backend> Gemma4<B> {
     /// Per-layer states are taken from the last prompt token after each
     /// block's final residual add and layer_output_scale. This boundary
     /// matches the llama.cpp per-layer dump (after `build_cvec` in gemma4.cpp).
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_last_logits_with_layer_dump(
         &self,
         backend: &B,
@@ -2214,7 +2223,10 @@ impl<B: Backend> Gemma4<B> {
         Ok((layer_states, logits))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_with_activations(
         &self,
         backend: &B,
@@ -2245,7 +2257,10 @@ impl<B: Backend> Gemma4<B> {
         ))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_pooled_activations(
         &self,
         backend: &B,
@@ -2273,7 +2288,10 @@ impl<B: Backend> Gemma4<B> {
             .map(|(pooled, _)| pooled)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn forward_pooled_hidden_and_output(
         &self,
         backend: &B,
@@ -2502,7 +2520,10 @@ fn softcap_logits<B: Backend>(
     Ok(logits)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the RoPE tables, norm weight and head shape stay separate arguments"
+)]
 fn apply_rope_and_qk_norm<B: Backend>(
     backend: &B,
     x: B::Tensor,

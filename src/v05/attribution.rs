@@ -582,7 +582,7 @@ mod tests {
         let mut bad = spec.clone();
         bad.sites = vec![SemanticHookSite::Logits];
         assert!(bad.validate(&["c", "x"]).is_err());
-        let mut bad = spec.clone();
+        let mut bad = spec;
         bad.foil = TokenRef::Text(" a".into());
         assert!(bad.validate(&["c", "x"]).is_err());
     }

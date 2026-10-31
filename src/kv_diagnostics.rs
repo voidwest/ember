@@ -237,7 +237,10 @@ impl Experiment for AttentionCapture {
 /// `max_tokens - 1` evaluated tokens and begin with `initial_token_id`.
 /// Otherwise the reference snapshot's top-1 prediction supplies each next
 /// forced token.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub fn diagnose_continuation(
     model: &Llama<CpuBackend>,
     backend: &CpuBackend,
@@ -502,7 +505,10 @@ pub fn diagnose_continuation(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 fn captured_step(
     model: &Llama<CpuBackend>,
     backend: &CpuBackend,

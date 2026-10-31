@@ -43,7 +43,10 @@
 //! This file is a module, not an integration target — cargo only
 //! auto-discovers top-level `tests/*.rs`, so `tests/common/mod.rs` is never
 //! compiled as its own test binary.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared test helpers; each test binary uses a subset"
+)]
 
 use std::path::PathBuf;
 
