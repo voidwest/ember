@@ -73,6 +73,7 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
                 "positions": definition.positions,
                 "alphas": definition.alphas,
                 "heads": definition.heads,
+                "features": definition.features,
                 "move_bundle_sources": definition.move_bundle_sources,
                 "effect": definition.effect.as_ref().map(|effect| serde_json::json!({
                     "capture": effect.capture,
@@ -110,6 +111,13 @@ pub(crate) fn run_validate_sweep(command: &ValidateArgs, text: &str) -> anyhow::
             println!(
                 "  heads: {} (resolved against the model at run time)",
                 serde_json::to_value(heads)?
+            );
+        }
+        if let Some(features) = &definition.features {
+            println!(
+                "  features: {} of dictionary '{}' (checked against its width at run time)",
+                features.ids.len(),
+                features.dictionary
             );
         }
         if definition.move_bundle_sources {
@@ -179,6 +187,20 @@ pub(crate) fn run_sweep(
             prepared.model.config.head_dim,
         )
         .map_err(anyhow::Error::msg)?;
+    // Check the swept feature ids against the dictionary's width before
+    // anything runs. The points reuse the loaded weights from the cache.
+    if let Some(features) = &definition.features {
+        let dictionaries =
+            crate::cli_experiment_dictionary::load_dictionaries(&prepared, &template)?;
+        let index = template
+            .dictionaries
+            .iter()
+            .position(|dictionary| dictionary.id == features.dictionary)
+            .expect("the sweep parse checked the dictionary id");
+        dictionaries[index]
+            .check_ids(&features.ids)
+            .map_err(|error| anyhow::anyhow!("sweep.features: {error}"))?;
+    }
     // Resolve the effect tokens before anything runs, so a target that is
     // not one token fails without a wasted sweep.
     let effect = definition
@@ -261,6 +283,7 @@ pub(crate) fn run_sweep(
             position: point.position,
             alpha: point.alpha,
             head: point.head,
+            feature: point.feature,
             bundle: reference(outcome, &point.relative_dir),
             inputs,
             effect: point_effect,
@@ -286,6 +309,7 @@ pub(crate) fn run_sweep(
             .transpose()
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         head_count: definition.heads.is_some().then_some(n_heads),
+        features: definition.features.clone(),
         interventions: definition.interventions,
         effect,
         baseline: reference(&base, &baseline.relative_dir),
@@ -398,6 +422,12 @@ fn print_table(manifest: &SweepManifest) {
     }
     if let Some(heads) = &manifest.heads {
         axes.push(format!("heads {heads:?}"));
+    }
+    if let Some(features) = &manifest.features {
+        axes.push(format!(
+            "features {:?} of dictionary {:?}",
+            features.ids, features.dictionary
+        ));
     }
     if let Some(alphas) = &manifest.alphas {
         axes.push(format!("alphas {alphas:?}"));
@@ -1243,6 +1273,113 @@ foil = 13
         );
         assert_ne!(body, EFFECT_BODY);
         body
+    }
+
+    #[test]
+    fn feature_sweeps_run_one_feature_per_point_and_verify() {
+        let model = tiny_model("sweep-feature-grid", 3, 64, false);
+        let (folder, sha) =
+            crate::cli_experiment_dictionary::tests::write_dictionary(&model.dir, 64);
+        let config_sha = ember::v05::manifest::sha256_hex(
+            &std::fs::read(folder.join(ember::v05::dictionary::CONFIG_FILE)).unwrap(),
+        );
+        let dictionary = format!(
+            "\n[[dictionaries]]\nid = \"d\"\npath = \"{}\"\nsha256 = \"{sha}\"\n\
+             config_sha256 = \"{config_sha}\"\nsite = \"residual-post-mlp\"\nlayer = 1\n",
+            folder.display()
+        );
+        let body = format!(
+            "{}{dictionary}",
+            EFFECT_BODY.replace("layers = [0]", "layers = [1]")
+        );
+        let table = EFFECT_TABLE.replace(
+            "[sweep]\nlayers = \"all\"\n",
+            "[sweep]\nfeatures = { dictionary = \"d\", ids = [5, 0, 9] }\n",
+        );
+        let text = format!("{}{table}", spec_text(&model, "reference", 2, &body));
+        let spec = model.dir.join("sweep.toml");
+        std::fs::write(&spec, &text).unwrap();
+        let out = model.dir.join("sweep-out");
+        run_sweep(
+            &run_args(&spec, Some(out.clone())),
+            &text,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let report = verify_sweep(&out, &VerifyOptions::default()).unwrap();
+        assert!(report.ok, "{:?}", report.checks);
+        assert_eq!(report.bundles, 4);
+        let manifest = ember::v05::sweep::read_manifest(&out).unwrap();
+        let features = manifest.features.clone().unwrap();
+        assert_eq!(
+            (features.dictionary.as_str(), features.ids.clone()),
+            ("d", vec![0, 5, 9])
+        );
+        assert_eq!(manifest.layers, Vec::<usize>::new());
+        assert_eq!(
+            manifest
+                .points
+                .iter()
+                .map(|p| (p.id.as_str(), p.feature))
+                .collect::<Vec<_>>(),
+            [
+                ("feature-00", Some(0)),
+                ("feature-05", Some(5)),
+                ("feature-09", Some(9))
+            ]
+        );
+        let csv = std::fs::read_to_string(out.join(SWEEP_CSV_FILE)).unwrap();
+        assert!(
+            csv.starts_with("point,layer,position,feature,input_id,"),
+            "{csv}"
+        );
+        let table = std::fs::read_to_string(out.join(SWEEP_EFFECT_CSV_FILE)).unwrap();
+        assert!(
+            table.starts_with("point,layer,position,alpha,feature,n,"),
+            "{table}"
+        );
+        assert!(table.contains("\nfeature-05,,,,5,3,"), "{table}");
+
+        // A forged feature fails verification.
+        let reseal = |manifest: &SweepManifest| {
+            std::fs::write(
+                out.join(SWEEP_MANIFEST_FILE),
+                serde_json::to_vec(manifest).unwrap(),
+            )
+            .unwrap();
+            verify_sweep(&out, &VerifyOptions::default()).unwrap()
+        };
+        let failed = |report: &SweepVerification, name: &str| {
+            report.checks.iter().any(|c| !c.ok && c.name == name)
+        };
+        let mut forged = manifest.clone();
+        forged.points[1].feature = Some(6);
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "point feature-05 coordinates"));
+        let mut forged = manifest;
+        forged.features.as_mut().unwrap().ids = vec![0, 5, 8];
+        forged.sweep_hash = forged.compute_hash();
+        assert!(failed(&reseal(&forged), "sweep definition"));
+
+        // A feature id past the dictionary's width fails before any point
+        // runs.
+        let wide = text.replace("ids = [5, 0, 9]", "ids = [5, 16]");
+        assert_ne!(wide, text);
+        let wide_out = model.dir.join("sweep-wide");
+        let error = run_sweep(
+            &run_args(&spec, Some(wide_out.clone())),
+            &wide,
+            KStrategy::Auto,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("sweep.features: feature 16 is out of range"),
+            "{error}"
+        );
+        assert!(!wide_out.exists(), "no bundle is written");
     }
 
     #[test]

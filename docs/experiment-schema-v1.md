@@ -84,10 +84,10 @@ settings are identical whether a default is omitted or explicitly supplied.
 ## Sweeps
 
 An optional `[sweep]` table turns the spec into a template for a layer
-sweep (`layers`, optional `positions`, optional `heads`, optional `alphas`,
-optional `interventions`, optional `move_bundle_sources`, optional
-`[sweep.effect]`; `layers` may be omitted when `heads` or `alphas` is
-given); see `docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
+sweep (`layers`, optional `positions`, optional `heads`, optional
+`features`, optional `alphas`, optional `interventions`, optional
+`move_bundle_sources`, optional `[sweep.effect]`; `layers` may be omitted
+when `heads`, `features` or `alphas` is given); see `docs/experiments.md#layer-sweeps`. Unknown `[sweep]` fields fail, and a
 spec with `[sweep]` is only accepted as a sweep.
 
 ## Attribution

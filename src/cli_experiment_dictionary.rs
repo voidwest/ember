@@ -69,7 +69,7 @@ pub(crate) fn load_dictionaries(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::cli_experiment::{execute_prepared, prepare_run, PreparedRun};
     use crate::experiment_testutil::{
         copy_dir, resolve, resolve_err, spec_text, tiny_model, TinyModel,
@@ -99,7 +99,7 @@ text = "w8 w1 w33"
 
     /// A JumpReLU dictionary for the tiny model's residual stream, written as
     /// a SAELens folder. Returns the folder and the weights' SHA-256.
-    fn write_dictionary(dir: &Path, d_in: usize) -> (PathBuf, String) {
+    pub(crate) fn write_dictionary(dir: &Path, d_in: usize) -> (PathBuf, String) {
         let folder = dir.join("dictionary");
         std::fs::create_dir_all(&folder).unwrap();
         let w_enc: Vec<f32> = (0..d_in * D_SAE)
