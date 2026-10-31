@@ -98,6 +98,14 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
   `examples/experiments/capital-clean.toml` and
   `examples/experiments/capital-patching-sweep.toml`.
 
+### Changed
+
+- Lints: the workspace adds six lints from the BeautifulRust lint table:
+  `allow_attributes_without_reason`, `redundant_clone`, `string_add`,
+  `rc_buffer`, `dbg_macro` and `todo`. Every `#[allow]` now states its
+  reason, 54 redundant clones are gone, and `CONTRIBUTING.md` says which
+  lints of the table stay off and why. The behavior does not change.
+
 ### Fixed
 
 - Native console: Settings › Keyboard no longer lists `Cmd+1 / 2 / 3` for
