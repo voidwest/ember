@@ -5,7 +5,10 @@
 //! Include with `#[path = "common/gguf.rs"] mod gguf;` from the tests that
 //! use it. It is deliberately not a submodule of `common/mod.rs`, so test
 //! crates that only need the env gate do not compile it.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared test helpers; each test binary uses a subset"
+)]
 
 pub const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF"
 pub const GGUF_VERSION: u32 = 3;

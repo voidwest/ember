@@ -791,7 +791,7 @@ impl KvSnapshot {
     /// Verify an on-disk snapshot and return its deterministic identity.
     pub fn verify_dir(input: impl AsRef<Path>) -> anyhow::Result<String> {
         let snapshot = Self::load_dir(input)?;
-        Ok(snapshot.manifest.snapshot_hash.clone())
+        Ok(snapshot.manifest.snapshot_hash)
     }
 
     /// Concise stable text for CLI/GUI inspection.
@@ -2237,13 +2237,9 @@ mod llama_model_tests {
         let mut replay_cache = loaded.import_cache(&target).unwrap();
         assert_eq!(replay_cache.cursor(), prompt.len());
         assert_eq!(native_cache.cursor(), replay_cache.cursor());
-        let imported_export = KvSnapshot::export_native(
-            &replay_cache,
-            target.clone(),
-            Some(&prompt),
-            Some(resume_token),
-        )
-        .unwrap();
+        let imported_export =
+            KvSnapshot::export_native(&replay_cache, target, Some(&prompt), Some(resume_token))
+                .unwrap();
         assert_eq!(loaded.keys(), imported_export.keys());
         assert_eq!(loaded.values(), imported_export.values());
         assert_eq!(

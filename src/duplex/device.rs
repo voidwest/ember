@@ -142,7 +142,7 @@ impl LiveDuplex {
                 _input_stream: stream_in,
                 _output_stream: stream_out,
                 metrics,
-                out_cb_probe: out_cb_probe.clone(),
+                out_cb_probe,
             },
         })
     }

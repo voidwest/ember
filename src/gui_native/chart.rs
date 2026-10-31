@@ -107,7 +107,7 @@ pub(super) fn layer_divergence_chart_with(
             .fold(0.0f64, f64::max),
     );
     let has_reference = reference.is_some();
-    let reference_for_geometry = reference.clone();
+    let reference_for_geometry = reference;
     let active = hovered_layer
         .or(selected_layer)
         .and_then(|layer| metrics.iter().find(|metric| metric.layer == layer));
@@ -159,7 +159,7 @@ pub(super) fn layer_divergence_chart_with(
     let selected_color = colors.text;
     let metrics_for_geometry = metrics.clone();
     let metrics_for_mouse = metrics.clone();
-    let chart_entity = entity.clone();
+    let chart_entity = entity;
     let chart = canvas(
         move |bounds, _window, _cx| {
             let left = bounds.origin.x + px(6.0);

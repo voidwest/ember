@@ -294,7 +294,10 @@ mod fft_tests {
                 fi[n - k] = -s_im[k];
             }
         }
-        #[allow(clippy::needless_range_loop)]
+        #[allow(
+            clippy::needless_range_loop,
+            reason = "the index is also used in arithmetic or to index several arrays"
+        )]
         for t in 0..n {
             let (mut sr, mut si) = (0.0f64, 0.0f64);
             for k in 0..n {

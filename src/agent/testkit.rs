@@ -167,7 +167,7 @@ impl ChatModelEngine for ScriptedModel {
         ));
 
         Ok(GeneratedTurn {
-            text: script.output.clone(),
+            text: script.output,
             committed_ids: vec![turn_index as u32],
             stop: Some(TurnStop::MaxTokens),
             cancelled: false,

@@ -481,7 +481,10 @@ fn run_agent_run(args: &AgentRunArgs) -> Result<()> {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 fn run_task(
     loaded: &Loaded,
     prompt: &str,

@@ -160,7 +160,7 @@ directory = "out"
         bytes: &bytes,
     }])
     .unwrap();
-    files.insert("captures/tensors.safetensors".to_string(), payload.clone());
+    files.insert("captures/tensors.safetensors".to_string(), payload);
     let index_entry = CaptureIndexEntry {
         capture_id: "cap-1".to_string(),
         input_id: "i1".to_string(),
@@ -168,7 +168,7 @@ directory = "out"
         layer: 0,
         positions: positions.to_vec(),
         tensor_name: tensor_name.to_string(),
-        shape: shape.clone(),
+        shape,
         dtype: "F32".to_string(),
         byte_length: bytes.len(),
         checksum: sha256_hex(&bytes),
@@ -233,7 +233,7 @@ directory = "out"
         execution: ManifestExecutionMeta {
             mode: "reference".to_string(),
             deterministic: true,
-            plan_hash: plan_hash.clone(),
+            plan_hash,
         },
         inputs: vec![ManifestInputMeta {
             id: "i1".to_string(),

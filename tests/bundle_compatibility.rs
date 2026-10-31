@@ -276,7 +276,7 @@ fn experiment_verify_anchors_identity_externally_and_never_writes_into_the_bundl
     assert_eq!(mismatched.status.code(), Some(3), "{mismatched:?}");
     // The envelope alone proves nothing about who signed it.
     assert_eq!(
-        verify(&[os("--expect-evidence"), envelope.clone().into()])
+        verify(&[os("--expect-evidence"), envelope.into()])
             .status
             .code(),
         Some(2)

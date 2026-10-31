@@ -512,7 +512,10 @@ where
 
     /// Preserve custom execution hooks by default; standard execution can
     /// ask the model to write directly into the existing logits allocation.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a forward pass takes its model state, input, cache and positions as separate arguments"
+    )]
     fn forward_last_logits_reusing(
         &mut self,
         backend: &B,
@@ -841,7 +844,10 @@ impl GenerationExecution<CpuBackend, ember::llama::Llama<CpuBackend>>
 
 /// `generate_with_experiment` with a shared-prefix role (experiment runs
 /// only: greedy or seeded sampling, no tracing).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn generate_with_experiment_prefix(
     backend: &CpuBackend,
     model: &ember::llama::Llama<CpuBackend>,
@@ -973,7 +979,10 @@ pub(crate) struct SteppedGeneration<'m> {
 impl<'m> SteppedGeneration<'m> {
     /// Tokenize, prefill (through `role` when given) and choose the first
     /// token. `runner` is the input's experiment runner.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "application call path: each argument is a separate input"
+    )]
     pub(crate) fn start(
         backend: &CpuBackend,
         model: &ember::llama::Llama<CpuBackend>,
@@ -1242,7 +1251,10 @@ pub(crate) fn decode_together(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn generate<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
@@ -1288,7 +1300,10 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn generate_with_experiment(
     backend: &CpuBackend,
     model: &impl ExperimentalForwardModel,
@@ -1349,7 +1364,10 @@ pub(crate) fn generate_with_experiment(
 ///
 /// temperature 0.0 uses greedy argmax; any positive value enables temperature
 /// scaling with optional top-k and top-p filtering via [`sample_token`].
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn generate_with_execution<B, M, E>(
     backend: &B,
     model: &M,
@@ -1594,7 +1612,7 @@ where
             token_index: 0,
             events: all_events,
             total_duration_ns: total_decode_ns,
-            run_metadata: run_meta.clone(),
+            run_metadata: run_meta,
         };
 
         // write JSON if requested
@@ -1849,7 +1867,10 @@ where
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 pub(crate) fn interactive_mode<B: Backend>(
     backend: &B,
     model: &Gpt2<B>,

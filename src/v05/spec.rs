@@ -520,7 +520,7 @@ impl RawExperimentSpec {
 
         let mode = match self.execution.as_ref().and_then(|e| e.mode.as_deref()) {
             Some(value) => ExecutionMode::from_cli(value)
-                .map_err(|error| SpecError::at("execution.mode", error.to_string()))?,
+                .map_err(|error| SpecError::at("execution.mode", error))?,
             None => take_default(
                 None,
                 "execution.mode",
@@ -1374,9 +1374,12 @@ directory = "runs/minimal"
 
     #[test]
     fn nested_defaults_are_recorded_without_changing_semantics() {
-        let text = VALID_SPEC.replace("layers = \"all\"", "layers = { start = 0, end = 2 }")
-            .replace("kind = \"prompt-final\"", "kind = \"matched-span\"\ntext = \"some\"\noccurrence = 0\nsubtokens = \"all\"")
-            + "\n[[interventions]]\nid = \"zero\"\nsite = \"mlp-output\"\noperation = { kind = \"zero\" }\ntokens = { kind = \"prompt-final\" }\n";
+        let text = format!(
+            "{}{}",
+            VALID_SPEC.replace("layers = \"all\"", "layers = { start = 0, end = 2 }")
+                .replace("kind = \"prompt-final\"", "kind = \"matched-span\"\ntext = \"some\"\noccurrence = 0\nsubtokens = \"all\""),
+            "\n[[interventions]]\nid = \"zero\"\nsite = \"mlp-output\"\noperation = { kind = \"zero\" }\ntokens = { kind = \"prompt-final\" }\n"
+        );
         let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
         let mut omitted = raw.clone().resolve().unwrap();
         // A raw TOML round trip must not materialize defaults before resolve.

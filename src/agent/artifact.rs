@@ -123,7 +123,7 @@ impl ArtifactStore {
             .with_context(|| format!("failed to publish {}", path.display()))?;
 
         let record = ArtifactRecord {
-            artifact_id: artifact_id.clone(),
+            artifact_id,
             path,
             sha256,
             size_bytes: content.len() as u64,

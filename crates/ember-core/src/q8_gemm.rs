@@ -223,7 +223,10 @@ mod neon {
     /// One register tile: `C` output columns × `G` four-row groups over every
     /// block, accumulated in ascending block order.
     #[inline]
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also used in arithmetic or to index several arrays"
+    )]
     #[target_feature(enable = "neon,dotprod,fp16")]
     unsafe fn tile<const C: usize, const G: usize>(
         packed: *const Q8x4Block,
@@ -307,7 +310,10 @@ mod neon {
     }
 
     #[inline]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+    )]
     #[target_feature(enable = "neon,dotprod,fp16")]
     unsafe fn columns<const G: usize>(
         packed: &[Q8x4Block],
@@ -348,7 +354,10 @@ mod neon {
     /// Requires NEON, dotprod and FP16. `out` must be valid for
     /// `rows * out_features` elements and no other thread may access the
     /// covered elements concurrently.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+    )]
     #[target_feature(enable = "neon,dotprod,fp16")]
     pub(super) unsafe fn task(
         packed: &[Q8x4Block],

@@ -86,7 +86,7 @@ fn real_model_uses_the_weather_fixture_tool() {
     let identity = ember::agent::ModelIdentity {
         model_path: fx.model.display().to_string(),
         model_sha256: Some(model_sha256),
-        architecture: declared.clone(),
+        architecture: declared,
         quantization,
         n_layers: model.config.n_layers,
         embed_dim: model.config.embed_dim,

@@ -232,7 +232,10 @@ pub fn compare_snapshot_to_diagnostic(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 fn compare_payloads(
     reference: &KvSnapshot,
     candidate_keys: &[f16],

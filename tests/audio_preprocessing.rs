@@ -109,7 +109,7 @@ fn to_mono_16k_accepts_all_input_forms() {
 
     let raw: Vec<f32> = (0..8000).map(|i| ((i as f32) * 0.05).cos()).collect();
     let via_samples = to_mono_16k(&AudioInput::Samples {
-        data: raw.clone(),
+        data: raw,
         sample_rate: 8_000,
     })
     .unwrap();

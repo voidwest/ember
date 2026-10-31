@@ -510,7 +510,7 @@ impl<'m> VoiceSession<'m> {
                 self.stats.media_feature_hits += 1;
             } else {
                 self.stats.media_feature_misses += 1;
-                cache.insert(key, features.clone());
+                cache.insert(key, features);
             }
         }
         Ok(rows)
@@ -814,7 +814,7 @@ impl<'m> VoiceSession<'m> {
             v.extend_from_slice(&eot_ids);
             v
         } else {
-            eot_ids.clone()
+            eot_ids
         };
         let terminal_emb = lookup_embeddings_for(self.model, self.backend, &terminal)?;
         let _ = self.model.llm.forward_last_logits_embeddings_with_cache(

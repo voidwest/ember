@@ -253,7 +253,7 @@ mod tests {
         let file = dir.join("junk.gguf");
         std::fs::write(&file, b"definitely not gguf").unwrap();
         let command = DiffCommand {
-            file: file.clone(),
+            file,
             against: vec!["llama.cpp".to_string(), "candle".to_string()],
             timeout_secs: 5,
             json: false,

@@ -142,7 +142,10 @@ fn plan(py: Python<'_>, path: PathBuf, arch: &str, execution: &str) -> PyResult<
 /// `llama.cpp` / `candle`; `seeds` are explicit seed files (omit for the
 /// mode defaults, which read `research/embersec/comparative/corpus.json`).
 // Flat Python keyword surface; the request struct is assembled below.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the keyword arguments of the Python function"
+)]
 #[pyfunction]
 #[pyo3(signature = (n, out_dir, seed=1, mode="raw", against=None, timeout_secs=8.0, jobs=4, seeds=None))]
 fn diff_corpus(

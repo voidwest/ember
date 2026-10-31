@@ -2060,7 +2060,7 @@ mod tests {
         let mut semantic = read_semantic_manifest(&root).unwrap();
         reseal(&root, &mut semantic);
         let anchored = VerifyOptions {
-            expected_semantic_hash: Some(original.semantic_hash.clone()),
+            expected_semantic_hash: Some(original.semantic_hash),
             ..VerifyOptions::default()
         };
         let report = verify_bundle(&root, &anchored).unwrap();
@@ -2071,7 +2071,7 @@ mod tests {
         let root = testutil::sample_bundle("unknown-field");
         let original = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         let anchored = VerifyOptions {
-            expected_semantic_hash: Some(original.semantic_hash.clone()),
+            expected_semantic_hash: Some(original.semantic_hash),
             ..VerifyOptions::default()
         };
         let mut semantic = read_semantic_manifest(&root).unwrap();
@@ -2426,7 +2426,7 @@ mod tests {
                 let path = root.join("checksums.sha256");
                 let mut text = std::fs::read_to_string(&path).unwrap();
                 // the victim lives one level above the bundle root
-                text.push_str(&format!("{}\n", victim_hash + "  ../ember-victim.txt"));
+                text.push_str(&format!("{victim_hash}  ../ember-victim.txt\n"));
                 std::fs::write(&path, text).unwrap();
             },
             &["checksums"],

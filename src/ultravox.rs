@@ -143,7 +143,10 @@ impl UltravoxAssembler {
 
     /// Assemble one multimodal request (text with N placeholders + N audio
     /// segments) into embeddings ready for prefill.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "application call path: each argument is a separate input"
+    )]
     pub fn assemble(
         &self,
         backend: &CpuBackend,
@@ -426,7 +429,10 @@ impl Ultravox {
     /// Every [`AUDIO_PLACEHOLDER`] in `text` binds to one entry of
     /// `audios`, in order of appearance. The returned trace carries the
     /// *last* segment's boundaries (validation uses single-segment inputs).
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature names the trace, embeddings and timings that the call returns"
+    )]
     pub fn build_inputs(
         &self,
         backend: &CpuBackend,

@@ -590,7 +590,8 @@ mod tests {
         let manifest = run_manifest_value();
         let mut envelope = build_envelope(&manifest, &SEED, 1_700_000_000).unwrap();
         let sig = envelope["signature_hex"].as_str().unwrap().to_string();
-        let flipped = format!("{:02x}", u8::from_str_radix(&sig[..2], 16).unwrap() ^ 1) + &sig[2..];
+        let first = u8::from_str_radix(&sig[..2], 16).unwrap() ^ 1;
+        let flipped = format!("{first:02x}{}", &sig[2..]);
         envelope["signature_hex"] = serde_json::json!(flipped);
         let err = verify_envelope(&envelope).expect_err("tampered signature must fail");
         assert!(
@@ -652,7 +653,7 @@ mod tests {
             edited[field] = value;
             assert!(verify_envelope(&edited).is_err(), "{field}");
         }
-        let mut missing = envelope.clone();
+        let mut missing = envelope;
         missing.as_object_mut().unwrap().remove("signed_at_unix");
         assert!(verify_envelope(&missing).is_err());
         // Envelope field order is irrelevant to the signature. (A record
