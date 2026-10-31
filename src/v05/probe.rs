@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(fit_ridge(&rows, &labels, 0.1).unwrap(), probe);
         let bias = midpoint_bias(&probe.weights, &rows, &labels).unwrap();
         let shifted = LinearProbe {
-            weights: probe.weights.clone(),
+            weights: probe.weights,
             bias,
         };
         assert_eq!(shifted.accuracy(&rows, &labels), Some(1.0));

@@ -558,7 +558,7 @@ pub fn resolve_static_selector(
         return Err("generated-step cannot be resolved before generation".into());
     }
     let (selected_indices, detail) = select_static(selector, info)?;
-    let mut sorted = selected_indices.clone();
+    let mut sorted = selected_indices;
     sorted.sort_unstable();
     sorted.dedup();
     let round_trip = round_trip_status(info, &sorted, detail.matched_byte_span);

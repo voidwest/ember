@@ -389,7 +389,7 @@ impl<'e> AgentSession<'e> {
                         serde_json::json!({ "error": message }),
                     );
                 }
-                self.summary(RunStatus::Failed(message.clone()), None)
+                self.summary(RunStatus::Failed(message), None)
             }
         };
 

@@ -837,7 +837,7 @@ impl Console {
         let console = cx.entity().downgrade();
         let table = match &self.runs_table {
             Some(state) => {
-                let console = console.clone();
+                let console = console;
                 let picks = &self.compare_picks;
                 state.update(cx, |state, cx| {
                     state

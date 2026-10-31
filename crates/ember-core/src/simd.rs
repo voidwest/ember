@@ -1546,11 +1546,23 @@ mod x86_64 {
             // f32-rounded constants (clippy's "approximate" lints are the
             // point here: these must be the f32 values the reference expf
             // range reduction uses, not higher-precision literals)
-            #[allow(clippy::excessive_precision, clippy::approx_constant)]
+            #[allow(
+                clippy::excessive_precision,
+                clippy::approx_constant,
+                reason = "f32-rounded constants of the reference expf range reduction"
+            )]
             const LOG2E: f32 = 1.442_695;
-            #[allow(clippy::excessive_precision, clippy::approx_constant)]
+            #[allow(
+                clippy::excessive_precision,
+                clippy::approx_constant,
+                reason = "f32-rounded constants of the reference expf range reduction"
+            )]
             const LN2_HI: f32 = 6.931_471_8e-1; // ln2, high 12 bits
-            #[allow(clippy::excessive_precision, clippy::approx_constant)]
+            #[allow(
+                clippy::excessive_precision,
+                clippy::approx_constant,
+                reason = "f32-rounded constants of the reference expf range reduction"
+            )]
             const LN2_LO: f32 = 1.908_214_9e-10; // ln2 remainder
                                                  // Exact Taylor coefficients 1/k!, k = 7..0. Truncation error on
                                                  // |r| <= ln2/2 is r^8/8! < 5e-9 — far below one f32 ulp.
@@ -1887,7 +1899,10 @@ mod aarch64 {
     /// the requested rows, `x` must hold `columns` activation rows, and `out`
     /// must be valid for the addressed writes.
     #[target_feature(enable = "neon,dotprod,fp16")]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+    )]
     pub(crate) unsafe fn matmul_q8_0_decode_columns_dotprod<L: DecodeRowBlocks>(
         layout: &L,
         x: &[u8],
@@ -2585,7 +2600,6 @@ fn q8_batch_tile_rows(rows: usize) -> usize {
     }
 }
 
-#[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
 fn matmul_q8_0_batch_dispatch_tile(
     x: &[u8],
     rows: usize,
@@ -2844,7 +2858,10 @@ impl Q8DecodeWeight<'_> {
     /// # Safety
     /// `out` must be valid for those writes and no other thread may access
     /// them concurrently.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+    )]
     unsafe fn compute_rows_columns(
         self,
         x: &[u8],
@@ -4122,7 +4139,7 @@ mod tests {
         let (row0_data, _row0_expected) = make_row(blocks_per_row);
         let (row1_data, _row1_expected) = make_row(blocks_per_row);
 
-        let mut data = row0_data.clone();
+        let mut data = row0_data;
         data.extend_from_slice(&row1_data);
 
         let mut scalar_out = vec![0.0f32; blocks_per_row * 32];

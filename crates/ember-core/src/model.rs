@@ -130,7 +130,10 @@ pub trait ForwardModel<B: Backend> {
     ///
     /// this is the probing entry point - the same model code, but collecting
     /// intermediate representations instead of discarding them.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn forward_with_activations(
         &self,
         backend: &B,
@@ -143,7 +146,10 @@ pub trait ForwardModel<B: Backend> {
     /// each layer. The returned vector has one flat `[n_layers * embed_dim]`
     /// buffer per group. Implementations can override this to avoid storing
     /// full sequence activations.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn forward_pooled_activations(
         &self,
         backend: &B,
@@ -189,7 +195,10 @@ pub trait ForwardModel<B: Backend> {
     /// The returned logits contain one row per block, evaluated at that block's
     /// final token. The default implementation evaluates blocks independently;
     /// models with native block-masking support can override it for throughput.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn forward_pooled_with_blocks(
         &self,
         backend: &B,
@@ -1671,7 +1680,10 @@ impl<B: Backend> Gpt2<B> {
     /// returns `(per_layer_hidden_states, final_logits)`.
     /// each hidden state is the flattened sequence state after the block's
     /// residual add, shape `[seq_len * embed_dim]`.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_with_activations(
         &self,
         backend: &B,
@@ -1694,7 +1706,10 @@ impl<B: Backend> Gpt2<B> {
         Ok((activations, logits))
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     pub fn forward_pooled_activations(
         &self,
         backend: &B,
@@ -1718,7 +1733,10 @@ impl<B: Backend> Gpt2<B> {
             .map(|(pooled, _)| pooled)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the signature spells out each returned tensor; an alias would hide them"
+    )]
     fn forward_pooled_hidden_and_last(
         &self,
         backend: &B,

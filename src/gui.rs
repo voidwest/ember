@@ -73,7 +73,10 @@ pub(crate) struct GuiSession {
     run_counter: u64,
     /// Where run bundles go (`runs/gui`; tests point it elsewhere).
     output_root: String,
-    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "gui"),
+        allow(dead_code, reason = "only the `gui` feature uses it")
+    )]
     /// The shared pass of the layer sweep in progress (see
     /// `run_sweep_point`).
     sweep_cache: Option<SweepCache>,
@@ -83,7 +86,10 @@ pub(crate) struct GuiSession {
     cancel: Option<ember::cancel::CancelToken>,
 }
 
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
 /// One layer sweep's shared pass: every layer's baseline bundle (the
 /// baselines differ only in which layer their source capture records, so
 /// one generation serves them all) and the recorded prompt prefix each
@@ -445,7 +451,10 @@ impl GuiSession {
         })
     }
 
-    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "gui"),
+        allow(dead_code, reason = "only the `gui` feature uses it")
+    )]
     /// Run one point of a layer sweep: the same baseline/intervention pair
     /// `run_baseline_intervention` produces for `cfg` (bit-identical
     /// bundles), but the first point of a sweep runs one shared pass for
@@ -506,14 +515,20 @@ impl GuiSession {
 
     /// The sweep is over (finished, stopped or abandoned): remove the
     /// baseline bundles of layers that never ran.
-    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "gui"),
+        allow(dead_code, reason = "only the `gui` feature uses it")
+    )]
     pub(crate) fn end_sweep(&mut self) {
         if let Some(cache) = self.sweep_cache.take() {
             discard_unused_baselines(&cache);
         }
     }
 
-    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "gui"),
+        allow(dead_code, reason = "only the `gui` feature uses it")
+    )]
     fn build_sweep_cache(
         &mut self,
         cfg: &RunConfig,
@@ -641,7 +656,10 @@ impl GuiSession {
         })
     }
 
-    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "gui"),
+        allow(dead_code, reason = "only the `gui` feature uses it")
+    )]
     fn finish_sweep_point(
         &mut self,
         cfg: &RunConfig,
@@ -741,7 +759,10 @@ impl GuiSession {
 
 /// Remove the bundles of sweep layers that were never shown: their
 /// baselines, and their intervention bundles when the pass computed them.
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
 fn discard_unused_baselines(cache: &SweepCache) {
     for (layer, variant) in &cache.variants {
         if let Some((baseline, _)) = cache.baselines.get(layer) {
@@ -770,7 +791,10 @@ fn run_target(
 /// hashes come from defaults, exactly like a user-authored spec).
 /// Shared raw-spec skeleton for the console: same model/execution/generation
 /// boilerplate with per-run name, prompt, payloads, and output directory.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "application call path: each argument is a separate input"
+)]
 fn raw_spec(
     name: &str,
     model_path: &str,
@@ -1125,7 +1149,10 @@ pub(crate) struct RunConfig {
 }
 
 impl RunConfig {
-    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "gui"),
+        allow(dead_code, reason = "only the `gui` feature uses it")
+    )]
     /// Key over everything but the layer: the points of one layer sweep.
     fn sweep_key(&self) -> String {
         format!(
@@ -1251,7 +1278,7 @@ fn run_config_from(
     if req.max_new_tokens == 0 {
         return Err("max new tokens must be >= 1".to_string());
     }
-    let execution = ExecutionMode::from_cli(&req.execution).map_err(|error| error.to_string())?;
+    let execution = ExecutionMode::from_cli(&req.execution)?;
     Ok(RunConfig {
         model_path: req.model_path.clone(),
         prompt: req.prompt.clone(),
@@ -1741,7 +1768,7 @@ fn run_output(
             generated_tokens: result.generated_token_ids.len(),
             bundle_dir: path.display().to_string(),
             semantic_hash: identity.semantic_hash.clone(),
-            payload_hash: identity.payload_hash.clone(),
+            payload_hash: identity.payload_hash,
             wall_ms,
             decode_tps,
             events,

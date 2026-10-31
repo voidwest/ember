@@ -998,7 +998,10 @@ mod x86 {
     /// Four-row Q4_K × Q8_K tile. Weight headers/quants are loaded and
     /// unpacked once, then consumed by four activation rows.
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also used in arithmetic or to index several arrays"
+    )]
     /// # Safety
     ///
     /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
@@ -1081,7 +1084,10 @@ mod x86 {
 
     /// Four-row Q4_K × Q8_K tile reading pre-split nibbles (opt-in, prefill-only).
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also used in arithmetic or to index several arrays"
+    )]
     /// # Safety
     ///
     /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
@@ -1168,7 +1174,10 @@ mod x86 {
 
     /// Four-row Q6_K × Q8_K tile; see [`q4_k_dot_q8_k_x4`].
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also used in arithmetic or to index several arrays"
+    )]
     /// # Safety
     ///
     /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
@@ -1268,7 +1277,10 @@ mod x86 {
 
     /// Four-row Q6_K × Q8_K tile reading pre-expanded quants (opt-in, prefill-only).
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also used in arithmetic or to index several arrays"
+    )]
     /// # Safety
     ///
     /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is

@@ -286,7 +286,7 @@ pub(crate) fn run_sweep(
             .transpose()
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         head_count: definition.heads.is_some().then_some(n_heads),
-        interventions: definition.interventions.clone(),
+        interventions: definition.interventions,
         effect,
         baseline: reference(&base, &baseline.relative_dir),
         points: records,

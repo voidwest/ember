@@ -22,7 +22,10 @@ use half::f16;
 ///
 /// `k_base` / `v_base` index key/value `min_j`'s row at `stride` elements
 /// per position. `scores` must hold at least `max_j + 1` values.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+)]
 #[inline]
 pub(crate) fn cached_row_head(
     q: &[f32],
@@ -161,7 +164,10 @@ mod neon {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "kernel signature: buffers, strides and shape stay separate arguments on the hot path"
+    )]
     #[target_feature(enable = "neon,fp16")]
     pub(super) unsafe fn scores(
         q: &[f32],

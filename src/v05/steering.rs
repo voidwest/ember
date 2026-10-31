@@ -713,7 +713,7 @@ mod tests {
         .unwrap();
         // |row| = 5, unit d = (0.6, 0, 0.8, 0): += 0.5 * 5 * d.
         assert_eq!(row, vec![3.0 + 1.5, 4.0, 2.0, 0.0]);
-        let mut row = original.clone();
+        let mut row = original;
         assert!(steer_row(&mut row, &[0.0; 4], 1.0, SteerNormalization::Unit).is_err());
         assert!(steer_row(&mut row, &[1.0; 3], 1.0, SteerNormalization::None).is_err());
     }

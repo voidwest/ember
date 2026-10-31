@@ -114,7 +114,10 @@ pub fn is_tracing() -> bool {
 
 /// Record a trace event directly (without the RAII span pattern).
 /// Used when timing is done manually or when output shapes are only known after the operation.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per field of the record that it builds or compares"
+)]
 #[inline]
 pub fn record(
     name: &str,

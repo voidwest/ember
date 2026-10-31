@@ -142,11 +142,8 @@ fn native_worker_runs_and_restores_real_model() {
     };
     let info = info.unwrap();
     assert!(info.n_layers > 8);
-    tx.send(WorkerMsg::Run(
-        config.clone(),
-        ember::cancel::CancelToken::new(),
-    ))
-    .unwrap();
+    tx.send(WorkerMsg::Run(config, ember::cancel::CancelToken::new()))
+        .unwrap();
     let WorkerReply::RunDone(result) = receive() else {
         panic!("expected run reply")
     };
@@ -235,7 +232,7 @@ fn native_worker_cancels_a_run_promptly_and_keeps_nothing() {
         assert_eq!(bundles(), before, "a cancelled run leaves no bundle");
     }
     // The model stayed loaded: a short run afterwards completes.
-    let mut short = values.clone();
+    let mut short = values;
     short.max_tokens = "2".into();
     let config = parse_run_request(&short.build_run_request().unwrap()).unwrap();
     tx.send(WorkerMsg::Run(config, ember::cancel::CancelToken::new()))
@@ -262,7 +259,7 @@ fn a_store_from_a_newer_build_opens_read_only() {
     newer.schema_minor = super::app_store::STORE_SCHEMA_MINOR + 1;
     std::fs::write(&path, serde_json::to_vec(&newer).unwrap()).unwrap();
 
-    let (store, error, write_path) = super::open_store(path.clone(), &dir.join("app-state.json"));
+    let (store, error, write_path) = super::open_store(path, &dir.join("app-state.json"));
     assert!(store.written_by_newer_build(), "the store is still shown");
     assert!(error.unwrap().contains("newer Ember"));
     assert!(write_path.is_none(), "and never written back");

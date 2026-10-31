@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn multiple_heads_do_not_bleed_across_boundaries() {
         let original = vec![1.0, 2.0, 3.0, 4.0, -1.0, -2.0, -3.0, -4.0];
-        let mut values = original.clone();
+        let mut values = original;
         rotate_key_row_in_place(
             &mut values,
             2,
