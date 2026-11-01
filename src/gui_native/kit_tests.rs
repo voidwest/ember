@@ -1234,3 +1234,115 @@ async fn editor_keys_drive_the_palette_go_to_run_and_the_result_tabs(cx: &mut Te
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn the_spec_view_follows_the_form_and_edits_it_back(cx: &mut TestAppContext) {
+    let cmd = |key: &str| {
+        if cfg!(target_os = "macos") {
+            format!("cmd-{key}")
+        } else {
+            format!("ctrl-{key}")
+        }
+    };
+    let (handle, console) = console_window(cx).await;
+    cx.update_window(handle, |_, window, cx| {
+        console.update(cx, |console, cx| {
+            console.model_path = "model.gguf".into();
+            console.layer = "8".into();
+            console.value = "0.5".into();
+            console.goto(View::Experiment, cx);
+            console.focus_handle.focus(window, cx);
+        });
+        window.draw(cx).clear(cx);
+        assert!(window
+            .try_find(SharedString::from("setup-advanced"))
+            .is_some());
+        // The palette opens the view.
+        window.press(&cmd("shift-p"), cx);
+        window.input("spec view", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(
+            console.read(cx).palette_candidates().first(),
+            Some(&super::palette::Command::ToggleSpec)
+        );
+        window.press("enter", cx);
+        window.draw(cx).clear(cx);
+        assert!(console.read(cx).spec_open);
+        assert!(window.try_find(SharedString::from("spec-copy")).is_some());
+        assert!(
+            window
+                .try_find(SharedString::from("setup-advanced"))
+                .is_none(),
+            "the view takes the place of the form"
+        );
+        let shown = console.read(cx).spec_shown.clone();
+        assert!(shown.contains("factor = 0.5"), "{shown}");
+        assert_eq!(console.read(cx).spec_input.read(cx).value(cx), shown);
+
+        // An edit that the form can hold changes the form.
+        let edited = shown
+            .replace("factor = 0.5", "factor = 0.25")
+            .replace("layers = [8]", "layers = [3]");
+        assert_ne!(edited, shown);
+        console.update(cx, |console, cx| console.spec_edited(&edited, cx));
+        {
+            let console = console.read(cx);
+            assert_eq!(
+                (console.value.as_str(), console.layer.as_str()),
+                ("0.25", "3")
+            );
+            assert!(!console.spec_held);
+            assert_eq!(console.spec_note, None);
+        }
+
+        // An edit that the form cannot hold stays in the view, with the
+        // reason, and the form keeps its values.
+        let seeded = edited.replace("seed = 0", "seed = 7");
+        assert_ne!(seeded, edited);
+        console.update(cx, |console, cx| console.spec_edited(&seeded, cx));
+        {
+            let console = console.read(cx);
+            assert!(console.spec_held);
+            let note = console.spec_note.clone().unwrap_or_default();
+            assert!(note.contains("experiment.seed"), "{note}");
+            assert_eq!(console.value, "0.25");
+        }
+        window.draw(cx).clear(cx);
+        assert!(window.try_find(SharedString::from("spec-revert")).is_some());
+        // An edit back to the form's spec drops the hold.
+        let back = console.read(cx).spec_shown.clone();
+        console.update(cx, |console, cx| console.spec_edited(&back, cx));
+        assert!(!console.read(cx).spec_held);
+        assert_eq!(console.read(cx).spec_note, None);
+        console.update(cx, |console, cx| console.spec_edited(&seeded, cx));
+        assert!(console.read(cx).spec_held);
+        // While it holds the edit, the view does not follow the form.
+        console.update(cx, |console, _| console.value = "2".into());
+        window.draw(cx).clear(cx);
+        assert!(!console.read(cx).spec_shown.contains("factor = 2"));
+
+        // Revert drops the edit and shows the form's spec again.
+        console.update(cx, |console, cx| console.revert_spec(cx));
+        window.draw(cx).clear(cx);
+        {
+            let console = console.read(cx);
+            assert!(!console.spec_held);
+            assert!(
+                console.spec_shown.contains("factor = 2"),
+                "{}",
+                console.spec_shown
+            );
+        }
+        assert!(window.try_find(SharedString::from("spec-revert")).is_none());
+
+        // The header button closes the view.
+        console.update(cx, |console, cx| console.toggle_spec(cx));
+        window.draw(cx).clear(cx);
+        assert!(window
+            .try_find(SharedString::from("setup-advanced"))
+            .is_some());
+    })
+    .unwrap();
+}

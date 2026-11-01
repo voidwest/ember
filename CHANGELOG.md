@@ -15,6 +15,13 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
 
 ### Added
 
+- Native console: a spec view. **TOML** in the setup pane, or the palette's
+  **Toggle spec view (TOML)**, shows the experiment as the
+  `ember.experiment.v1` intervention spec that Run executes beside its
+  baseline. The view follows the form, and an edit in the view changes the
+  form when the form can hold it. The view keeps any other edit with the
+  reason, until **Revert**. **Copy** copies the spec
+  (`docs/v06-gui.md#spec-view-toml`).
 - Sweeps: `features = { dictionary, ids }` in `[sweep]` sweeps the features
   of a feature dictionary, one per point: each point gives the swept
   interventions `features = { dictionary, ids = [F] }`. `ids` is a list or

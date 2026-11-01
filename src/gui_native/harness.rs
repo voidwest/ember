@@ -988,6 +988,39 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
             context.update_window(handle.into(), |_, _, cx| {
                 console.update(cx, |console, _| console.palette_open = false);
             })?;
+            // The spec view: the experiment as TOML in the setup pane, in
+            // step with the form, then with an edit that the form cannot
+            // hold.
+            for (file, held) in [("spec", false), ("spec-held", true)] {
+                context.update_window(handle.into(), |_, window, cx| {
+                    console.update(cx, |console, cx| {
+                        console.view = View::Experiment;
+                        if !console.spec_open {
+                            console.toggle_spec(cx);
+                        }
+                        if held {
+                            let edited = console.spec_shown.replace("seed = 0", "seed = 7");
+                            console.spec_edited(&edited, cx);
+                            // As if typed: the view shows the edit.
+                            console
+                                .spec_input
+                                .update(cx, |input, cx| input.set_value(edited, cx));
+                        }
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!("{name}-{appearance}-{file}.png")))?;
+            }
+            context.update_window(handle.into(), |_, _, cx| {
+                console.update(cx, |console, cx| console.toggle_spec(cx));
+            })?;
             // Go to run lists saved runs, so only the seeded store has
             // anything for it to show.
             if seed_runs_requested() {

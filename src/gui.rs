@@ -1453,6 +1453,221 @@ fn build_and_resolve_spec(
 }
 
 // ---------------------------------------------------------------------------
+// the spec view: form -> TOML, and TOML -> form where the form can hold it
+// ---------------------------------------------------------------------------
+
+/// The output directory the spec view shows. A run writes to its own
+/// timestamped directory instead.
+pub(crate) const SPEC_VIEW_OUTPUT_DIR: &str = "runs/gui/intervention";
+
+/// The intervention run's spec for `cfg`, as TOML: what the console runs,
+/// with [`SPEC_VIEW_OUTPUT_DIR`] as the output directory.
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
+pub(crate) fn intervention_spec_text(cfg: &RunConfig) -> Result<String, String> {
+    build_and_resolve_spec(cfg, RunKind::Intervention, SPEC_VIEW_OUTPUT_DIR).map(|(text, _)| text)
+}
+
+/// The fields of the console's form that an intervention spec sets. `None`
+/// means the spec does not set that field, so the form keeps its value.
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SpecFields {
+    pub model_path: String,
+    pub prompt: String,
+    pub max_new_tokens: usize,
+    pub execution: String,
+    /// The v0.4 hook stage id, as the form names sites.
+    pub site: String,
+    pub layer: Option<usize>,
+    pub operation: String,
+    /// The scale factor or the interpolate alpha.
+    pub value: Option<f32>,
+    /// `capture` or `zero`, for the operations that take a source.
+    pub source: Option<String>,
+    pub source_layer: Option<usize>,
+    /// `prompt-final` or `matched-span`.
+    pub token: String,
+    pub span: Option<String>,
+}
+
+/// Read the form's fields from an edited spec. This fails, with the reason,
+/// when the spec has a shape that the form cannot hold: other than one
+/// input and one intervention, or another token selector or source. Whether
+/// every other field matches is checked by [`check_same_experiment`].
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
+pub(crate) fn spec_fields(text: &str) -> Result<SpecFields, String> {
+    let spec = RawExperimentSpec::from_toml_str(text)
+        .and_then(|raw| raw.resolve())
+        .map_err(|error| error.to_string())?;
+    let [input] = spec.inputs.as_slice() else {
+        return Err(format!(
+            "The console runs one prompt. This spec has {} inputs.",
+            spec.inputs.len()
+        ));
+    };
+    let [intervention] = spec.interventions.as_slice() else {
+        return Err(format!(
+            "The console runs one intervention. This spec has {}.",
+            spec.interventions.len()
+        ));
+    };
+    let one_layer = |selector: &LayerSelector, what: &str| match selector {
+        LayerSelector::List(layers) if layers.len() == 1 => Ok(layers[0]),
+        _ => Err(format!(
+            "The console sets one {what} layer. Write layers = [L]."
+        )),
+    };
+    let site = intervention.site;
+    let layer = if site.is_per_layer() {
+        Some(one_layer(&intervention.layers, "intervention")?)
+    } else {
+        None
+    };
+    let operation = intervention.operation.kind_name().to_string();
+    if matches!(
+        GuiOperation::parse(&operation)?,
+        GuiOperation::RestoreOriginal
+    ) {
+        return Err(
+            "The console's operations are replace, zero, scale, interpolate and \
+                    add-delta. This spec uses restore-original."
+                .to_string(),
+        );
+    }
+    let value = match intervention.operation {
+        InterventionOperation::Scale { factor } => Some(factor),
+        InterventionOperation::Interpolate { alpha } => Some(alpha),
+        _ => None,
+    };
+    let (source, source_layer) = match &intervention.source {
+        None => (None, None),
+        Some(InterventionSource::Zero) => (Some("zero".to_string()), None),
+        Some(InterventionSource::CaptureFromCurrentRun { capture_id })
+            if capture_id == "cap-src" =>
+        {
+            let capture = spec
+                .captures
+                .iter()
+                .find(|capture| capture.id == "cap-src")
+                .ok_or("The spec has no source capture cap-src.")?;
+            let source_layer = if site.is_per_layer() {
+                Some(one_layer(&capture.layers, "source capture")?)
+            } else {
+                None
+            };
+            (Some("capture".to_string()), source_layer)
+        }
+        Some(other) => {
+            return Err(format!(
+                "The console's source is the zero tensor or its own capture cap-src. This spec \
+                 uses {}.",
+                other.kind_name()
+            ))
+        }
+    };
+    let (token, span) = match &intervention.tokens {
+        TokenSelector::PromptFinal => ("prompt-final".to_string(), None),
+        TokenSelector::MatchedTextSpan { text, .. } => {
+            ("matched-span".to_string(), Some(text.clone()))
+        }
+        other => {
+            let kind = serde_json::to_value(other)
+                .ok()
+                .and_then(|value| value["kind"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            return Err(format!(
+                "The console selects the final prompt token or a matched text span. This spec \
+                 uses {kind}."
+            ));
+        }
+    };
+    Ok(SpecFields {
+        model_path: spec.model.path.to_string_lossy().into_owned(),
+        prompt: input.text.clone(),
+        max_new_tokens: spec.generation.max_new_tokens,
+        execution: spec.execution.mode.name().to_string(),
+        site: site.stage_id().to_string(),
+        layer,
+        operation,
+        value,
+        source,
+        source_layer,
+        token,
+        span,
+    })
+}
+
+/// Check that an edited spec runs the same experiment as the one the form
+/// generates: equal once resolved, apart from the name, the description and
+/// the recorded defaults, which the console sets itself. The error names the
+/// first field that differs.
+#[cfg_attr(
+    not(feature = "gui"),
+    allow(dead_code, reason = "only the `gui` feature uses it")
+)]
+pub(crate) fn check_same_experiment(edited: &str, generated: &str) -> Result<(), String> {
+    let normalize = |text: &str| -> Result<serde_json::Value, String> {
+        let mut spec = RawExperimentSpec::from_toml_str(text)
+            .and_then(|raw| raw.resolve())
+            .map_err(|error| error.to_string())?;
+        spec.experiment.name.clear();
+        spec.experiment.description.clear();
+        spec.defaults.clear();
+        serde_json::to_value(&spec).map_err(|error| error.to_string())
+    };
+    let (edited, generated) = (normalize(edited)?, normalize(generated)?);
+    match first_difference(&edited, &generated, "") {
+        None => Ok(()),
+        Some(path) => Err(format!(
+            "The form cannot hold `{path}` as written. Save the spec to a file and run it \
+             with `ember experiment run`."
+        )),
+    }
+}
+
+/// The dotted path of the first place where `a` and `b` differ.
+fn first_difference(a: &serde_json::Value, b: &serde_json::Value, path: &str) -> Option<String> {
+    use serde_json::Value;
+    let join = |key: &str| {
+        if path.is_empty() {
+            key.to_string()
+        } else {
+            format!("{path}.{key}")
+        }
+    };
+    match (a, b) {
+        (Value::Object(a), Value::Object(b)) => {
+            let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+            keys.into_iter()
+                .find_map(|key| match (a.get(key), b.get(key)) {
+                    (Some(x), Some(y)) => first_difference(x, y, &join(key)),
+                    _ => Some(join(key)),
+                })
+        }
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => a
+            .iter()
+            .zip(b)
+            .enumerate()
+            .find_map(|(index, (x, y))| first_difference(x, y, &format!("{path}[{index}]"))),
+        _ if a == b => None,
+        _ => Some(if path.is_empty() {
+            "spec".into()
+        } else {
+            path.to_string()
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // execution
 // ---------------------------------------------------------------------------
 
@@ -2640,6 +2855,91 @@ mod tests {
             median(&mut shared),
             full.len()
         );
+    }
+
+    #[test]
+    fn the_spec_view_reads_back_what_the_console_writes() {
+        for (operation, source) in [
+            ("replace", "capture"),
+            ("replace", "zero"),
+            ("zero", "capture"),
+            ("scale", "capture"),
+            ("interpolate", "zero"),
+            ("add-delta", "capture"),
+        ] {
+            let mut req = base_request();
+            req.operation = operation.to_string();
+            req.source = source.to_string();
+            req.factor = (operation == "scale").then_some(0.25);
+            req.alpha = (operation == "interpolate").then_some(0.4);
+            let text = intervention_spec_text(&cfg_of(&req)).expect("spec");
+            let fields = spec_fields(&text).expect("fields");
+            assert_eq!(fields.operation, operation);
+            assert_eq!(fields.site, req.site);
+            assert_eq!(fields.layer, req.layer);
+            assert_eq!(fields.prompt, req.prompt);
+            let takes_source = matches!(operation, "replace" | "interpolate" | "add-delta");
+            assert_eq!(fields.source.as_deref(), takes_source.then_some(source));
+            assert_eq!(
+                fields.value,
+                match operation {
+                    "scale" => Some(0.25),
+                    "interpolate" => Some(0.4),
+                    _ => None,
+                }
+            );
+            assert_eq!(check_same_experiment(&text, &text), Ok(()));
+        }
+    }
+
+    #[test]
+    fn the_spec_view_says_what_the_form_cannot_hold() {
+        let text = intervention_spec_text(&cfg_of(&base_request())).expect("spec");
+        let error = |edited: &str| {
+            spec_fields(edited)
+                .and_then(|_| check_same_experiment(edited, &text))
+                .unwrap_err()
+        };
+        // Metadata the console owns is not a difference.
+        let renamed = text.replace("name = \"gui-intervention\"", "name = \"mine\"");
+        assert_ne!(renamed, text);
+        assert_eq!(check_same_experiment(&renamed, &text), Ok(()));
+        // A field the form has no control for is named.
+        let seeded = text.replace("seed = 0", "seed = 7");
+        assert_ne!(seeded, text);
+        assert!(
+            error(&seeded).contains("experiment.seed"),
+            "{}",
+            error(&seeded)
+        );
+        let second_input = text.replacen(
+            "[[inputs]]",
+            "[[inputs]]\nid = \"prompt-2\"\ntext = \"more\"\n\n[[inputs]]",
+            1,
+        );
+        assert!(error(&second_input).contains("one prompt"));
+        let absolute = text.replace(
+            "kind = \"prompt-final\"",
+            "kind = \"absolute-token\"\nindex = 1",
+        );
+        assert_ne!(absolute, text);
+        assert!(
+            error(&absolute).contains("absolute-token"),
+            "{}",
+            error(&absolute)
+        );
+        // The form's picker does not offer restore-original.
+        let restore = text
+            .replace("kind = \"scale\"", "kind = \"restore-original\"")
+            .replace("factor = 0.5\n", "");
+        assert_ne!(restore, text);
+        assert!(
+            error(&restore).contains("uses restore-original"),
+            "{}",
+            error(&restore)
+        );
+        // A spec that does not parse says why.
+        assert!(spec_fields("schema = 1").is_err());
     }
 
     #[test]
