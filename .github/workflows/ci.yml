@@ -72,10 +72,11 @@ jobs:
         # --all-targets does not include doctests.
         run: cargo test --locked --doc
 
-      - name: test with the audio feature
+      - name: build tests with the audio feature
         # Otherwise only clippy ever compiles `audio`; libasound2-dev is
-        # installed above.
-        run: cargo test --locked --features audio --lib
+        # installed above. No unit test uses the audio code, so the step
+        # builds and links the tests rather than run them a second time.
+        run: cargo test --locked --features audio --lib --no-run
 
       - name: native GUI interactions (headless test window)
         run: cargo test --locked --features gui-tests --bin ember gui_native::kit_tests
