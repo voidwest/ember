@@ -124,7 +124,9 @@ run "shell syntax" shell_syntax
 if [[ "$mode" == "full" ]]; then
     run "test" cargo test --locked --all-targets
     run "doctests" cargo test --locked --doc
-    run "test with the audio feature" cargo test --locked --features audio --lib
+    # No unit test uses the audio code, so build the tests with it rather
+    # than run the library tests a second time.
+    run "build tests with the audio feature" cargo test --locked --features audio --lib --no-run
     if cargo audit --version >/dev/null 2>&1; then
         run "cargo audit" cargo audit
     else

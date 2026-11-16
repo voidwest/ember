@@ -1827,7 +1827,7 @@ mod tests {
                 let initial: Vec<f32> = (0..outputs).map(|i| i as f32 * 0.125 - 3.0).collect();
                 let mut serial = initial.clone();
                 matmul_k_q8_into(&src, 1, &weight, &mut serial, false).unwrap();
-                let mut team = initial.clone();
+                let mut team = initial;
                 matmul_k_q8_into(&src, 1, &weight, &mut team, true).unwrap();
                 assert_eq!(bits(&team), bits(&serial), "{dtype:?} outputs={outputs}");
             }

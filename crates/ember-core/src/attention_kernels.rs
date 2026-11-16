@@ -1,4 +1,4 @@
-//! Prefill (multi-row) cached-attention inner kernels.
+//! Cached-attention inner kernels for prefill rows and fast or planned decode.
 //!
 //! [`cached_row_head`] computes exactly what
 //! [`crate::backend::cached_attention_row_head`] computes for one (row, head),

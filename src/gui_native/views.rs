@@ -364,7 +364,7 @@ impl Console {
     ///
     /// gpui-kit ships a `TabBar` with exactly this `.underline()` treatment, and
     /// the design guides say to reach for the component. It cannot be used here
-    /// for a concrete reason, checked in the 0.6.6 source rather than assumed:
+    /// for a concrete reason, checked in the 0.6.6 and 0.9.0 source rather than assumed:
     /// `Tab::ix` sets `self.base = self.base.id(ix)` -- a tab's element id is
     /// its *positional index*, assigned internally, and the docs page documents
     /// a `.id("custom-id")` method that does not exist. So a tab has no stable
@@ -686,7 +686,7 @@ impl Console {
                                 )),
                         )
                         .child(div().w(px(80.0)).flex_none().child(mono(
-                            quant_of(path).to_string(),
+                            quant_of(path),
                             Type::META,
                             colors.text_muted,
                         )))

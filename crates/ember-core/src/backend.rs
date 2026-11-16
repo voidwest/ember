@@ -1116,6 +1116,7 @@ impl CpuBackend {
             cache_head_stride,
             spec.head_dim,
             None,
+            true,
             qk_row,
             out,
         );
@@ -2061,6 +2062,7 @@ fn cached_attention_into(
         cache_head_stride,
         spec.head_dim,
         None,
+        false,
         qk_row,
         out,
     );
@@ -2192,6 +2194,7 @@ pub(crate) fn cached_attention_dispatch(
     cache_head_stride: usize,
     cache_head_dim: usize,
     sliding_window: Option<usize>,
+    tiled_decode: bool,
     qk_row: &mut Vec<f32>,
     out: &mut [f32],
 ) {
@@ -2199,9 +2202,11 @@ pub(crate) fn cached_attention_dispatch(
         let max_j = spec.total_seq_len - seq_len + i;
         let min_j = sliding_window.map_or(0, |window| (max_j + 1).saturating_sub(window));
         scores.resize(max_j + 1, 0.0);
-        // Prefill rows take the register-tiled kernel (bit-identical per
-        // element); single-row decode keeps the generic body.
-        if seq_len > 1 {
+        // Prefill rows and the Q8 fast decode path take the register-tiled
+        // kernel (bit-identical per element). The reference path keeps the
+        // generic body for single-row decode, so it stays an independent
+        // check of that kernel.
+        if seq_len > 1 || tiled_decode {
             let q_idx = i * embed_dim + h * spec.head_dim;
             if crate::attention_kernels::cached_row_head(
                 &q[q_idx..q_idx + spec.head_dim],

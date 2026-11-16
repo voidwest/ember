@@ -205,7 +205,7 @@ pub fn compare_loaded(
             entry_a.site,
             entry_a.layer,
         );
-        if !seen.insert(key.clone()) {
+        if !seen.insert(key) {
             continue;
         }
         let entry_b = captures_b.iter().find(|entry_b| {

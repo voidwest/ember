@@ -10,7 +10,7 @@ compatibility.
 The crate reports `1.0.0` in the tree; the `v1.0.0` tag is held until the
 external acceptance gates close. The headless library/CLI MSRV remains Rust
 **1.92** (`--no-default-features`). The GPUI Kit migration uses
-Rust **1.98.1** for GUI builds and the pinned development toolchain; CI also
+Rust **1.100.0** for GUI builds and the pinned development toolchain; CI also
 checks headless builds separately on 1.92. This GUI toolchain increase is part
 of the 1.0 change, not a patch. The CLI and the
 schema-versioned artifact formats are the primary supported integration

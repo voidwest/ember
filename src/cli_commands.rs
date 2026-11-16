@@ -434,7 +434,7 @@ where
                 sample_id: sample.sample_id.clone(),
                 token_ids,
                 token_count,
-                prompt_hash: prompt_hash.clone(),
+                prompt_hash,
                 offsets,
                 offset_unit: "unicode_character_index".to_string(),
             },

@@ -1,5 +1,5 @@
 # GPUI Kit's GUI dependencies require newer Rust than the headless MSRV.
 # CI separately checks the headless CLI/library on Rust 1.92.0.
 [toolchain]
-channel = "1.98.1"
+channel = "1.100.0"
 components = ["clippy", "rustfmt"]

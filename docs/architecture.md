@@ -79,7 +79,7 @@ quantized kernels
   quant.rs             q8_0 packing + owned/mmap-backed QuantizedWeight
   simd.rs              q8_0 matmul and f32/f16 kernels (avx2, avx-512, neon)
   q8_gemm.rs           tiled multi-row q8_0 gemm for prefill (aarch64)
-  attention_kernels.rs multi-row cached-attention kernels for prefill (aarch64)
+  attention_kernels.rs cached-attention kernels for prefill and decode (aarch64)
   quant_k.rs           k-family super-block dequantization
   k_quant_matmul.rs    q4_k/q6_k x q8_k compressed matmul (scalar, avx2, neon)
   packed_cache.rs      on-disk cache of packed q8_0 decode layouts
@@ -179,7 +179,7 @@ prevents the generation loop from producing NaNs on degenerate input.
 
 ## prerequisites
 
-- rust 1.98.1, pinned by `rust-toolchain.toml`, for the default build with
+- rust 1.100.0, pinned by `rust-toolchain.toml`, for the default build with
   the native console; headless builds (`--no-default-features`) keep the
   1.92 MSRV
 - a gguf model file (e.g. gpt2 in q8_0)
@@ -227,9 +227,10 @@ the probe pipeline and CPU backend include these CPU-friendly optimizations:
   spinning decode team (`decode_pool`) once their work exceeds the decode
   crossover; Rayon is the fallback.
 - shared CPU attention parallelizes prefill by output row and decode by head,
-  with worker-local score scratch to avoid scatter buffers. Prefill rows and
-  planned decode use the register-tiled kernel in `attention_kernels` where
-  the CPU supports it.
+  with worker-local score scratch to avoid scatter buffers. Prefill rows, the
+  Q8 fast decode path, and planned decode use the register-tiled kernel in
+  `attention_kernels` where the CPU supports it. Single-row reference decode
+  keeps the generic body as an independent check.
 
 the next useful optimization targets are:
 

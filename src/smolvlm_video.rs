@@ -283,8 +283,8 @@ pub fn expand_video_placeholder(sampled: &SampledVideo, tokens_per_frame: usize)
         number_words(n),
         hmmss(duration_s.floor() as u64),
     ));
-    for i in 0..n {
-        let ts = mmss(sampled.timestamps_ms[i] / 1000.0);
+    for &timestamp_ms in sampled.timestamps_ms.iter().take(n) {
+        let ts = mmss(timestamp_ms / 1000.0);
         out.push_str(&format!("\nFrame from {ts}:"));
         out.push_str("<fake_token_around_image><global-img>");
         out.push_str(&"<image>".repeat(tokens_per_frame));
