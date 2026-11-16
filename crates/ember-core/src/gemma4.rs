@@ -2644,6 +2644,7 @@ fn cached_attention_with_scratch<B: Backend>(
         cache_head_stride,
         spec.cache_head_dim,
         spec.sliding_window,
+        false,
         scores,
         &mut out,
     );
