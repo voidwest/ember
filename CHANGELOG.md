@@ -122,6 +122,10 @@ Work after the 1.0.0 candidate. It is not part of the staged 1.0.0 release.
   `rc_buffer`, `dbg_macro` and `todo`. Every `#[allow]` now states its
   reason, 54 redundant clones are gone, and `CONTRIBUTING.md` says which
   lints of the table stay off and why. The behavior does not change.
+- Native console: GPUI Kit moves from 0.6.6 to 0.9.0. Lists, tables and
+  selectors now bounce at the scroll limit on macOS, the Kit default.
+- GUI builds and the pinned development toolchain use Rust 1.100.0. The
+  headless MSRV stays at Rust 1.92.
 
 ### Fixed
 

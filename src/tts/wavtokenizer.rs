@@ -87,8 +87,7 @@ impl Bluestein {
     fn fft_pow2(&self, re: &mut [f64], im: &mut [f64]) {
         let len = re.len();
         debug_assert!(len.is_power_of_two());
-        for i in 0..len {
-            let j = self.rev[i];
+        for (i, &j) in self.rev.iter().enumerate().take(len) {
             if j > i {
                 re.swap(i, j);
                 im.swap(i, j);

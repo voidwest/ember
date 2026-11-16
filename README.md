@@ -2,7 +2,7 @@
 
 # ember
 
-[![rust](https://img.shields.io/badge/rust-1.92_headless_%C2%B7_1.98.1_GUI-blue)](https://www.rust-lang.org)
+[![rust](https://img.shields.io/badge/rust-1.92_headless_%C2%B7_1.100.0_GUI-blue)](https://www.rust-lang.org)
 [![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -29,7 +29,7 @@ from). Build once, then capture and verify a run (build and download time are
 additional):
 
 ```bash
-# Inside the checkout, rust-toolchain.toml selects Rust 1.98.1, which the
+# Inside the checkout, rust-toolchain.toml selects Rust 1.100.0, which the
 # default GUI feature needs. A headless build on Rust 1.92 needs
 # --no-default-features.
 cargo build --release
@@ -169,7 +169,7 @@ These are optional extensions and separate research tracks around the CLI instru
 - [Experiment consoles](docs/v06-gui.md): native and browser interfaces to the
   same bundle workflow. The GPUI Kit native GUI uses Metal on macOS and
   a GPU-backed X11/Wayland window on Linux. GUI builds use the pinned Rust
-  1.98.1 toolchain; headless builds retain Rust 1.92 support.
+  1.100.0 toolchain; headless builds retain Rust 1.92 support.
 - [Agent runtime](docs/agent-runtime.md): tool protocols and auditable traces,
   with their own tool-validation and approval boundaries.
 - [EmberSEC](docs/embersec/README.md): hostile-artifact and quantized-fault

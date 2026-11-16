@@ -729,7 +729,9 @@ fn diagnose_intermediates(prompt: &str, capture_step: usize) {
         let mut current = ids.clone();
         let mut position = 0;
         let mut tokens = Vec::new();
-        for step in 0..decode_tokens {
+        // A short reference run must fail the test, not shorten the loop.
+        assert!(plain.decode_logits.len() >= decode_tokens);
+        for (step, expected) in plain.decode_logits.iter().enumerate().take(decode_tokens) {
             let phase = if position == 0 {
                 ember::experiments::ExecutionPhase::Prefill
             } else {
@@ -756,12 +758,12 @@ fn diagnose_intermediates(prompt: &str, capture_step: usize) {
                 logits
                     .data()
                     .iter()
-                    .zip(&plain.decode_logits[step])
+                    .zip(expected)
                     .all(|(a, b)| a.to_bits() == b.to_bits()),
                 "{name}: observer changed step {}",
                 step + 1
             );
-            assert_eq!(logits.data().len(), plain.decode_logits[step].len());
+            assert_eq!(logits.data().len(), expected.len());
             let token = ember::sampler::argmax_token(logits.data()) as u32;
             tokens.push(token);
             position += current.len();

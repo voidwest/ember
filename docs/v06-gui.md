@@ -95,7 +95,7 @@ prefer Q8_0 models: K-quant decode is intentionally much slower.
 ## Native console (`ember gui`)
 
 `ember gui` is a native, single-window console over the exact same v0.5
-pipeline. The UI is built with GPUI Kit 0.6.6. Kit owns the application root,
+pipeline. The UI is built with GPUI Kit 0.9.0. Kit owns the application root,
 buttons, searchable selectors, single-line inputs, multiline prompt editor,
 keyboard editing, clipboard, undo/redo, and platform input-method integration.
 The shared experiment engine remains independent of the control library.
@@ -103,7 +103,7 @@ Embedded Noto Sans, Noto Sans Mono, and Noto Naskh Arabic fonts provide offline
 glyph coverage (SIL OFL 1.1, see `src/gui_fonts/LICENSE.txt`). Platform shaping
 can differ; identical font files do not promise identical rendering everywhere.
 
-GUI development uses the pinned Rust 1.98.1 toolchain because GPUI Kit's
+GUI development uses the pinned Rust 1.100.0 toolchain because GPUI Kit's
 transitive dependencies do not compile on 1.92. The headless CLI/library still
 supports `cargo +1.92.0 build --release --no-default-features`. This GUI
 requirement is an unreleased next-minor change, not a 0.6.x patch guarantee.

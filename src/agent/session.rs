@@ -780,7 +780,7 @@ impl<'e> AgentSession<'e> {
                             }
                             Err(failure) => {
                                 let kind = failure.kind.as_str().to_string();
-                                (false, failure.message.clone(), Some(kind), Vec::new())
+                                (false, failure.message, Some(kind), Vec::new())
                             }
                         };
                         // digests recorded under every privacy mode so

@@ -118,7 +118,7 @@ Ember keeps these exceptions to the Google guide:
 
 ## Local validation
 
-`rust-toolchain.toml` pins Rust 1.98.1, which the default GUI build needs;
+`rust-toolchain.toml` pins Rust 1.100.0, which the default GUI build needs;
 CI also checks the headless crate on the 1.92.0 MSRV. `scripts/ci_local.sh`
 runs the model-free CI gates with the same flags as
 `.github/workflows/ci.yml`:
@@ -230,7 +230,7 @@ you reviewed, for example `docs/...`, `fix/...`, `test/...`, or `perf/...`.
 
 ### 2. Build a baseline, then choose the smallest patch
 
-Rust 1.98.1 is pinned by `rust-toolchain.toml`; the headless crate also
+Rust 1.100.0 is pinned by `rust-toolchain.toml`; the headless crate also
 builds on the 1.92.0 MSRV. No model is needed for the unit-test path. The default feature includes the gpui/Vulkan native console;
 use the headless check when display/X11/ALSA development libraries are not
 available:

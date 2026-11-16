@@ -44,7 +44,7 @@ jobs:
       - name: select Rust toolchain
         # Install the pinned development/GUI toolchain. Headless MSRV is checked below.
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+          rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt
 
       # Caches ~/.cargo and target/ without the workspace's own build
       # products, keyed by job, toolchain and Cargo.lock. Third-party action:
@@ -92,7 +92,7 @@ jobs:
 
       - name: headless check on the MSRV (no gui feature)
         # `+1.92.0` overrides rust-toolchain.toml, so this is the x86_64
-        # counterpart of the arm64 job's MSRV check rather than another 1.98.1
+        # counterpart of the arm64 job's MSRV check rather than another 1.100.0
         # build.
         run: |
           rustup toolchain install 1.92.0 --profile minimal
@@ -202,7 +202,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No explicit toolchain install: rust-toolchain.toml pins 1.98.1, which
+      # No explicit toolchain install: rust-toolchain.toml pins 1.100.0, which
       # is what the GUI features need. The Linux jobs install a *different*
       # version on purpose (1.92.0 on arm64 to prove the headless MSRV), so
       # they cannot be copied here.
@@ -227,7 +227,7 @@ jobs:
       - name: clippy (headless)
         # The same 1.98 chunks_exact carve-out as the x86_64 job: it is a new
         # style lint, and the measured kernel loop shapes are intentionally
-        # retained. Omitting it here would fail on 1.98.1.
+        # retained. Omitting it here would fail on 1.100.0.
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings -A clippy::chunks_exact_to_as_chunks
 
       - name: gui compile check (Metal)

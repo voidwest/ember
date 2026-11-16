@@ -1712,7 +1712,7 @@ impl MmsVits {
             // FFN: channel-major through convs
             let ct = rows_to_ct(&normed, h, t);
             let f1 = conv1d_dense(
-                &CpuTensor::from_data(vec![h, t], ct.clone()),
+                &CpuTensor::from_data(vec![h, t], ct),
                 &layer.ffn1,
                 (cfg.ffn_kernel_size - 1) / 2,
             );

@@ -559,7 +559,7 @@ target = 7
         for (index, result) in results.iter().enumerate() {
             let x = result.captures[0].rows.clone();
             let base = ember::v05::lens::LensHead::project(&lens, &x).unwrap()[7];
-            let mut steered = x.clone();
+            let mut steered = x;
             ember::v05::steering::steer_row(
                 &mut steered,
                 &direction,

@@ -179,7 +179,7 @@ prevents the generation loop from producing NaNs on degenerate input.
 
 ## prerequisites
 
-- rust 1.98.1, pinned by `rust-toolchain.toml`, for the default build with
+- rust 1.100.0, pinned by `rust-toolchain.toml`, for the default build with
   the native console; headless builds (`--no-default-features`) keep the
   1.92 MSRV
 - a gguf model file (e.g. gpt2 in q8_0)
