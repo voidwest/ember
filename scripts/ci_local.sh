@@ -135,7 +135,7 @@ if [[ "$mode" == "full" ]]; then
     run "native GUI interactions" \
         cargo test --locked --features gui-tests --bin ember gui_native::kit_tests
     run "K-quant kernel tier" \
-        cargo test --locked --release --lib k_quant_matmul::tests
+        cargo test --locked --release -p ember-core --lib k_quant_matmul::tests
     if "$python" -c 'import pytest' >/dev/null 2>&1; then
         run "python tests" "$python" -m pytest tests probes/test_probe_workflows.py -q
     else

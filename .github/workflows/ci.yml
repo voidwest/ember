@@ -8,6 +8,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Clean CI builds don't benefit from incremental artifacts, and stripping
+  # DWARF debug info from dev/test targets shrinks linking and rust-cache size.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 permissions:
   contents: read
@@ -32,41 +37,31 @@ jobs:
       - name: audit
         run: cargo audit
 
-  build-and-test:
+  test-linux:
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: select Rust toolchain
-        # Install the pinned development/GUI toolchain. Headless MSRV is checked below.
         run: |
-          rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt
+          rustup toolchain install 1.100.0 --profile minimal
 
       # Caches ~/.cargo and target/ without the workspace's own build
       # products, keyed by job, toolchain and Cargo.lock. Third-party action:
       # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: install X11 system libraries (gpui native GUI)
+      - name: install X11, ALSA, and lld system libraries
         run: |
           sudo apt-get update
           # libasound2-dev: the `audio` feature (cpal -> alsa-sys) needs the
-          # ALSA headers; only `clippy --all-features` compiles it, but a
-          # missing header fails that step (v0.6.6 first run).
-          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libwayland-dev libasound2-dev pkg-config
-
-      - name: build
-        # Only the release binary is needed (the binding tests' CLI parity
-        # checks use target/release/ember); `test --all-targets` below
-        # compiles every target in the dev profile anyway.
-        run: cargo build --locked --release --bin ember --verbose
+          # ALSA headers; lld speeds up linking the gpui + integration test bins.
+          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libwayland-dev libasound2-dev pkg-config lld
 
       - name: test
-        run: cargo test --locked --all-targets --verbose
+        run: cargo test --locked --all-targets
 
       - name: doctests
         # --all-targets does not include doctests.
@@ -81,23 +76,30 @@ jobs:
       - name: native GUI interactions (headless test window)
         run: cargo test --locked --features gui-tests --bin ember gui_native::kit_tests
 
-      - name: canonical K-quant x86 tier (fail closed)
-        env:
-          EMBER_REQUIRE_X86_TESTS: "1"
-          RAYON_NUM_THREADS: "2"
-        run: |
-          # The AVX-512 kernels are checked against AVX2 whenever the runner
-          # has AVX-512; hosted runners vary, so say which case this run hit.
-          if grep -qw avx512bw /proc/cpuinfo; then echo "AVX-512 present: AVX-512 K kernels are tested"; else echo "no AVX-512 on this runner: AVX-512 K kernels not exercised"; fi
-          cargo test --locked --release --lib k_quant_matmul::tests -- --nocapture
+  lint-and-msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: headless check on the MSRV (no gui feature)
-        # `+1.92.0` overrides rust-toolchain.toml, so this is the x86_64
-        # counterpart of the arm64 job's MSRV check rather than another 1.100.0
-        # build.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: select Rust toolchains
+        # Install the pinned development/GUI toolchain and the headless MSRV.
         run: |
+          rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt
           rustup toolchain install 1.92.0 --profile minimal
-          cargo +1.92.0 check --locked --no-default-features --all-targets
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: install X11 and ALSA system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libwayland-dev libasound2-dev pkg-config
+
+      - name: fmt
+        run: cargo fmt --all -- --check
 
       - name: clippy
         # New 1.98 style lint: retain measured kernel loop shapes during the
@@ -110,8 +112,11 @@ jobs:
         # intentionally retained during the GUI migration.
         run: cargo clippy --locked -p ember-python -- -D warnings -A clippy::chunks_exact_to_as_chunks
 
-      - name: fmt
-        run: cargo fmt --all -- --check
+      - name: headless check on the MSRV (no gui feature)
+        # `+1.92.0` overrides rust-toolchain.toml, so this is the x86_64
+        # counterpart of the arm64 job's MSRV check rather than another 1.100.0
+        # build.
+        run: cargo +1.92.0 check --locked --no-default-features --all-targets
 
       - name: fuzz lockfile in sync
         # fuzz/ is a separate cargo project with its own lockfile; a root
@@ -125,13 +130,9 @@ jobs:
         # CI run.
         run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
-      - name: python dependencies
-        run: python -m pip install -r probes/requirements.txt
-
-      - name: python smoke
+      - name: docs site and script smoke
         run: |
-          python -m compileall -q python probes stimuli scripts tests
-          python probes/run_probe_matrix.py --model smoke:dummy.gguf --generate-tokens 1 --dry-run
+          python scripts/check_docs.py
           # One script per `bash -n`: given several paths it parses only the
           # first and passes the rest to it as arguments. Every tracked
           # script, so a new one cannot be missed.
@@ -139,16 +140,54 @@ jobs:
             bash -n "$script"
           done
 
-      - name: python bindings
+  k-quant-and-python:
+    # Headless release path: exercises the canonical x86 K-quant kernels in
+    # ember-core, builds the headless release CLI binary for parity checks, and
+    # runs the PyO3 binding + Python test suites without compiling gpui-kit.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            probes/requirements.txt
+            pyproject.toml
+
+      - name: select Rust toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: canonical K-quant x86 tier (fail closed)
+        env:
+          EMBER_REQUIRE_X86_TESTS: "1"
+          RAYON_NUM_THREADS: "2"
+        run: |
+          # The AVX-512 kernels are checked against AVX2 whenever the runner
+          # has AVX-512; hosted runners vary, so say which case this run hit.
+          if grep -qw avx512bw /proc/cpuinfo; then echo "AVX-512 present: AVX-512 K kernels are tested"; else echo "no AVX-512 on this runner: AVX-512 K kernels not exercised"; fi
+          cargo test --locked --release -p ember-core --lib k_quant_matmul::tests -- --nocapture
+
+      - name: build headless release binary (for binding CLI parity)
+        run: cargo build --locked --release --no-default-features --bin ember
+
+      - name: python dependencies and bindings
         # Optional PyO3 layer over the same core. The binding tests
         # importorskip without a build; install it so CI exercises them.
-        run: python -m pip install ./bindings/python
-
-      - name: python tests
         run: |
+          python -m pip install -r probes/requirements.txt
+          python -m pip install ./bindings/python
           python -m pip install -e ".[dev]"
+
+      - name: python smoke and tests
+        run: |
+          python -m compileall -q python probes stimuli scripts tests
+          python probes/run_probe_matrix.py --model smoke:dummy.gguf --generate-tokens 1 --dry-run
           python -m pytest tests probes/test_probe_workflows.py -q
-          python scripts/check_docs.py
 
   build-and-test-arm64:
     # aarch64 tier: validates the NEON kernels and the headless (no-gui)
@@ -168,10 +207,8 @@ jobs:
       # pinned by commit like fuzz.yml's, so a moved tag cannot run here.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: build (headless)
-        run: cargo build --locked --no-default-features --all-targets
-
       - name: test (headless)
+        # --all-targets compiles every lib, bin, example, bench and test target.
         run: cargo test --locked --no-default-features --all-targets
 
       - name: clippy (headless)
@@ -219,10 +256,8 @@ jobs:
         with:
           key: ${{ matrix.label }}
 
-      - name: build (headless)
-        run: cargo build --locked --no-default-features --all-targets
-
       - name: test (headless)
+        # --all-targets compiles every lib, bin, example, bench and test target.
         run: cargo test --locked --no-default-features --all-targets
 
       - name: clippy (headless)
